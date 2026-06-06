@@ -17,7 +17,7 @@ function navigateTo(page) {
         const statsStatus = document.getElementById('stats-realtime-status');
         if (statsToggle) statsToggle.checked = false;
         if (rangeToggle) rangeToggle.checked = false;
-        if (statsStatus) statsStatus.textContent = '未开启';
+        if (statsStatus) statsStatus.textContent = t('disabled');
     }
     // Hide all pages
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));

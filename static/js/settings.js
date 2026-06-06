@@ -126,11 +126,11 @@ function renderDetectResults(data) {
     if (!container) return;
 
     const items = [
-        { label: 'DB Path', value: data.db_path, icon: '🗄️' },
-        { label: 'Sessions Dir', value: data.sessions_dir, icon: '📂' },
-        { label: 'Archived Dir', value: data.archived_dir, icon: '📁' },
-        { label: 'Codex CLI', value: data.codex_cli_path, icon: '⚡' },
-        { label: 'Codex++', value: data.codex_plus_plus_path, icon: '🚀' },
+        { label: t('dbPath'), value: data.db_path, icon: '🗄️' },
+        { label: t('sessionsDir'), value: data.sessions_dir, icon: '📂' },
+        { label: t('archivedDir'), value: data.archived_dir, icon: '📁' },
+        { label: t('codexCliPath'), value: data.codex_cli_path, icon: '⚡' },
+        { label: t('codexPPPath'), value: data.codex_plus_plus_path, icon: '🚀' },
     ];
 
     if (data.codex_config) {
@@ -143,7 +143,7 @@ function renderDetectResults(data) {
     container.innerHTML = items.map(item => {
         const found = item.value ? true : false;
         const statusClass = found ? 'text-emerald-400' : 'text-dark-500';
-        const statusText = found ? '✓ Detected' : '✗ Not found';
+        const statusText = found ? '✓ ' + t('success') : '✗ ' + t('error');
 
         return `
             <div class="flex items-center gap-3 py-2 px-3 rounded-lg bg-dark-900/50">

@@ -40,12 +40,12 @@ function renderSessionTable(sessions) {
     if (!tbody) return;
 
     if (!sessions || sessions.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-dark-400">No sessions found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-dark-400">' + t('noSessions') + '</td></tr>';
         return;
     }
 
     tbody.innerHTML = sessions.map(s => {
-        const archived = s.archived ? '<span class="px-1.5 py-0.5 rounded text-xs bg-dark-600 text-dark-300">Archived</span>' : '<span class="px-1.5 py-0.5 rounded text-xs bg-emerald-500/20 text-emerald-400">Active</span>';
+        const archived = s.archived ? '<span class="px-1.5 py-0.5 rounded text-xs bg-dark-600 text-dark-300">' + t('filterArchived') + '</span>' : '<span class="px-1.5 py-0.5 rounded text-xs bg-emerald-500/20 text-emerald-400">' + t('filterActive') + '</span>';
         const title = escapeHtml(s.title || '(No Title)');
         const modelTag = s.model ? `<span class="px-1.5 py-0.5 rounded text-xs bg-dark-700 text-dark-300">${escapeHtml(s.model)}</span>` : '-';
         const providerTag = s.model_provider ? `<span class="px-1.5 py-0.5 rounded text-xs bg-accent-500/15 text-accent-400">${escapeHtml(s.model_provider)}</span>` : '-';
@@ -80,7 +80,7 @@ function renderSessionPagination() {
     const prevBtn = document.getElementById('btn-prev-page');
     const nextBtn = document.getElementById('btn-next-page');
 
-    if (info) info.textContent = `Page ${sessionPage + 1} / ${totalPages}  —  Total: ${sessionTotal}`;
+    if (info) info.textContent = t('page') + ' ' + (sessionPage + 1) + ' ' + t('pageOf') + ' ' + totalPages + '  —  ' + t('totalSessions') + ': ' + sessionTotal;
     if (prevBtn) prevBtn.disabled = sessionPage <= 0;
     if (nextBtn) nextBtn.disabled = sessionPage >= totalPages - 1;
 }

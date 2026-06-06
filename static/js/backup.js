@@ -18,8 +18,8 @@ function renderBackupTable(backups) {
     if (!tbody) return;
 
     if (!backups || backups.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-dark-400">No backups found</td></tr>';
-        document.getElementById('backup-info').textContent = 'No backups yet';
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-dark-400">' + t('noBackups') + '</td></tr>';
+        document.getElementById('backup-info').textContent = t('noBackups');
         return;
     }
 
@@ -28,8 +28,8 @@ function renderBackupTable(backups) {
     tbody.innerHTML = backups.map(b => {
         const btype = (b.meta && b.meta.backup_type) || 'full';
         const typeBadge = btype === 'incremental'
-            ? '<span class="px-2 py-0.5 rounded text-xs bg-amber-500/15 text-amber-400">Incremental</span>'
-            : '<span class="px-2 py-0.5 rounded text-xs bg-emerald-500/15 text-emerald-400">Full</span>';
+            ? '<span class="px-2 py-0.5 rounded text-xs bg-amber-500/15 text-amber-400">' + t('incrementalBackupShort') + '</span>'
+            : '<span class="px-2 py-0.5 rounded text-xs bg-emerald-500/15 text-emerald-400">' + t('fullBackup') + '</span>';
 
         return `
             <tr>
@@ -38,7 +38,7 @@ function renderBackupTable(backups) {
                 <td class="py-3 px-4 text-sm text-dark-400">${b.mtime || '-'}</td>
                 <td class="py-3 px-4">${typeBadge}</td>
                 <td class="py-3 px-4 text-center">
-                    ${btype === 'full' ? `<button onclick="restoreBackup('${escapeHtml(b.name)}')" class="btn btn-success text-xs">Restore</button>` : '<span class="text-dark-500 text-xs">N/A</span>'}
+                    ${btype === 'full' ? `<button onclick="restoreBackup('${escapeHtml(b.name)}')" class="btn btn-success text-xs">${t('restore')}</button>` : '<span class="text-dark-500 text-xs">N/A</span>'}
                 </td>
             </tr>
         `;

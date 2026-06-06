@@ -46,9 +46,9 @@ function renderOverview(data) {
     document.getElementById('stat-total-tokens').textContent = formatTokens(data.total_tokens);
     document.getElementById('stat-total-sessions').textContent = formatNumber(data.total_sessions);
     document.getElementById('stat-today-tokens').textContent = formatTokens(data.today_tokens);
-    document.getElementById('stat-today-sessions').textContent = formatNumber(data.today_sessions) + ' sessions';
+    document.getElementById('stat-today-sessions').textContent = formatNumber(data.today_sessions) + ' ' + t('sessions');
     document.getElementById('stat-week-tokens').textContent = formatTokens(data.week_tokens);
-    document.getElementById('stat-week-sessions').textContent = formatNumber(data.week_sessions) + ' sessions';
+    document.getElementById('stat-week-sessions').textContent = formatNumber(data.week_sessions) + ' ' + t('sessions');
 }
 
 function renderDailyTrend(data) {
@@ -67,7 +67,7 @@ function renderDailyTrend(data) {
             labels,
             datasets: [
                 {
-                    label: 'Tokens',
+                    label: t('tokens'),
                     data: tokensData,
                     borderColor: '#3b82f6',
                     backgroundColor: 'rgba(59, 130, 246, 0.1)',
@@ -78,7 +78,7 @@ function renderDailyTrend(data) {
                     yAxisID: 'y',
                 },
                 {
-                    label: 'Sessions',
+                    label: t('sessions'),
                     data: sessionsData,
                     borderColor: '#10b981',
                     backgroundColor: 'rgba(16, 185, 129, 0.1)',
@@ -184,7 +184,7 @@ function renderByProvider(data) {
         data: {
             labels: data.map(d => d.provider || 'unknown'),
             datasets: [{
-                label: 'Tokens',
+                label: t('tokens'),
                 data: data.map(d => d.tokens || 0),
                 backgroundColor: colors.slice(0, data.length).map(c => c + '60'),
                 borderColor: colors.slice(0, data.length),
@@ -249,7 +249,7 @@ function renderHourly(data) {
         data: {
             labels,
             datasets: [{
-                label: 'Tokens',
+                label: t('tokens'),
                 data: tokensData,
                 backgroundColor: bgColors,
                 borderRadius: 4,
@@ -284,7 +284,7 @@ function renderTopSessions(data) {
     if (!tbody) return;
 
     if (data.length === 0 || data.error) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-dark-400">No data</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-dark-400">' + t('noData') + '</td></tr>';
         return;
     }
 

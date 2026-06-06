@@ -54,8 +54,8 @@ async function refreshStopwatchTokens() {
 
     setTextById('stopwatch-current-total', formatNumber(totalTokens));
     setTextById('stopwatch-token-diff', formatNumber(tokenDiff));
-    setTextById('stopwatch-cache-hits', data.cache_supported ? '可用' : '不支持');
-    setTextById('stopwatch-note', data.cache_note || data.realtime_note || 'Token 统计已刷新。');
+        setTextById('stopwatch-cache-hits', data.cache_supported ? t('cacheAvailable') : t('cacheNotSupported'));
+        setTextById('stopwatch-note', data.cache_note || data.realtime_note || t('noDataYet'));
 }
 
 async function startStopwatch() {
@@ -78,8 +78,8 @@ async function startStopwatch() {
         setTextById('stopwatch-elapsed', '00:00:00');
         setTextById('stopwatch-current-total', formatNumber(totalTokens));
         setTextById('stopwatch-token-diff', '0');
-        setTextById('stopwatch-cache-hits', data.cache_supported ? '可用' : '不支持');
-        setTextById('stopwatch-note', data.realtime_note || '记录中。');
+        setTextById('stopwatch-cache-hits', data.cache_supported ? t('cacheAvailable') : t('cacheNotSupported'));
+        setTextById('stopwatch-note', data.realtime_note || t('recording'));
 
         realtimeController.start('stopwatch-elapsed', updateStopwatchElapsed, 1000, true);
         realtimeController.start('stopwatch-tokens', refreshStopwatchTokens, STOPWATCH_TOKEN_REFRESH_MS, false);
@@ -128,8 +128,8 @@ function resetStopwatch() {
     setTextById('stopwatch-elapsed', '00:00:00');
     setTextById('stopwatch-token-diff', '0');
     setTextById('stopwatch-current-total', '0');
-    setTextById('stopwatch-cache-hits', '不支持');
-    setTextById('stopwatch-note', '暂无数据，请点击“开始记录”。');
+    setTextById('stopwatch-cache-hits', t('cacheNotSupported'));
+    setTextById('stopwatch-note', t('noDataYet'));
 }
 
 function getRangeQuery() {
@@ -144,7 +144,7 @@ async function refreshRangeStats() {
     const query = getRangeQuery();
     const data = await fetchCurrentTokenStats(query);
     setTextById('range-total-tokens', formatNumber(data.total_tokens || 0));
-    setTextById('range-note', data.realtime_note || '时间段统计已刷新。');
+    setTextById('range-note', data.realtime_note || t('rangeNote'));
     renderRangeTrend(data.buckets || [], query.granularity);
     setStatus(`Range tokens: ${formatTokens(data.total_tokens || 0)}`);
 }
@@ -169,7 +169,7 @@ function renderRangeTrend(buckets, granularity) {
         data: {
             labels,
             datasets: [{
-                label: 'Range Tokens',
+                label: t('tokens'),
                 data: tokens,
                 borderColor: '#22c55e',
                 backgroundColor: 'rgba(34, 197, 94, 0.12)',
@@ -222,7 +222,7 @@ function toggleStatsRealtime() {
     const enabled = Boolean(document.getElementById('stats-realtime-toggle')?.checked);
     const status = document.getElementById('stats-realtime-status');
     if (enabled) {
-        if (status) status.textContent = '已开启';
+        if (status) status.textContent = t('enabled');
         realtimeController.start('stats-dashboard', loadStats, STATS_REFRESH_MS, true);
     } else {
         if (status) status.textContent = '未开启';

@@ -22,6 +22,8 @@ const translations = {
     warning: '警告',
     yes: '是',
     no: '否',
+    enabled: '已开启',
+    disabled: '未开启',
 
     // 侧边栏
     navStats: '统计面板',
@@ -52,6 +54,11 @@ const translations = {
     sessions: '会话数',
     tokens: 'Token 数',
 
+    // 实时统计
+    realtimeStats: 'Token 实时统计',
+    realtimeDesc: 'Codex DB 统计实时性取决于 Codex 写入 state_5.sqlite 的频率；缓存命中仅 CC Switch 代理数据源可用，未配置时不会伪造。',
+    realtimeRefresh: '实时刷新（20 秒）',
+
     // 时间筛选
     timeRange: '时间范围',
     last7Days: '最近 7 天',
@@ -62,6 +69,13 @@ const translations = {
     startDate: '开始日期',
     endDate: '结束日期',
     applyFilter: '应用筛选',
+    granularity: '粒度',
+    granularityDay: '按天',
+    granularityHour: '按小时',
+    granularityTotal: '仅总数',
+    rangeTotalTokens: '时间段 Token 总数',
+    rangeRealtime: '实时模式（20 秒）',
+    rangeNote: '查询参数变化时会重启轮询并立即刷新。',
 
     // 秒表
     stopwatch: 'Token 秒表',
@@ -77,6 +91,9 @@ const translations = {
     modelsUsed: '使用模型',
     reportTitle: '秒表报告',
     noDataYet: '暂无数据，请点击"开始记录"',
+    currentTotalTokens: '当前总 Tokens',
+    cacheNotSupported: '不支持',
+    cacheAvailable: '可用',
 
     // 会话浏览
     sessionBrowser: '会话浏览器',
@@ -105,6 +122,8 @@ const translations = {
     source: '来源',
     provider: '提供商',
     workDir: '工作目录',
+    status: '状态',
+    actions: '操作',
 
     // 同步
     accountSync: '账户同步',
@@ -127,6 +146,10 @@ const translations = {
     syncFailed: '同步失败',
     confirmAction: '确认操作？',
     warningCodexRunning: '警告：Codex 正在运行！',
+    syncTarget: '同步目标',
+    previewDryRun: '预览（Dry Run）',
+    oneClickSyncRestartBtn: '一键同步 + 重启',
+    checkStatus: '刷新状态',
 
     // 备份
     backupManager: '备份管理',
@@ -141,6 +164,7 @@ const translations = {
     noBackups: '暂无备份',
     backupCreated: '备份已创建',
     restoreCompleted: '还原完成',
+    name: '名称',
 
     // 设置
     settings: '设置',
@@ -186,6 +210,8 @@ const translations = {
     warning: 'Warning',
     yes: 'Yes',
     no: 'No',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
 
     // Sidebar
     navStats: 'Statistics',
@@ -199,8 +225,8 @@ const translations = {
     totalTokens: 'Total Tokens',
     totalSessions: 'Total Sessions',
     todayUsage: "Today's Usage",
-    weekUsage: "This Week",
-    monthUsage: "This Month",
+    weekUsage: 'This Week',
+    monthUsage: 'This Month',
     dailyTrend: 'Daily Token Trend',
     modelDist: 'Model Distribution',
     providerDist: 'Provider Distribution',
@@ -216,6 +242,11 @@ const translations = {
     sessions: 'Sessions',
     tokens: 'Tokens',
 
+    // Realtime
+    realtimeStats: 'Token Realtime Statistics',
+    realtimeDesc: 'Codex DB stats real-time depends on Codex writing frequency to state_5.sqlite; cache hits only available with CC Switch proxy data source.',
+    realtimeRefresh: 'Realtime Refresh (20s)',
+
     // Time filter
     timeRange: 'Time Range',
     last7Days: 'Last 7 Days',
@@ -226,6 +257,13 @@ const translations = {
     startDate: 'Start Date',
     endDate: 'End Date',
     applyFilter: 'Apply Filter',
+    granularity: 'Granularity',
+    granularityDay: 'By Day',
+    granularityHour: 'By Hour',
+    granularityTotal: 'Total Only',
+    rangeTotalTokens: 'Range Total Tokens',
+    rangeRealtime: 'Realtime Mode (20s)',
+    rangeNote: 'Query changes will restart polling and refresh immediately.',
 
     // Stopwatch
     stopwatch: 'Token Stopwatch',
@@ -241,6 +279,9 @@ const translations = {
     modelsUsed: 'Models Used',
     reportTitle: 'Stopwatch Report',
     noDataYet: 'No data yet. Click "Start" to begin.',
+    currentTotalTokens: 'Current Total Tokens',
+    cacheNotSupported: 'Not supported',
+    cacheAvailable: 'Available',
 
     // Sessions
     sessionBrowser: 'Session Browser',
@@ -269,6 +310,8 @@ const translations = {
     source: 'Source',
     provider: 'Provider',
     workDir: 'Working Dir',
+    status: 'Status',
+    actions: 'Actions',
 
     // Sync
     accountSync: 'Account Sync',
@@ -291,6 +334,10 @@ const translations = {
     syncFailed: 'Sync failed',
     confirmAction: 'Are you sure?',
     warningCodexRunning: 'Warning: Codex is running!',
+    syncTarget: 'Sync Target',
+    previewDryRun: 'Preview (Dry Run)',
+    oneClickSyncRestartBtn: 'One-Click Sync + Restart',
+    checkStatus: 'Refresh Status',
 
     // Backup
     backupManager: 'Backup Manager',
@@ -305,6 +352,7 @@ const translations = {
     noBackups: 'No backups found',
     backupCreated: 'Backup created',
     restoreCompleted: 'Restore completed',
+    name: 'Name',
 
     // Settings
     settings: 'Settings',
@@ -348,15 +396,29 @@ function switchLang(lang) {
 }
 
 function applyI18n() {
+  // data-i18n attributes
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
     const text = t(key);
     if (text !== key) {
       if (el.tagName === 'INPUT' && el.placeholder) {
         el.placeholder = text;
+      } else if (el.tagName === 'INPUT' && el.type !== 'hidden') {
+        el.value = text;
+      } else if (el.tagName === 'TITLE') {
+        document.title = text;
       } else {
         el.textContent = text;
       }
+    }
+  });
+
+  // data-i18n-placeholder attributes
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    const text = t(key);
+    if (text !== key) {
+      el.placeholder = text;
     }
   });
 }

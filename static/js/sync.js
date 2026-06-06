@@ -34,7 +34,7 @@ function renderProviderDist(distribution) {
     if (!container) return;
 
     if (distribution.length === 0) {
-        container.innerHTML = '<div class="text-dark-400 text-sm">No data</div>';
+        container.innerHTML = '<div class="text-dark-400 text-sm">' + t('noData') + '</div>';
         return;
     }
 
@@ -60,12 +60,12 @@ function renderCodexStatus(running, pids) {
     if (running) {
         container.innerHTML = `
             <span class="status-dot bg-red-500 pulse-dot"></span>
-            <span class="text-sm text-red-400">Running (PID: ${pids.join(', ')})</span>
+            <span class="text-sm text-red-400">${t('running')} (PID: ${pids.join(', ')})</span>
         `;
     } else {
         container.innerHTML = `
             <span class="status-dot bg-emerald-500"></span>
-            <span class="text-sm text-emerald-400">Not running</span>
+            <span class="text-sm text-emerald-400">${t('notRunning')}</span>
         `;
     }
 }

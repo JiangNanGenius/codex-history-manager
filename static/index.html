@@ -33,29 +33,38 @@
                 <svg class="w-6 h-6 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
                 Codex Manager
             </h1>
-            <p class="text-xs text-dark-400 mt-1">History &middot; Sync &middot; Backup</p>
+            <p class="text-xs text-dark-400 mt-1" data-i18n="appSubtitle">History &middot; Sync &middot; Backup</p>
+        </div>
+        <!-- Language Switcher -->
+        <div class="px-5 py-2 border-b border-dark-700 flex items-center gap-2">
+            <button onclick="switchLang('zh')" class="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-dark-800" title="Switch to Chinese">
+                <span>🇨🇳</span> <span data-i18n="chinese">中文</span>
+            </button>
+            <button onclick="switchLang('en')" class="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-dark-800" title="Switch to English">
+                <span>🇬🇧</span> <span data-i18n="english">English</span>
+            </button>
         </div>
         <!-- Nav -->
         <nav class="flex-1 py-4 px-3 space-y-1">
             <button onclick="navigateTo('stats')" data-nav="stats" class="nav-btn active w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-                Token Dashboard
+                <span data-i18n="navStats">Token Dashboard</span>
             </button>
             <button onclick="navigateTo('sessions')" data-nav="sessions" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-                Sessions
+                <span data-i18n="navSessions">Sessions</span>
             </button>
             <button onclick="navigateTo('sync')" data-nav="sync" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                Sync
+                <span data-i18n="navSync">Sync</span>
             </button>
             <button onclick="navigateTo('backup')" data-nav="backup" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                Backup
+                <span data-i18n="navBackup">Backup</span>
             </button>
             <button onclick="navigateTo('settings')" data-nav="settings" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                Settings
+                <span data-i18n="navSettings">Settings</span>
             </button>
         </nav>
         <!-- Status bar -->
@@ -72,15 +81,15 @@
             <div class="card bg-dark-950/50 border-accent-500/20">
                 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
-                        <h2 class="text-lg font-semibold text-white">Token 实时统计</h2>
-                        <p class="text-sm text-dark-400 mt-1">Codex DB 统计实时性取决于 Codex 写入 state_5.sqlite 的频率；缓存命中仅 CC Switch 代理数据源可用，未配置时不会伪造。</p>
+                        <h2 class="text-lg font-semibold text-white" data-i18n="realtimeStats">Token 实时统计</h2>
+                        <p class="text-sm text-dark-400 mt-1" data-i18n="realtimeDesc">Codex DB 统计实时性取决于 Codex 写入 state_5.sqlite 的频率；缓存命中仅 CC Switch 代理数据源可用，未配置时不会伪造。</p>
                     </div>
                     <div class="flex flex-wrap items-center gap-3">
                         <label class="flex items-center gap-2 text-sm text-dark-300 cursor-pointer">
                             <input id="stats-realtime-toggle" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" onchange="toggleStatsRealtime()">
-                            实时刷新（20 秒）
+                            <span data-i18n="realtimeRefresh">实时刷新（20 秒）</span>
                         </label>
-                        <span id="stats-realtime-status" class="text-xs text-dark-500">未开启</span>
+                        <span id="stats-realtime-status" class="text-xs text-dark-500" data-i18n="disabled">未开启</span>
                     </div>
                 </div>
             </div>
@@ -89,34 +98,34 @@
             <div class="card">
                 <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
                     <div>
-                        <h3 class="card-title">Token 秒表</h3>
-                        <p class="text-sm text-dark-400">开始后每秒刷新耗时，每 4 秒从 Codex DB 拉取 token 差值；停止后自动清理轮询器。</p>
+                        <h3 class="card-title" data-i18n="stopwatch">Token 秒表</h3>
+                        <p class="text-sm text-dark-400" data-i18n="stopwatchDesc">点击开始，记录时间段内的 Token 用量</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <button id="stopwatch-start-btn" onclick="startStopwatch()" class="btn btn-primary">开始记录</button>
-                        <button id="stopwatch-stop-btn" onclick="stopStopwatch()" class="btn btn-warning" disabled>停止记录</button>
-                        <button onclick="resetStopwatch()" class="btn btn-secondary">重置</button>
+                        <button id="stopwatch-start-btn" onclick="startStopwatch()" class="btn btn-primary" data-i18n="start">开始记录</button>
+                        <button id="stopwatch-stop-btn" onclick="stopStopwatch()" class="btn btn-warning" disabled data-i18n="stop">停止记录</button>
+                        <button onclick="resetStopwatch()" class="btn btn-secondary" data-i18n="reset">重置</button>
                     </div>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label">已用时</div>
+                        <div class="card-label" data-i18n="elapsed">已用时</div>
                         <div id="stopwatch-elapsed" class="card-value font-mono">00:00:00</div>
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label">Token 增量</div>
+                        <div class="card-label" data-i18n="tokenDiff">Token 增量</div>
                         <div id="stopwatch-token-diff" class="card-value text-accent-400">0</div>
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label">当前总 Tokens</div>
+                        <div class="card-label" data-i18n="currentTotalTokens">当前总 Tokens</div>
                         <div id="stopwatch-current-total" class="card-value">0</div>
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label">缓存命中</div>
-                        <div id="stopwatch-cache-hits" class="card-value text-dark-400">不支持</div>
+                        <div class="card-label" data-i18n="cacheHits">缓存命中</div>
+                        <div id="stopwatch-cache-hits" class="card-value text-dark-400" data-i18n="cacheNotSupported">不支持</div>
                     </div>
                 </div>
-                <div id="stopwatch-note" class="text-xs text-dark-500 mt-3">暂无数据，请点击“开始记录”。</div>
+                <div id="stopwatch-note" class="text-xs text-dark-500 mt-3" data-i18n="noDataYet">暂无数据，请点击"开始记录"。</div>
             </div>
 
             <!-- Time Range Realtime -->
@@ -124,55 +133,55 @@
                 <div class="flex flex-col xl:flex-row xl:items-end gap-4">
                     <div class="flex-1 grid grid-cols-1 md:grid-cols-4 gap-3">
                         <div>
-                            <label class="text-xs text-dark-400">开始日期</label>
+                            <label class="text-xs text-dark-400" data-i18n="startDate">开始日期</label>
                             <input id="range-start" type="date" class="input mt-1 w-full" onchange="restartRangeRealtimeIfEnabled()">
                         </div>
                         <div>
-                            <label class="text-xs text-dark-400">结束日期</label>
+                            <label class="text-xs text-dark-400" data-i18n="endDate">结束日期</label>
                             <input id="range-end" type="date" class="input mt-1 w-full" onchange="restartRangeRealtimeIfEnabled()">
                         </div>
                         <div>
-                            <label class="text-xs text-dark-400">粒度</label>
+                            <label class="text-xs text-dark-400" data-i18n="granularity">粒度</label>
                             <select id="range-granularity" class="input mt-1 w-full" onchange="restartRangeRealtimeIfEnabled()">
-                                <option value="day">按天</option>
-                                <option value="hour">按小时</option>
-                                <option value="total">仅总数</option>
+                                <option value="day" data-i18n="granularityDay">按天</option>
+                                <option value="hour" data-i18n="granularityHour">按小时</option>
+                                <option value="total" data-i18n="granularityTotal">仅总数</option>
                             </select>
                         </div>
                         <div>
-                            <label class="text-xs text-dark-400">时间段 Token 总数</label>
+                            <label class="text-xs text-dark-400" data-i18n="rangeTotalTokens">时间段 Token 总数</label>
                             <div id="range-total-tokens" class="text-2xl font-bold text-white mt-1">0</div>
                         </div>
                     </div>
                     <div class="flex flex-wrap items-center gap-3">
-                        <button onclick="refreshRangeStats()" class="btn btn-secondary">刷新时间段</button>
+                        <button onclick="refreshRangeStats()" class="btn btn-secondary" data-i18n="refresh">刷新</button>
                         <label class="flex items-center gap-2 text-sm text-dark-300 cursor-pointer">
                             <input id="range-realtime-toggle" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" onchange="toggleRangeRealtime()">
-                            实时模式（20 秒）
+                            <span data-i18n="rangeRealtime">实时模式（20 秒）</span>
                         </label>
                     </div>
                 </div>
-                <div id="range-note" class="text-xs text-dark-500 mt-3">查询参数变化时会重启轮询并立即刷新。</div>
+                <div id="range-note" class="text-xs text-dark-500 mt-3" data-i18n="rangeNote">查询参数变化时会重启轮询并立即刷新。</div>
                 <div class="chart-container mt-4"><canvas id="chart-range-trend"></canvas></div>
             </div>
 
             <!-- Hero Cards -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div class="card bg-gradient-to-br from-accent-600/20 to-accent-700/10 border-accent-500/20">
-                    <div class="card-label">Total Tokens</div>
+                    <div class="card-label" data-i18n="totalTokens">Total Tokens</div>
                     <div class="card-value" id="stat-total-tokens">0</div>
                 </div>
                 <div class="card bg-gradient-to-br from-emerald-600/20 to-emerald-700/10 border-emerald-500/20">
-                    <div class="card-label">Total Sessions</div>
+                    <div class="card-label" data-i18n="totalSessions">Total Sessions</div>
                     <div class="card-value" id="stat-total-sessions">0</div>
                 </div>
                 <div class="card bg-gradient-to-br from-amber-600/20 to-amber-700/10 border-amber-500/20">
-                    <div class="card-label">Today</div>
+                    <div class="card-label" data-i18n="todayUsage">Today</div>
                     <div class="card-value" id="stat-today-tokens">0</div>
                     <div class="card-sub" id="stat-today-sessions">0 sessions</div>
                 </div>
                 <div class="card bg-gradient-to-br from-purple-600/20 to-purple-700/10 border-purple-500/20">
-                    <div class="card-label">This Week</div>
+                    <div class="card-label" data-i18n="weekUsage">This Week</div>
                     <div class="card-value" id="stat-week-tokens">0</div>
                     <div class="card-sub" id="stat-week-sessions">0 sessions</div>
                 </div>
@@ -180,36 +189,36 @@
             <!-- Charts Row 1 -->
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <div class="lg:col-span-2 card">
-                    <h3 class="card-title">Daily Trend (30d)</h3>
+                    <h3 class="card-title" data-i18n="dailyTrend">Daily Trend (30d)</h3>
                     <div class="chart-container"><canvas id="chart-daily-trend"></canvas></div>
                 </div>
                 <div class="card">
-                    <h3 class="card-title">By Model</h3>
+                    <h3 class="card-title" data-i18n="modelDist">By Model</h3>
                     <div class="chart-container"><canvas id="chart-by-model"></canvas></div>
                 </div>
             </div>
             <!-- Charts Row 2 -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div class="card">
-                    <h3 class="card-title">By Provider</h3>
+                    <h3 class="card-title" data-i18n="providerDist">By Provider</h3>
                     <div class="chart-container"><canvas id="chart-by-provider"></canvas></div>
                 </div>
                 <div class="card">
-                    <h3 class="card-title">Hourly Distribution</h3>
+                    <h3 class="card-title" data-i18n="hourlyDist">Hourly Distribution</h3>
                     <div class="chart-container"><canvas id="chart-hourly"></canvas></div>
                 </div>
             </div>
             <!-- Top Sessions -->
             <div class="card">
-                <h3 class="card-title">Top 10 Token-Heavy Sessions</h3>
+                <h3 class="card-title" data-i18n="topSessions">Top 10 Token-Heavy Sessions</h3>
                 <div class="overflow-x-auto">
                     <table class="w-full text-sm">
                         <thead>
                             <tr class="text-dark-400 border-b border-dark-700">
-                                <th class="text-left py-2 px-3">#</th>
-                                <th class="text-left py-2 px-3">Title</th>
-                                <th class="text-left py-2 px-3">Model</th>
-                                <th class="text-right py-2 px-3">Tokens</th>
+                                <th class="text-left py-2 px-3" data-i18n="rank">#</th>
+                                <th class="text-left py-2 px-3" data-i18n="title">Title</th>
+                                <th class="text-left py-2 px-3" data-i18n="model">Model</th>
+                                <th class="text-right py-2 px-3" data-i18n="tokensUsed">Tokens</th>
                             </tr>
                         </thead>
                         <tbody id="top-sessions-body"></tbody>
@@ -223,31 +232,31 @@
             <!-- Search & Filters -->
             <div class="flex flex-wrap gap-3 items-center">
                 <div class="flex-1 min-w-[200px]">
-                    <input id="session-search" type="text" placeholder="Search sessions..." class="input w-full">
+                    <input id="session-search" type="text" placeholder="Search sessions..." class="input w-full" data-i18n-placeholder="searchPlaceholder">
                 </div>
                 <select id="filter-status" class="input w-32" onchange="loadSessions()">
-                    <option value="all">All</option>
-                    <option value="active">Active</option>
-                    <option value="archived">Archived</option>
+                    <option value="all" data-i18n="filterAll">All</option>
+                    <option value="active" data-i18n="filterActive">Active</option>
+                    <option value="archived" data-i18n="filterArchived">Archived</option>
                 </select>
                 <select id="filter-source" class="input w-32" onchange="loadSessions()">
-                    <option value="all">All Sources</option>
-                    <option value="user">User</option>
-                    <option value="agent">Agent</option>
+                    <option value="all" data-i18n="filterSourceAll">All Sources</option>
+                    <option value="user" data-i18n="filterSourceUser">User</option>
+                    <option value="agent" data-i18n="filterSourceAgent">Agent</option>
                 </select>
                 <select id="filter-model" class="input w-40" onchange="loadSessions()">
-                    <option value="">All Models</option>
+                    <option value="" data-i18n="filterModelAll">All Models</option>
                 </select>
                 <select id="filter-provider" class="input w-36" onchange="loadSessions()">
-                    <option value="">All Providers</option>
+                    <option value="" data-i18n="filterProviderAll">All Providers</option>
                 </select>
                 <select id="sort-by" class="input w-36" onchange="loadSessions()">
-                    <option value="created_at_ms">Created</option>
-                    <option value="updated_at">Updated</option>
-                    <option value="tokens_used">Tokens</option>
-                    <option value="title">Title</option>
+                    <option value="created_at_ms" data-i18n="created">Created</option>
+                    <option value="updated_at" data-i18n="updated">Updated</option>
+                    <option value="tokens_used" data-i18n="tokensUsed">Tokens</option>
+                    <option value="title" data-i18n="title">Title</option>
                 </select>
-                <button onclick="loadSessions()" class="btn btn-primary">Refresh</button>
+                <button onclick="loadSessions()" class="btn btn-primary" data-i18n="refresh">Refresh</button>
             </div>
             <!-- Session Table -->
             <div class="card overflow-hidden">
@@ -255,17 +264,17 @@
                     <table class="w-full text-sm">
                         <thead>
                             <tr class="text-dark-400 border-b border-dark-700 bg-dark-800/50">
-                                <th class="text-left py-3 px-4">Title</th>
-                                <th class="text-left py-3 px-4">Model</th>
-                                <th class="text-left py-3 px-4">Provider</th>
-                                <th class="text-right py-3 px-4">Tokens</th>
-                                <th class="text-left py-3 px-4">Date</th>
-                                <th class="text-center py-3 px-4">Status</th>
-                                <th class="text-center py-3 px-4">Actions</th>
+                                <th class="text-left py-3 px-4" data-i18n="title">Title</th>
+                                <th class="text-left py-3 px-4" data-i18n="model">Model</th>
+                                <th class="text-left py-3 px-4" data-i18n="provider">Provider</th>
+                                <th class="text-right py-3 px-4" data-i18n="tokensUsed">Tokens</th>
+                                <th class="text-left py-3 px-4" data-i18n="date">Date</th>
+                                <th class="text-center py-3 px-4" data-i18n="status">Status</th>
+                                <th class="text-center py-3 px-4" data-i18n="actions">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="sessions-table-body">
-                            <tr><td colspan="7" class="text-center py-8 text-dark-400">Loading...</td></tr>
+                            <tr><td colspan="7" class="text-center py-8 text-dark-400" data-i18n="loading">Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -274,8 +283,8 @@
             <div class="flex items-center justify-between">
                 <span id="sessions-info" class="text-sm text-dark-400"></span>
                 <div class="flex gap-2">
-                    <button id="btn-prev-page" onclick="prevPage()" class="btn btn-secondary" disabled>Previous</button>
-                    <button id="btn-next-page" onclick="nextPage()" class="btn btn-secondary">Next</button>
+                    <button id="btn-prev-page" onclick="prevPage()" class="btn btn-secondary" disabled data-i18n="prevPage">Previous</button>
+                    <button id="btn-next-page" onclick="nextPage()" class="btn btn-secondary" data-i18n="nextPage">Next</button>
                 </div>
             </div>
             <!-- Session Detail Modal -->
@@ -297,7 +306,7 @@
         <div id="page-sync" class="page p-6 space-y-6">
             <!-- Current Config -->
             <div class="card">
-                <h3 class="card-title">Current Config</h3>
+                <h3 class="card-title" data-i18n="currentConfig">Current Config</h3>
                 <div class="grid grid-cols-2 gap-4 mt-3">
                     <div>
                         <div class="text-xs text-dark-400 mb-1">Model Provider</div>
@@ -311,24 +320,24 @@
             </div>
             <!-- Provider Distribution -->
             <div class="card">
-                <h3 class="card-title">DB Provider Distribution</h3>
+                <h3 class="card-title" data-i18n="dbProviderDist">DB Provider Distribution</h3>
                 <div id="sync-provider-dist" class="mt-3 space-y-2"></div>
             </div>
             <!-- Codex Process -->
             <div class="card">
-                <h3 class="card-title">Codex Process</h3>
+                <h3 class="card-title" data-i18n="codexStatus">Codex Process</h3>
                 <div class="flex items-center gap-4 mt-3">
                     <div id="sync-codex-status" class="flex items-center gap-2">
                         <span class="status-dot bg-dark-500"></span>
-                        <span class="text-sm">Checking...</span>
+                        <span class="text-sm" data-i18n="loading">Checking...</span>
                     </div>
-                    <button onclick="checkCodexStatus()" class="btn btn-secondary text-xs">Refresh</button>
-                    <button onclick="killCodex()" class="btn btn-danger text-xs">Kill Codex</button>
+                    <button onclick="checkCodexStatus()" class="btn btn-secondary text-xs" data-i18n="checkStatus">Refresh</button>
+                    <button onclick="killCodex()" class="btn btn-danger text-xs" data-i18n="killCodex">Kill Codex</button>
                 </div>
             </div>
             <!-- Sync Target -->
             <div class="card">
-                <h3 class="card-title">Sync Target</h3>
+                <h3 class="card-title" data-i18n="syncTarget">Sync Target</h3>
                 <div class="grid grid-cols-2 gap-4 mt-3">
                     <div>
                         <label class="text-xs text-dark-400">Target Provider (empty = use config.toml)</label>
@@ -342,13 +351,13 @@
             </div>
             <!-- Actions -->
             <div class="flex flex-wrap gap-3">
-                <button onclick="syncPreview()" class="btn btn-secondary">Preview (Dry Run)</button>
-                <button onclick="syncExecute()" class="btn btn-warning">Execute Sync</button>
-                <button onclick="oneClickSyncRestart()" class="btn btn-primary">One-Click Sync + Restart</button>
+                <button onclick="syncPreview()" class="btn btn-secondary" data-i18n="previewDryRun">Preview (Dry Run)</button>
+                <button onclick="syncExecute()" class="btn btn-warning" data-i18n="executeSync">Execute Sync</button>
+                <button onclick="oneClickSyncRestart()" class="btn btn-primary" data-i18n="oneClickSyncRestartBtn">One-Click Sync + Restart</button>
             </div>
             <!-- Sync Result -->
             <div id="sync-result" class="card hidden">
-                <h3 class="card-title">Result</h3>
+                <h3 class="card-title" data-i18n="reportTitle">Result</h3>
                 <pre id="sync-result-text" class="mt-3 text-sm font-mono text-dark-200 bg-dark-950 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap"></pre>
             </div>
         </div>
@@ -356,24 +365,24 @@
         <!-- Backup Page -->
         <div id="page-backup" class="page p-6 space-y-4">
             <div class="flex flex-wrap gap-3 items-center">
-                <button onclick="createFullBackup()" class="btn btn-primary">Full Backup</button>
-                <button onclick="createIncrementalBackup()" class="btn btn-secondary">Incremental Backup</button>
-                <button onclick="loadBackups()" class="btn btn-ghost">Refresh</button>
+                <button onclick="createFullBackup()" class="btn btn-primary" data-i18n="createBackup">Full Backup</button>
+                <button onclick="createIncrementalBackup()" class="btn btn-secondary" data-i18n="incrementalBackup">Incremental Backup</button>
+                <button onclick="loadBackups()" class="btn btn-ghost" data-i18n="refresh">Refresh</button>
             </div>
             <div id="backup-info" class="text-sm text-dark-400"></div>
             <div class="card overflow-hidden">
                 <table class="w-full text-sm">
                     <thead>
                         <tr class="text-dark-400 border-b border-dark-700 bg-dark-800/50">
-                            <th class="text-left py-3 px-4">Name</th>
-                            <th class="text-right py-3 px-4">Size (MB)</th>
-                            <th class="text-left py-3 px-4">Time</th>
-                            <th class="text-left py-3 px-4">Type</th>
-                            <th class="text-center py-3 px-4">Actions</th>
+                            <th class="text-left py-3 px-4" data-i18n="name">Name</th>
+                            <th class="text-right py-3 px-4" data-i18n="backupSize">Size (MB)</th>
+                            <th class="text-left py-3 px-4" data-i18n="backupTime">Time</th>
+                            <th class="text-left py-3 px-4" data-i18n="backupType">Type</th>
+                            <th class="text-center py-3 px-4" data-i18n="actions">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="backups-table-body">
-                        <tr><td colspan="5" class="text-center py-8 text-dark-400">Loading...</td></tr>
+                        <tr><td colspan="5" class="text-center py-8 text-dark-400" data-i18n="loading">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -382,37 +391,37 @@
         <!-- Settings Page -->
         <div id="page-settings" class="page p-6 space-y-6">
             <div class="card">
-                <h3 class="card-title">Auto-Detected Paths</h3>
+                <h3 class="card-title" data-i18n="autoDetectedPaths">Auto-Detected Paths</h3>
                 <div class="mt-3">
-                    <button onclick="runAutoDetect()" class="btn btn-secondary mb-4">Re-Detect All Paths</button>
+                    <button onclick="runAutoDetect()" class="btn btn-secondary mb-4" data-i18n="reDetect">Re-Detect All Paths</button>
                     <div id="detect-results" class="space-y-3"></div>
                 </div>
             </div>
             <div class="card">
-                <h3 class="card-title">Configuration</h3>
+                <h3 class="card-title" data-i18n="configuration">Configuration</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div>
-                        <label class="text-xs text-dark-400">DB Path</label>
+                        <label class="text-xs text-dark-400" data-i18n="dbPath">DB Path</label>
                         <input id="setting-db-path" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Sessions Dir</label>
+                        <label class="text-xs text-dark-400" data-i18n="sessionsDir">Sessions Dir</label>
                         <input id="setting-sessions-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Archived Dir</label>
+                        <label class="text-xs text-dark-400" data-i18n="archivedDir">Archived Dir</label>
                         <input id="setting-archived-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Backup Dir</label>
+                        <label class="text-xs text-dark-400" data-i18n="backupDir">Backup Dir</label>
                         <input id="setting-backup-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Codex CLI Path</label>
+                        <label class="text-xs text-dark-400" data-i18n="codexCliPath">Codex CLI Path</label>
                         <input id="setting-codex-cli" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Codex++ Path</label>
+                        <label class="text-xs text-dark-400" data-i18n="codexPPPath">Codex++ Path</label>
                         <input id="setting-codex-pp" type="text" class="input mt-1">
                     </div>
                     <div>
@@ -421,44 +430,44 @@
                         <p class="text-xs text-dark-500 mt-1">用于未来读取 cache_read_tokens 等代理统计；未配置时缓存命中显示不支持。</p>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Page Size</label>
+                        <label class="text-xs text-dark-400" data-i18n="pageSize">Page Size</label>
                         <input id="setting-page-size" type="number" class="input mt-1" min="10" max="200">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Backup Interval (hours)</label>
+                        <label class="text-xs text-dark-400" data-i18n="backupInterval">Backup Interval (hours)</label>
                         <input id="setting-backup-interval" type="number" class="input mt-1" min="1" max="168">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Max Backups</label>
+                        <label class="text-xs text-dark-400" data-i18n="maxBackups">Max Backups</label>
                         <input id="setting-max-backups" type="number" class="input mt-1" min="1" max="100">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Large File Threshold (MB)</label>
+                        <label class="text-xs text-dark-400" data-i18n="largeFileThreshold">Large File Threshold (MB)</label>
                         <input id="setting-large-threshold" type="number" class="input mt-1" min="100">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Max Messages (Large Files)</label>
+                        <label class="text-xs text-dark-400" data-i18n="maxMessages">Max Messages (Large Files)</label>
                         <input id="setting-max-lines" type="number" class="input mt-1" min="100">
                     </div>
                 </div>
                 <div class="flex items-center gap-4 mt-4">
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-auto-backup" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        Auto Backup
+                        <span data-i18n="autoBackup">Auto Backup</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-use-codex-pp" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        Use Codex++
+                        <span data-i18n="useCodexPPSetting">Use Codex++</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-dark-mode" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        Dark Mode
+                        <span data-i18n="darkMode">Dark Mode</span>
                     </label>
                 </div>
             </div>
             <div class="flex gap-3">
-                <button onclick="saveSettings()" class="btn btn-primary">Save Settings</button>
-                <button onclick="resetSettings()" class="btn btn-danger">Reset to Defaults</button>
+                <button onclick="saveSettings()" class="btn btn-primary" data-i18n="saveSettings">Save Settings</button>
+                <button onclick="resetSettings()" class="btn btn-danger" data-i18n="resetDefaults">Reset to Defaults</button>
             </div>
         </div>
     </main>
@@ -468,6 +477,7 @@
         <div id="toast-inner" class="px-4 py-3 rounded-lg shadow-lg text-sm font-medium"></div>
     </div>
 
+    <script src="js/i18n.js"></script>
     <script src="js/app.js"></script>
     <script src="js/realtime.js"></script>
     <script src="js/stopwatch.js"></script>
