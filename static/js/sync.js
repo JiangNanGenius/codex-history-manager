@@ -23,9 +23,9 @@ async function loadSyncStatus() {
         if (targetProvider && !targetProvider.value) targetProvider.placeholder = data.current_provider || 'custom';
         if (targetModel && !targetModel.value) targetModel.placeholder = data.current_model || 'gpt-5';
 
-        setStatus('Sync status loaded');
+        setStatus(t('syncCompleted'));
     } catch (err) {
-        showToast('Failed to load sync status: ' + err.message, 'error');
+        showToast(t('failedLoadSync') + err.message, 'error');
     }
 }
 
@@ -76,20 +76,20 @@ async function checkCodexStatus() {
     try {
         const data = await api('/api/codex/status');
         renderCodexStatus(data.running, data.pids);
-        showToast(data.running ? 'Codex is running' : 'Codex is not running', 'info');
+        showToast(data.running ? t('codexIsRunning') : t('codexIsNotRunning'), 'info');
     } catch (err) {
-        showToast('Failed to check: ' + err.message, 'error');
+        showToast(t('failedCheck') + err.message, 'error');
     }
 }
 
 async function killCodex() {
-    if (!confirm('Kill Codex process?')) return;
+    if (!confirm(t('killCodex') + '?')) return;
     try {
         const data = await api('/api/codex/kill', { method: 'POST' });
         showToast(data.message, data.success ? 'success' : 'error');
         setTimeout(() => loadSyncStatus(), 1000);
     } catch (err) {
-        showToast('Failed: ' + err.message, 'error');
+        showToast(t('failedKillCodex') + err.message, 'error');
     }
 }
 
@@ -104,9 +104,9 @@ async function syncPreview() {
             body: JSON.stringify({ target_provider: targetProvider, target_model: targetModel }),
         });
         showSyncResult(data, true);
-        showToast('Preview complete', 'info');
+        showToast(t('previewChanges'), 'info');
     } catch (err) {
-        showToast('Preview failed: ' + err.message, 'error');
+        showToast(t('failedPreviewSync') + err.message, 'error');
     }
 }
 
@@ -123,9 +123,9 @@ async function syncExecute() {
             body: JSON.stringify({ target_provider: targetProvider, target_model: targetModel }),
         });
         showSyncResult(data, false);
-        showToast('Sync complete!', 'success');
+        showToast(t('syncCompleted'), 'success');
     } catch (err) {
-        showToast('Sync failed: ' + err.message, 'error');
+        showToast(t('failedExecuteSync') + err.message, 'error');
     }
 }
 
@@ -150,9 +150,9 @@ async function oneClickSyncRestart() {
 
         showSyncResult(syncData, false);
         if (startData.success) {
-            showToast('One-click sync restart complete!', 'success');
+            showToast(t('oneClickSyncCompleted'), 'success');
         } else {
-            showToast('Sync done but restart failed: ' + startData.message, 'warning');
+            showToast(t('syncCompleted') + ' ' + t('notRunning') + ': ' + startData.message, 'warning');
         }
 
         setTimeout(() => loadSyncStatus(), 1000);

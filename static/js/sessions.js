@@ -29,9 +29,9 @@ async function loadSessions() {
         renderSessionPagination();
         loadFilterOptions();
 
-        setStatus(`Sessions: ${data.sessions.length} / ${data.total}`);
+        setStatus(`${t('sessionsLoaded')}: ${data.sessions.length} / ${data.total}`);
     } catch (err) {
-        showToast('Failed to load sessions: ' + err.message, 'error');
+        showToast(t('failedLoadSessions') + err.message, 'error');
     }
 }
 
@@ -46,7 +46,7 @@ function renderSessionTable(sessions) {
 
     tbody.innerHTML = sessions.map(s => {
         const archived = s.archived ? '<span class="px-1.5 py-0.5 rounded text-xs bg-dark-600 text-dark-300">' + t('filterArchived') + '</span>' : '<span class="px-1.5 py-0.5 rounded text-xs bg-emerald-500/20 text-emerald-400">' + t('filterActive') + '</span>';
-        const title = escapeHtml(s.title || '(No Title)');
+        const title = escapeHtml(s.title || t('noTitle'));
         const modelTag = s.model ? `<span class="px-1.5 py-0.5 rounded text-xs bg-dark-700 text-dark-300">${escapeHtml(s.model)}</span>` : '-';
         const providerTag = s.model_provider ? `<span class="px-1.5 py-0.5 rounded text-xs bg-accent-500/15 text-accent-400">${escapeHtml(s.model_provider)}</span>` : '-';
         const tokens = s.tokens_used ? formatNumber(s.tokens_used) : '-';
@@ -64,7 +64,7 @@ function renderSessionTable(sessions) {
                 <td class="py-3 px-4 text-center">${archived}</td>
                 <td class="py-3 px-4 text-center">
                     <div class="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition">
-                        <button onclick="event.stopPropagation(); toggleArchive('${s.id}', ${s.archived ? 0 : 1})" class="p-1 rounded hover:bg-dark-600 text-dark-400 hover:text-white" title="${s.archived ? 'Unarchive' : 'Archive'}">
+                        <button onclick="event.stopPropagation(); toggleArchive('${s.id}', ${s.archived ? 0 : 1})" class="p-1 rounded hover:bg-dark-600 text-dark-400 hover:text-white" title="${s.archived ? t('unarchive') : t('archive')}">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
                         </button>
                     </div>
@@ -108,13 +108,13 @@ async function loadFilterOptions() {
 
         if (modelSelect && data.models) {
             const current = modelSelect.value;
-            modelSelect.innerHTML = '<option value="">All Models</option>' +
+            modelSelect.innerHTML = '<option value="">' + t('filterModelAll') + '</option>' +
                 data.models.map(m => `<option value="${escapeHtml(m)}" ${m === current ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('');
         }
 
         if (providerSelect && data.providers) {
             const current = providerSelect.value;
-            providerSelect.innerHTML = '<option value="">All Providers</option>' +
+            providerSelect.innerHTML = '<option value="">' + t('filterProviderAll') + '</option>' +
                 data.providers.map(p => `<option value="${escapeHtml(p)}" ${p === current ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('');
         }
     } catch (err) {
@@ -128,23 +128,23 @@ async function openSessionDetail(sessionId) {
         renderSessionDetail(data);
         document.getElementById('session-detail-modal').classList.remove('hidden');
     } catch (err) {
-        showToast('Failed to load session: ' + err.message, 'error');
+        showToast(t('failedLoadSession') + err.message, 'error');
     }
 }
 
 function renderSessionDetail(data) {
     // Title
-    document.getElementById('detail-title').textContent = data.title || '(No Title)';
+    document.getElementById('detail-title').textContent = data.title || t('noTitle');
 
     // Meta
     const meta = document.getElementById('detail-meta');
     const metaItems = [];
-    if (data.model) metaItems.push(`<span class="px-2 py-0.5 rounded bg-dark-700 text-dark-300">Model: ${escapeHtml(data.model)}</span>`);
-    if (data.model_provider) metaItems.push(`<span class="px-2 py-0.5 rounded bg-accent-500/15 text-accent-400">Provider: ${escapeHtml(data.model_provider)}</span>`);
-    if (data.tokens_used) metaItems.push(`<span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400">Tokens: ${formatNumber(data.tokens_used)}</span>`);
-    if (data.created_at) metaItems.push(`<span class="text-dark-400">Created: ${formatDate(data.created_at)}</span>`);
-    if (data.file_size_mb) metaItems.push(`<span class="text-dark-400">File: ${data.file_size_mb.toFixed(1)} MB</span>`);
-    if (data.archived) metaItems.push('<span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400">Archived</span>');
+    if (data.model) metaItems.push(`<span class="px-2 py-0.5 rounded bg-dark-700 text-dark-300">${t('model')}: ${escapeHtml(data.model)}</span>`);
+    if (data.model_provider) metaItems.push(`<span class="px-2 py-0.5 rounded bg-accent-500/15 text-accent-400">${t('provider')}: ${escapeHtml(data.model_provider)}</span>`);
+    if (data.tokens_used) metaItems.push(`<span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400">${t('tokens')}: ${formatNumber(data.tokens_used)}</span>`);
+    if (data.created_at) metaItems.push(`<span class="text-dark-400">${t('created')}: ${formatDate(data.created_at)}</span>`);
+    if (data.file_size_mb) metaItems.push(`<span class="text-dark-400">${t('backupSize')}: ${data.file_size_mb.toFixed(1)} MB</span>`);
+    if (data.archived) metaItems.push('<span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400">' + t('filterArchived') + '</span>');
     if (data.is_large_file) metaItems.push('<span class="px-2 py-0.5 rounded bg-red-500/15 text-red-400">Large File</span>');
     if (data.truncated) metaItems.push('<span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400">Truncated</span>');
     meta.innerHTML = metaItems.join('');
@@ -154,19 +154,22 @@ function renderSessionDetail(data) {
     const messages = data.messages || [];
 
     if (data.file_not_found) {
-        messagesDiv.innerHTML = '<div class="text-center py-8 text-dark-400">JSONL file not found</div>';
+        messagesDiv.innerHTML = '<div class="text-center py-8 text-dark-400">' + t('fileNotFound') + '</div>';
         return;
     }
 
     if (messages.length === 0) {
-        messagesDiv.innerHTML = '<div class="text-center py-8 text-dark-400">No messages</div>';
+        messagesDiv.innerHTML = '<div class="text-center py-8 text-dark-400">' + t('noMessages') + '</div>';
         return;
     }
 
     messagesDiv.innerHTML = messages.map(msg => {
         const role = msg.role || 'unknown';
         const roleClass = `msg-${role}`;
-        const roleLabel = { user: 'User', assistant: 'Assistant', system: 'System', tool: 'Tool', developer: 'Developer' }[role] || role;
+        const roleLabel = {
+            user: t('roleUser'), assistant: t('roleAssistant'), system: t('roleSystem'),
+            tool: t('roleTool'), developer: t('roleDeveloper')
+        }[role] || role;
         const roleColor = { user: 'text-accent-400', assistant: 'text-emerald-400', system: 'text-purple-400', tool: 'text-amber-400', developer: 'text-cyan-400' }[role] || 'text-dark-400';
         const content = formatMessageContent(msg.content || '');
         const ts = msg.timestamp ? `<span class="text-xs text-dark-500 ml-2">${msg.timestamp.slice(0, 19)}</span>` : '';
@@ -202,7 +205,7 @@ async function toggleArchive(sessionId, archived) {
     try {
         const endpoint = archived ? `/api/sessions/${sessionId}/archive` : `/api/sessions/${sessionId}/unarchive`;
         await api(endpoint, { method: 'POST' });
-        showToast(archived ? 'Session archived' : 'Session unarchived', 'success');
+        showToast(archived ? t('sessionArchived') : t('sessionUnarchived'), 'success');
         loadSessions();
     } catch (err) {
         showToast('Failed: ' + err.message, 'error');

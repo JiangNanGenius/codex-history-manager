@@ -83,9 +83,9 @@ async function startStopwatch() {
 
         realtimeController.start('stopwatch-elapsed', updateStopwatchElapsed, 1000, true);
         realtimeController.start('stopwatch-tokens', refreshStopwatchTokens, STOPWATCH_TOKEN_REFRESH_MS, false);
-        setStatus('Stopwatch recording token delta');
+        setStatus(t('stopwatchRecording'));
     } catch (err) {
-        showToast('Start stopwatch failed: ' + err.message, 'error');
+        showToast(t('failed') + err.message, 'error');
     }
 }
 
@@ -107,7 +107,7 @@ async function stopStopwatch() {
     } catch (err) {
         console.warn('Final stopwatch token refresh failed', err);
     }
-    setStatus('Stopwatch stopped');
+    setStatus(t('stopwatchStopped'));
 }
 
 function resetStopwatch() {
@@ -218,7 +218,7 @@ function renderRangeTrend(buckets, granularity) {
                     borderColor: '#334155',
                     borderWidth: 1,
                     callbacks: {
-                        label: ctx => `${formatNumber(ctx.parsed.y)} tokens`,
+                        label: ctx => `${formatNumber(ctx.parsed.y)} ${t('tokensSuffix')}`,
                     },
                 },
             },
@@ -263,6 +263,7 @@ function toggleStatsRealtime() {
 function initRangeDefaults() {
     const endInput = document.getElementById('range-end');
     const startInput = document.getElementById('range-start');
+    const rangeToggle = document.getElementById('range-realtime-toggle');
     if (!endInput || !startInput) return;
 
     const now = new Date();
@@ -274,6 +275,12 @@ function initRangeDefaults() {
     if (!startInput.value) startInput.value = fmt(sevenDaysAgo);
 
     refreshRangeStats().catch(err => console.warn('Initial range refresh failed', err));
+
+    // Auto-enable range realtime if toggle exists and not checked
+    if (rangeToggle && !rangeToggle.checked) {
+        rangeToggle.checked = true;
+        toggleRangeRealtime();
+    }
 }
 
 // Auto-init range defaults when stats page loads

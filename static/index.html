@@ -71,7 +71,7 @@
         </nav>
         <!-- Status bar -->
         <div id="sidebar-status" class="px-5 py-3 border-t border-dark-700 text-xs text-dark-400">
-            <span id="status-text">Ready</span>
+            <span id="status-text" data-i18n="ready">就绪</span>
         </div>
     </aside>
 
@@ -88,10 +88,10 @@
                     </div>
                     <div class="flex flex-wrap items-center gap-3">
                         <label class="flex items-center gap-2 text-sm text-dark-300 cursor-pointer">
-                            <input id="stats-realtime-toggle" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" onchange="toggleStatsRealtime()">
+                            <input id="stats-realtime-toggle" type="checkbox" checked class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" onchange="toggleStatsRealtime()">
                             <span data-i18n="realtimeRefresh">实时刷新（20 秒）</span>
                         </label>
-                        <span id="stats-realtime-status" class="text-xs text-dark-500" data-i18n="disabled">未开启</span>
+                        <span id="stats-realtime-status" class="text-xs text-emerald-400" data-i18n="enabled">已开启</span>
                     </div>
                 </div>
             </div>
@@ -158,7 +158,7 @@
                     <div class="flex flex-wrap items-center gap-3">
                         <button onclick="refreshRangeStats()" class="btn btn-secondary" data-i18n="refresh">刷新</button>
                         <label class="flex items-center gap-2 text-sm text-dark-300 cursor-pointer">
-                            <input id="range-realtime-toggle" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" onchange="toggleRangeRealtime()">
+                            <input id="range-realtime-toggle" type="checkbox" checked class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" onchange="toggleRangeRealtime()">
                             <span data-i18n="rangeRealtime">实时模式（20 秒）</span>
                         </label>
                     </div>
@@ -311,11 +311,11 @@
                 <h3 class="card-title" data-i18n="currentConfig">Current Config</h3>
                 <div class="grid grid-cols-2 gap-4 mt-3">
                     <div>
-                        <div class="text-xs text-dark-400 mb-1">Model Provider</div>
+                        <div class="text-xs text-dark-400 mb-1" data-i18n="modelProvider">模型提供商</div>
                         <div id="sync-current-provider" class="text-sm font-mono text-accent-400">-</div>
                     </div>
                     <div>
-                        <div class="text-xs text-dark-400 mb-1">Model</div>
+                        <div class="text-xs text-dark-400 mb-1" data-i18n="modelLabel">模型</div>
                         <div id="sync-current-model" class="text-sm font-mono text-accent-400">-</div>
                     </div>
                 </div>
@@ -342,11 +342,11 @@
                 <h3 class="card-title" data-i18n="syncTarget">Sync Target</h3>
                 <div class="grid grid-cols-2 gap-4 mt-3">
                     <div>
-                        <label class="text-xs text-dark-400">Target Provider (empty = use config.toml)</label>
+                        <label class="text-xs text-dark-400" data-i18n="targetProvider">目标提供商（留空使用 config.toml）</label>
                         <input id="sync-target-provider" type="text" class="input mt-1" placeholder="e.g. custom">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Target Model (empty = use config.toml)</label>
+                        <label class="text-xs text-dark-400" data-i18n="targetModel">目标模型（留空使用 config.toml）</label>
                         <input id="sync-target-model" type="text" class="input mt-1" placeholder="e.g. gpt-5">
                     </div>
                 </div>
@@ -427,9 +427,9 @@
                         <input id="setting-codex-pp" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">CC Switch DB Path（可选）</label>
+                        <label class="text-xs text-dark-400" data-i18n="ccSwitchDbPath">CC Switch 数据库路径（可选）</label>
                         <input id="setting-cc-switch-db" type="text" class="input mt-1" placeholder="proxy_request_logs 所在数据库路径">
-                        <p class="text-xs text-dark-500 mt-1">用于未来读取 cache_read_tokens 等代理统计；未配置时缓存命中显示不支持。</p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">用于未来读取 cache_read_tokens 等代理统计；未配置时缓存命中显示不支持。</p>
                     </div>
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="pageSize">Page Size</label>

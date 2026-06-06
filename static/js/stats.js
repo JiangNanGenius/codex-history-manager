@@ -37,9 +37,9 @@ async function loadStats() {
         // Ensure range defaults are initialized
         if (typeof initRangeDefaults === 'function') initRangeDefaults();
 
-        setStatus(`Stats loaded - ${formatTokens(overview.total_tokens)} total tokens`);
+        setStatus(`${t('statsLoaded')} - ${formatTokens(overview.total_tokens)}`);
     } catch (err) {
-        showToast('Failed to load stats: ' + err.message, 'error');
+        showToast(t('failedLoadStats') + err.message, 'error');
     } finally {
         statsLoadInProgress = false;
     }
@@ -180,7 +180,7 @@ function renderByModel(data) {
                     borderWidth: 1,
                     callbacks: {
                         label: function(ctx) {
-                            return ctx.label + ': ' + formatTokens(ctx.parsed) + ' tokens';
+                            return ctx.label + ': ' + formatTokens(ctx.parsed) + ' ' + t('tokensSuffix');
                         }
                     }
                 },
@@ -222,7 +222,7 @@ function renderByProvider(data) {
                     borderWidth: 1,
                     callbacks: {
                         label: function(ctx) {
-                            return formatNumber(ctx.parsed.x) + ' tokens';
+                            return formatNumber(ctx.parsed.x) + ' ' + t('tokensSuffix');
                         }
                     }
                 },
@@ -284,7 +284,7 @@ function renderHourly(data) {
                     borderWidth: 1,
                     callbacks: {
                         label: function(ctx) {
-                            return formatNumber(ctx.parsed.y) + ' tokens';
+                            return formatNumber(ctx.parsed.y) + ' ' + t('tokensSuffix');
                         }
                     }
                 },

@@ -86,6 +86,9 @@ def build():
     all_hiddenimports = STDLIB_IMPORTS + FLASK_IMPORTS + WEBVIEW_IMPORTS + LOCAL_MODULES
     hiddenimports_str = ",\n                   ".join([f'"{m}"' for m in all_hiddenimports])
 
+    icon_path = str(PROJECT_DIR / "icon.ico").replace("\\", "/")
+    icon_arg = f'icon="{icon_path}",' if Path(icon_path).exists() else ''
+
     spec_content = f'''# -*- mode: python ; coding: utf-8 -*-
 a = Analysis(
     ["{main_py}"],
@@ -113,6 +116,7 @@ exe = EXE(
     a.datas,
     [],
     name="{EXE_NAME}",
+    {icon_arg}
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

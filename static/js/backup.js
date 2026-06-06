@@ -7,9 +7,9 @@ async function loadBackups() {
     try {
         const data = await api('/api/backups');
         renderBackupTable(data);
-        setStatus(`Backups: ${data.length} files`);
+        setStatus(`${t('backupsLoaded')}: ${data.length}`);
     } catch (err) {
-        showToast('Failed to load backups: ' + err.message, 'error');
+        showToast(t('failedLoadBackups') + err.message, 'error');
     }
 }
 
@@ -23,7 +23,7 @@ function renderBackupTable(backups) {
         return;
     }
 
-    document.getElementById('backup-info').textContent = `${backups.length} backup(s) found`;
+    document.getElementById('backup-info').textContent = `${backups.length} ${t('backupsFound')}`;
 
     tbody.innerHTML = backups.map(b => {
         const btype = (b.meta && b.meta.backup_type) || 'full';
@@ -47,47 +47,47 @@ function renderBackupTable(backups) {
 
 async function createFullBackup() {
     try {
-        setStatus('Creating full backup...');
+        setStatus(t('creatingFullBackup'));
         const data = await api('/api/backups/create', { method: 'POST' });
         if (data.success) {
-            showToast(`Backup created: ${data.size_mb} MB`, 'success');
+            showToast(`${t('backupCreatedSize')}: ${data.size_mb} MB`, 'success');
             loadBackups();
         } else {
-            showToast('Backup failed: ' + (data.error || 'Unknown error'), 'error');
+            showToast(t('backupFailed') + (data.error || 'Unknown error'), 'error');
         }
     } catch (err) {
-        showToast('Backup failed: ' + err.message, 'error');
+        showToast(t('backupFailed') + err.message, 'error');
     }
 }
 
 async function createIncrementalBackup() {
     try {
-        setStatus('Creating incremental backup...');
+        setStatus(t('creatingIncrementalBackup'));
         const data = await api('/api/backups/incremental', { method: 'POST' });
         if (data.success) {
-            showToast(`Incremental backup: ${data.changed_count || 0} changes`, 'success');
+            showToast(`${t('incrementalBackupChanges')}: ${data.changed_count || 0}`, 'success');
             loadBackups();
         } else {
-            showToast('Backup failed: ' + (data.error || 'Unknown error'), 'error');
+            showToast(t('backupFailed') + (data.error || 'Unknown error'), 'error');
         }
     } catch (err) {
-        showToast('Backup failed: ' + err.message, 'error');
+        showToast(t('backupFailed') + err.message, 'error');
     }
 }
 
 async function restoreBackup(backupName) {
-    if (!confirm(`Restore from this backup?\n\nCurrent database will be backed up, then replaced.\n\n${backupName}`)) return;
+    if (!confirm(t('confirmRestore') + backupName)) return;
 
     try {
-        setStatus('Restoring backup...');
+        setStatus(t('restoringBackup'));
         const data = await api(`/api/backups/${encodeURIComponent(backupName)}/restore`, { method: 'POST' });
         if (data.success) {
-            showToast('Restore successful!', 'success');
+            showToast(t('restoreSuccessful'), 'success');
             loadBackups();
         } else {
-            showToast('Restore failed: ' + (data.error || 'Unknown error'), 'error');
+            showToast(t('restoreFailed') + (data.error || 'Unknown error'), 'error');
         }
     } catch (err) {
-        showToast('Restore failed: ' + err.message, 'error');
+        showToast(t('restoreFailed') + err.message, 'error');
     }
 }

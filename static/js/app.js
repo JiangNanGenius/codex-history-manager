@@ -12,12 +12,6 @@ function navigateTo(page) {
     if (page !== 'stats' && typeof realtimeController !== 'undefined') {
         realtimeController.stop('stats-dashboard');
         realtimeController.stop('range-stats');
-        const statsToggle = document.getElementById('stats-realtime-toggle');
-        const rangeToggle = document.getElementById('range-realtime-toggle');
-        const statsStatus = document.getElementById('stats-realtime-status');
-        if (statsToggle) statsToggle.checked = false;
-        if (rangeToggle) rangeToggle.checked = false;
-        if (statsStatus) statsStatus.textContent = t('disabled');
     }
     // Hide all pages
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -30,7 +24,24 @@ function navigateTo(page) {
     });
     // Load page data
     switch (page) {
-        case 'stats': loadStats(); break;
+        case 'stats':
+            loadStats();
+            // Auto-enable realtime refresh on stats page
+            setTimeout(() => {
+                const statsToggle = document.getElementById('stats-realtime-toggle');
+                const rangeToggle = document.getElementById('range-realtime-toggle');
+                const statsStatus = document.getElementById('stats-realtime-status');
+                if (statsToggle && !statsToggle.checked) {
+                    statsToggle.checked = true;
+                    if (statsStatus) statsStatus.textContent = t('enabled');
+                    toggleStatsRealtime();
+                }
+                if (rangeToggle && !rangeToggle.checked) {
+                    rangeToggle.checked = true;
+                    toggleRangeRealtime();
+                }
+            }, 100);
+            break;
         case 'sessions': loadSessions(); break;
         case 'sync': loadSyncStatus(); break;
         case 'backup': loadBackups(); break;

@@ -24,6 +24,24 @@ const translations = {
     no: '否',
     enabled: '已开启',
     disabled: '未开启',
+    ready: '就绪',
+
+    // 状态提示
+    statsLoaded: '统计已加载',
+    failedLoadStats: '加载统计失败：',
+    failedLoadSessions: '加载会话失败：',
+    failedLoadSession: '加载会话详情失败：',
+    sessionsLoaded: '会话',
+    failedLoadBackups: '加载备份失败：',
+    backupsLoaded: '备份',
+    backupsFound: '找到备份',
+    failedLoadSync: '加载同步状态失败：',
+    failedPreviewSync: '预览同步失败：',
+    failedExecuteSync: '执行同步失败：',
+    failedOneClickSync: '一键同步失败：',
+    failedKillCodex: '关闭 Codex 失败：',
+    failedCheck: '检查失败：',
+    failed: '失败：',
 
     // 侧边栏
     navStats: '统计面板',
@@ -96,6 +114,11 @@ const translations = {
     currentTotalTokens: '当前总 Tokens',
     cacheNotSupported: '不支持',
     cacheAvailable: '可用',
+    stopwatchRecording: '秒表正在记录 Token 差值',
+    stopwatchStopped: '秒表已停止',
+
+    // Tooltip / Chart
+    tokensSuffix: 'Token',
 
     // 会话浏览
     sessionBrowser: '会话浏览器',
@@ -126,6 +149,18 @@ const translations = {
     workDir: '工作目录',
     status: '状态',
     actions: '操作',
+    noTitle: '（无标题）',
+    fileNotFound: 'JSONL 文件未找到',
+    noMessages: '无消息',
+    roleUser: '用户',
+    roleAssistant: '助手',
+    roleSystem: '系统',
+    roleTool: '工具',
+    roleDeveloper: '开发者',
+    sessionArchived: '会话已归档',
+    sessionUnarchived: '会话已取消归档',
+    model: '模型',
+    modelProvider: '模型提供商',
 
     // 同步
     accountSync: '账户同步',
@@ -154,6 +189,14 @@ const translations = {
     previewDryRun: '预览（Dry Run）',
     oneClickSyncRestartBtn: '一键同步 + 重启',
     checkStatus: '刷新状态',
+    oneClickSyncCompleted: '一键同步完成！',
+    codexKilled: 'Codex 已关闭',
+    codexIsRunning: 'Codex 正在运行',
+    codexIsNotRunning: 'Codex 未运行',
+    targetProvider: '目标提供商（留空使用 config.toml）',
+    targetModel: '目标模型（留空使用 config.toml）',
+    ccSwitchDbPath: 'CC Switch 数据库路径（可选）',
+    ccSwitchDbDesc: '用于未来读取 cache_read_tokens 等代理统计；未配置时缓存命中显示不支持。',
 
     // 备份
     backupManager: '备份管理',
@@ -169,6 +212,15 @@ const translations = {
     backupCreated: '备份已创建',
     restoreCompleted: '还原完成',
     name: '名称',
+    creatingFullBackup: '正在创建完整备份...',
+    backupCreatedSize: '备份已创建',
+    backupFailed: '备份失败：',
+    creatingIncrementalBackup: '正在创建增量备份...',
+    incrementalBackupChanges: '增量备份变更',
+    confirmRestore: '从此备份还原？\n\n当前数据库将被备份，然后替换。\n\n',
+    restoringBackup: '正在还原备份...',
+    restoreSuccessful: '还原成功！',
+    restoreFailed: '还原失败：',
 
     // 设置
     settings: '设置',
@@ -216,6 +268,24 @@ const translations = {
     no: 'No',
     enabled: 'Enabled',
     disabled: 'Disabled',
+    ready: 'Ready',
+
+    // Status messages
+    statsLoaded: 'Stats loaded',
+    failedLoadStats: 'Failed to load stats: ',
+    failedLoadSessions: 'Failed to load sessions: ',
+    failedLoadSession: 'Failed to load session: ',
+    sessionsLoaded: 'Sessions',
+    failedLoadBackups: 'Failed to load backups: ',
+    backupsLoaded: 'Backups',
+    backupsFound: 'backups found',
+    failedLoadSync: 'Failed to load sync status: ',
+    failedPreviewSync: 'Failed to preview sync: ',
+    failedExecuteSync: 'Failed to execute sync: ',
+    failedOneClickSync: 'Failed to one-click sync: ',
+    failedKillCodex: 'Failed to kill Codex: ',
+    failedCheck: 'Failed to check: ',
+    failed: 'Failed: ',
 
     // Sidebar
     navStats: 'Statistics',
@@ -288,6 +358,11 @@ const translations = {
     currentTotalTokens: 'Current Total Tokens',
     cacheNotSupported: 'Not supported',
     cacheAvailable: 'Available',
+    stopwatchRecording: 'Stopwatch recording token delta',
+    stopwatchStopped: 'Stopwatch stopped',
+
+    // Tooltip / Chart
+    tokensSuffix: 'tokens',
 
     // Sessions
     sessionBrowser: 'Session Browser',
@@ -318,6 +393,18 @@ const translations = {
     workDir: 'Working Dir',
     status: 'Status',
     actions: 'Actions',
+    noTitle: '(No Title)',
+    fileNotFound: 'JSONL file not found',
+    noMessages: 'No messages',
+    roleUser: 'User',
+    roleAssistant: 'Assistant',
+    roleSystem: 'System',
+    roleTool: 'Tool',
+    roleDeveloper: 'Developer',
+    sessionArchived: 'Session archived',
+    sessionUnarchived: 'Session unarchived',
+    model: 'Model',
+    modelProvider: 'Model Provider',
 
     // Sync
     accountSync: 'Account Sync',
@@ -361,6 +448,25 @@ const translations = {
     backupCreated: 'Backup created',
     restoreCompleted: 'Restore completed',
     name: 'Name',
+    creatingFullBackup: 'Creating full backup...',
+    backupCreatedSize: 'Backup created',
+    backupFailed: 'Backup failed: ',
+    creatingIncrementalBackup: 'Creating incremental backup...',
+    incrementalBackupChanges: 'Incremental backup changes',
+    confirmRestore: 'Restore from this backup?\n\nCurrent database will be backed up, then replaced.\n\n',
+    restoringBackup: 'Restoring backup...',
+    restoreSuccessful: 'Restore successful!',
+    restoreFailed: 'Restore failed: ',
+
+    // Sync extras
+    oneClickSyncCompleted: 'One-click sync restart complete!',
+    codexKilled: 'Codex killed',
+    codexIsRunning: 'Codex is running',
+    codexIsNotRunning: 'Codex is not running',
+    targetProvider: 'Target Provider (empty = use config.toml)',
+    targetModel: 'Target Model (empty = use config.toml)',
+    ccSwitchDbPath: 'CC Switch DB Path (optional)',
+    ccSwitchDbDesc: 'For future cache_read_tokens proxy stats; cache hits show unsupported when not configured.',
 
     // Settings
     settings: 'Settings',
