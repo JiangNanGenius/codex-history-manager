@@ -3,6 +3,7 @@ token_stats.py - Token 统计查询引擎
 基于 threads 表的 tokens_used 字段提供统计查询
 """
 import sqlite3
+import os
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timedelta, timezone
 
@@ -25,6 +26,16 @@ class TokenStats:
         cur = conn.execute("PRAGMA table_info(threads)")
         columns = {row[1] for row in cur.fetchall()}
         return column in columns
+
+    def _list_tables(self, conn: sqlite3.Connection) -> List[str]:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def _table_columns(self, conn: sqlite3.Connection, table: str) -> List[str]:
+        rows = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+        return [str(row[1]) for row in rows]
 
     def _parse_datetime_to_unix(self, value: Optional[str], end_of_day: bool = False) -> Optional[int]:
         """将前端日期/时间字符串解析为 Unix 秒级时间戳。"""
@@ -101,7 +112,7 @@ class TokenStats:
             "data_source": "codex_db",
             "realtime_note": "Codex DB 统计实时性取决于 Codex 写入 state_5.sqlite 的频率。",
             "cache_supported": False,
-            "cache_note": "Codex 原生数据库不保存 cache_read_tokens/cache_creation_tokens；缓存命中仅在配置 CC Switch 代理数据库后可用。",
+            "cache_note": "Codex 原生数据库不保存缓存读写字段；缓存统计需要配置代理缓存数据库，官方 API 和自定义 API 只要经过代理都可统计。",
         }
 
         try:
@@ -153,6 +164,107 @@ class TokenStats:
                 conn.close()
         except Exception as exc:
             result["error"] = str(exc)
+        return result
+
+    def get_cc_switch_cache_stats(
+        self,
+        cc_switch_db_path: str,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Best-effort proxy cache-token statistics.
+
+        Proxy databases can observe cache fields for both official and custom APIs
+        when requests are routed through its proxy. Schemas differ by version,
+        so this scans tables for cache/token columns instead of hard-coding one
+        table layout.
+        """
+        result: Dict[str, Any] = {
+            "cache_supported": False,
+            "cache_total_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_tables": [],
+            "cache_note": "",
+        }
+
+        if not cc_switch_db_path:
+            result["cache_note"] = (
+                "未配置代理缓存数据库；无法读取代理层缓存统计。"
+            )
+            return result
+
+        if not os.path.exists(cc_switch_db_path):
+            result["cache_note"] = f"代理缓存数据库不存在: {cc_switch_db_path}"
+            return result
+
+        start_ts = self._parse_datetime_to_unix(start, end_of_day=False)
+        end_ts = self._parse_datetime_to_unix(end, end_of_day=True)
+
+        try:
+            conn = sqlite3.connect(cc_switch_db_path, timeout=10)
+            conn.row_factory = sqlite3.Row
+            try:
+                for table in self._list_tables(conn):
+                    columns = self._table_columns(conn, table)
+                    cache_cols = [
+                        col for col in columns
+                        if "cache" in col.lower() and "token" in col.lower()
+                    ]
+                    if not cache_cols:
+                        continue
+
+                    time_col = _pick_time_column(columns)
+                    where_sql, params = _build_cc_time_filter(time_col, start_ts, end_ts)
+                    select_parts = []
+                    for col in cache_cols:
+                        alias = _safe_alias(col)
+                        select_parts.append(f'COALESCE(SUM(CAST("{col}" AS INTEGER)), 0) AS "{alias}"')
+                    row = conn.execute(
+                        f'SELECT {", ".join(select_parts)} FROM "{table}"{where_sql}',
+                        params,
+                    ).fetchone()
+
+                    table_total = 0
+                    table_read = 0
+                    table_creation = 0
+                    col_values: Dict[str, int] = {}
+                    for col in cache_cols:
+                        value = int(row[_safe_alias(col)] or 0)
+                        col_values[col] = value
+                        table_total += value
+                        lower = col.lower()
+                        if "read" in lower or "hit" in lower:
+                            table_read += value
+                        if "creation" in lower or "create" in lower or "write" in lower:
+                            table_creation += value
+
+                    if table_total <= 0 and not col_values:
+                        continue
+
+                    result["cache_supported"] = True
+                    result["cache_total_tokens"] += table_total
+                    result["cache_read_tokens"] += table_read
+                    result["cache_creation_tokens"] += table_creation
+                    result["cache_tables"].append({
+                        "table": table,
+                        "time_column": time_col or "",
+                        "columns": col_values,
+                    })
+            finally:
+                conn.close()
+        except Exception as exc:
+            result["cache_note"] = f"读取代理缓存统计失败: {exc}"
+            return result
+
+        if result["cache_supported"]:
+            result["cache_note"] = (
+                "缓存统计来自代理缓存数据库；官方 API 和自定义 API 只要经过代理，都可以统计缓存读写。"
+            )
+        else:
+            result["cache_note"] = (
+                "已配置代理缓存数据库，但未找到 cache/token 字段；请确认数据库版本或表结构。"
+            )
         return result
 
     def get_overview(self) -> Dict:
@@ -414,3 +526,54 @@ class TokenStats:
         except Exception as e:
             results.append({"error": str(e)})
         return results
+
+
+def _pick_time_column(columns: List[str]) -> str:
+    candidates = [
+        "created_at", "createdAt", "timestamp", "time", "request_time",
+        "started_at", "start_time", "created_at_ms", "updated_at",
+    ]
+    lowered = {col.lower(): col for col in columns}
+    for candidate in candidates:
+        if candidate.lower() in lowered:
+            return lowered[candidate.lower()]
+    for col in columns:
+        lower = col.lower()
+        if ("time" in lower or "date" in lower or lower.endswith("_at")) and "token" not in lower:
+            return col
+    return ""
+
+
+def _build_cc_time_filter(time_col: str, start_ts: Optional[int], end_ts: Optional[int]) -> Tuple[str, List[Any]]:
+    if not time_col or (start_ts is None and end_ts is None):
+        return "", []
+
+    clauses = []
+    params: List[Any] = []
+    col_expr = f'"{time_col}"'
+    # Handles Unix seconds, Unix milliseconds, and ISO-like text timestamps.
+    numeric_expr = f"CAST({col_expr} AS INTEGER)"
+    text_expr = f"CAST({col_expr} AS TEXT)"
+    is_numeric = f"({text_expr} NOT GLOB '*[^0-9]*' AND {text_expr} != '')"
+    is_text = f"NOT {is_numeric}"
+    iso_start = datetime.fromtimestamp(start_ts).isoformat() if start_ts is not None else ""
+    iso_end = datetime.fromtimestamp(end_ts).isoformat() if end_ts is not None else ""
+    if start_ts is not None:
+        clauses.append(
+            f"(({is_numeric} AND {numeric_expr} > 10000000000 AND {numeric_expr} >= ?) "
+            f"OR ({is_numeric} AND {numeric_expr} <= 10000000000 AND {numeric_expr} >= ?) "
+            f"OR ({is_text} AND {text_expr} >= ?))"
+        )
+        params.extend([start_ts * 1000, start_ts, iso_start])
+    if end_ts is not None:
+        clauses.append(
+            f"(({is_numeric} AND {numeric_expr} > 10000000000 AND {numeric_expr} <= ?) "
+            f"OR ({is_numeric} AND {numeric_expr} <= 10000000000 AND {numeric_expr} <= ?) "
+            f"OR ({is_text} AND {text_expr} <= ?))"
+        )
+        params.extend([end_ts * 1000, end_ts, iso_end])
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def _safe_alias(column: str) -> str:
+    return "sum_" + "".join(ch if ch.isalnum() else "_" for ch in column)

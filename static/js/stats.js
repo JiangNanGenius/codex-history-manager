@@ -62,11 +62,11 @@ function animateValue(element, start, end, duration, formatter) {
 function renderOverview(data) {
     const duration = 800;
     animateValue(document.getElementById('stat-total-tokens'), 0, data.total_tokens || 0, duration, formatTokens);
-    animateValue(document.getElementById('stat-total-sessions'), 0, data.total_sessions || 0, duration, formatNumber);
+    animateValue(document.getElementById('stat-total-sessions'), 0, data.total_sessions || 0, duration, formatCount);
     animateValue(document.getElementById('stat-today-tokens'), 0, data.today_tokens || 0, duration, formatTokens);
-    document.getElementById('stat-today-sessions').textContent = formatNumber(data.today_sessions) + ' ' + t('sessions');
+    document.getElementById('stat-today-sessions').textContent = formatCount(data.today_sessions) + ' ' + t('sessions');
     animateValue(document.getElementById('stat-week-tokens'), 0, data.week_tokens || 0, duration, formatTokens);
-    document.getElementById('stat-week-sessions').textContent = formatNumber(data.week_sessions) + ' ' + t('sessions');
+    document.getElementById('stat-week-sessions').textContent = formatCount(data.week_sessions) + ' ' + t('sessions');
 }
 
 function renderDailyTrend(data) {

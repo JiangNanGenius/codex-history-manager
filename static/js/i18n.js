@@ -75,7 +75,7 @@ const translations = {
 
     // 实时统计
     realtimeStats: 'Token 实时统计',
-    realtimeDesc: 'Codex DB 统计实时性取决于 Codex 写入 state_5.sqlite 的频率；缓存命中仅 CC Switch 代理数据源可用，未配置时不会伪造。',
+    realtimeDesc: 'Codex DB 统计实时性取决于 Codex 写入 state_5.sqlite 的频率；缓存统计来自代理缓存数据库，官方 API 和自定义 API 只要经过代理都可统计。',
     realtimeRefresh: '实时刷新（20 秒）',
     autoRefreshActive: '自动刷新中（20 秒）',
     autoRefreshShort: '自动刷新',
@@ -85,6 +85,7 @@ const translations = {
     alertThreshold: '报警阈值',
     toggleMonitor: '悬浮窗',
     tokenAlertReached: 'Token 报警已触发',
+    desktopMonitorOnly: '桌面悬浮窗仅在桌面版可用',
 
     // 时间筛选
     timeRange: '时间范围',
@@ -215,8 +216,8 @@ const translations = {
     codexIsNotRunning: 'Codex 未运行',
     targetProvider: '目标提供商（留空使用 config.toml）',
     targetModel: '目标模型（留空使用 config.toml）',
-    ccSwitchDbPath: 'CC Switch 数据库路径（可选）',
-    ccSwitchDbDesc: '用于未来读取 cache_read_tokens 等代理统计；未配置时缓存命中显示不支持。',
+    ccSwitchDbPath: '代理缓存数据库路径（可选）',
+    ccSwitchDbDesc: '用于读取代理数据库中的 cache/token 字段；官方 API 和自定义 API 只要经过代理都可统计。',
 
     // 备份
     backupManager: '备份管理',
@@ -349,7 +350,7 @@ const translations = {
 
     // Realtime
     realtimeStats: 'Token Realtime Statistics',
-    realtimeDesc: 'Codex DB stats real-time depends on Codex writing frequency to state_5.sqlite; cache hits only available with CC Switch proxy data source.',
+    realtimeDesc: 'Codex DB stats depend on Codex writes to state_5.sqlite; cache stats come from a proxy cache database and work for official or custom APIs when routed through the proxy.',
     realtimeRefresh: 'Realtime Refresh (20s)',
     autoRefreshActive: 'Auto-refreshing (20s)',
     autoRefreshShort: 'Auto refresh',
@@ -359,6 +360,7 @@ const translations = {
     alertThreshold: 'Alert Threshold',
     toggleMonitor: 'Floating Monitor',
     tokenAlertReached: 'Token alert triggered',
+    desktopMonitorOnly: 'Desktop floating monitor is only available in the desktop app',
 
     // Time filter
     timeRange: 'Time Range',
@@ -515,8 +517,8 @@ const translations = {
     codexIsNotRunning: 'Codex is not running',
     targetProvider: 'Target Provider (empty = use config.toml)',
     targetModel: 'Target Model (empty = use config.toml)',
-    ccSwitchDbPath: 'CC Switch DB Path (optional)',
-    ccSwitchDbDesc: 'For future cache_read_tokens proxy stats; cache hits show unsupported when not configured.',
+    ccSwitchDbPath: 'Proxy Cache DB Path (optional)',
+    ccSwitchDbDesc: 'Reads cache/token fields from a proxy database; official and custom APIs are both counted when routed through the proxy.',
 
     // Settings
     settings: 'Settings',

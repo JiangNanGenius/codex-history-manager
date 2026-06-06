@@ -71,7 +71,29 @@ function getTokenAlertThreshold() {
 function saveTokenMonitorSettings() {
     const threshold = getTokenAlertThreshold();
     localStorage.setItem('token_alert_threshold', String(threshold || TOKEN_ALERT_DEFAULT));
+    saveTrackerState();
     updateTokenMonitor().catch(err => console.warn('Token monitor refresh failed', err));
+}
+
+function saveTrackerState() {
+    const payload = {
+        running: Boolean(stopwatchState.running),
+        startMs: Number(stopwatchState.startMs || 0),
+        baseTotalTokens: Number(stopwatchState.baseTotalTokens || 0),
+        currentTotalTokens: Number(stopwatchState.currentTotalTokens || 0),
+        threshold: Number(tokenMonitorState.threshold || TOKEN_ALERT_DEFAULT),
+        updatedAt: Date.now(),
+    };
+    localStorage.setItem('token_tracker_state', JSON.stringify(payload));
+}
+
+async function showDesktopTokenMonitor() {
+    saveTokenMonitorSettings();
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.show_monitor) {
+        await window.pywebview.api.show_monitor();
+        return;
+    }
+    showToast(t('desktopMonitorOnly'), 'info');
 }
 
 function initTokenMonitorSettings() {
@@ -242,10 +264,11 @@ async function refreshStopwatchTokens() {
     const totalTokens = Number(data.total_tokens || 0);
     stopwatchState.currentTotalTokens = totalTokens;
     const tokenDiff = Math.max(totalTokens - stopwatchState.baseTotalTokens, 0);
+    saveTrackerState();
 
     setTextById('stopwatch-current-total', formatNumber(totalTokens));
     setTextById('stopwatch-token-diff', formatNumber(tokenDiff));
-    setTextById('stopwatch-cache-hits', data.cache_supported ? t('cacheAvailable') : t('cacheNotSupported'));
+    setTextById('stopwatch-cache-hits', data.cache_supported ? formatTokens(data.cache_total_tokens || 0) : t('cacheNotSupported'));
     setTextById('stopwatch-note', data.cache_note || data.realtime_note || t('noDataYet'));
 }
 
@@ -269,12 +292,13 @@ async function startStopwatch() {
         setTextById('stopwatch-elapsed', '00:00:00');
         setTextById('stopwatch-current-total', formatNumber(totalTokens));
         setTextById('stopwatch-token-diff', '0');
-        setTextById('stopwatch-cache-hits', data.cache_supported ? t('cacheAvailable') : t('cacheNotSupported'));
+        setTextById('stopwatch-cache-hits', data.cache_supported ? formatTokens(data.cache_total_tokens || 0) : t('cacheNotSupported'));
         setTextById('stopwatch-note', data.realtime_note || t('recording'));
 
         realtimeController.start('stopwatch-elapsed', updateStopwatchElapsed, 1000, true);
         realtimeController.start('stopwatch-tokens', refreshStopwatchTokens, STOPWATCH_TOKEN_REFRESH_MS, false);
         tokenMonitorState.lastAlertBucket = 0;
+        saveTrackerState();
         updateTokenMonitor().catch(err => console.warn('Token monitor refresh failed', err));
         setStatus(t('stopwatchRecording'));
     } catch (err) {
@@ -288,6 +312,7 @@ async function stopStopwatch() {
     realtimeController.stop('stopwatch-elapsed');
     realtimeController.stop('stopwatch-tokens');
     stopwatchState.running = false;
+    saveTrackerState();
 
     const startBtn = document.getElementById('stopwatch-start-btn');
     const stopBtn = document.getElementById('stopwatch-stop-btn');
@@ -324,6 +349,7 @@ function resetStopwatch() {
     setTextById('stopwatch-cache-hits', t('cacheNotSupported'));
     setTextById('stopwatch-note', t('noDataYet'));
     tokenMonitorState.lastAlertBucket = 0;
+    saveTrackerState();
     updateTokenMonitor().catch(err => console.warn('Token monitor refresh failed', err));
 }
 
@@ -462,4 +488,5 @@ function initRangeDefaults() {
 window.addEventListener('DOMContentLoaded', () => {
     initRangeDefaults();
     initTokenMonitorSettings();
+    saveTrackerState();
 });

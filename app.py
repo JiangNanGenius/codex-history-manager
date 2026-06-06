@@ -54,6 +54,11 @@ def create_app() -> Flask:
         """返回 SPA 主页面"""
         return send_from_directory("static", "index.html")
 
+    @app.route("/monitor")
+    def monitor():
+        """返回桌面 Token 悬浮监控窗页面"""
+        return send_from_directory("static", "monitor.html")
+
     # ─────────────── 会话 API ───────────────
 
     @app.route("/api/sessions")
@@ -191,9 +196,15 @@ def create_app() -> Flask:
             data["cc_switch_db_configured"] = bool(cc_switch_db_path)
             data["cc_switch_db_path"] = cc_switch_db_path
             if cc_switch_db_path:
+                cache_data = token_stats.get_cc_switch_cache_stats(
+                    cc_switch_db_path=cc_switch_db_path,
+                    start=start,
+                    end=end,
+                )
+                data.update(cache_data)
+            else:
                 data["cache_note"] = (
-                    "已配置 CC Switch DB 路径；当前版本预留代理缓存统计接口，"
-                    "不会从 Codex DB 伪造缓存命中。"
+                    "未配置代理缓存数据库；缓存统计需要请求经过代理数据源，官方 API 和自定义 API 都可被统计。"
                 )
             return jsonify(data)
         except Exception as e:

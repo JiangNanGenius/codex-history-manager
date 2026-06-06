@@ -1,0 +1,187 @@
+html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    font-family: Inter, "Segoe UI", system-ui, sans-serif;
+    color: #e2e8f0;
+    user-select: none;
+}
+
+.monitor-card {
+    box-sizing: border-box;
+    width: calc(100vw - 14px);
+    margin: 7px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.72);
+    box-shadow: 0 20px 52px rgba(2, 6, 23, 0.36), inset 0 1px 0 rgba(255,255,255,0.08);
+    backdrop-filter: blur(20px) saturate(1.45);
+    overflow: hidden;
+    transform: translateY(0) scale(1);
+    animation: enter 220ms ease-out;
+}
+
+.monitor-card.alert {
+    border-color: rgba(245, 158, 11, 0.82);
+    animation: alert-pulse 1.2s ease-in-out infinite;
+}
+
+.monitor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 13px 14px 9px;
+    -webkit-app-region: drag;
+}
+
+.monitor-kicker {
+    color: #94a3b8;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.monitor-mode {
+    margin-top: 2px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 650;
+}
+
+.icon-btn {
+    -webkit-app-region: no-drag;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 7px;
+    background: rgba(255,255,255,0.06);
+    color: #dbeafe;
+    font-size: 19px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.icon-btn:hover {
+    background: rgba(255,255,255,0.12);
+}
+
+.monitor-body {
+    padding: 0 14px 14px;
+    max-height: 140px;
+    opacity: 1;
+    transition: max-height 180ms ease, opacity 180ms ease, padding 180ms ease;
+}
+
+.monitor-card.compact .monitor-body {
+    max-height: 0;
+    opacity: 0;
+    padding-bottom: 0;
+}
+
+.value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+}
+
+.monitor-value {
+    color: #fff;
+    font-size: 33px;
+    line-height: 1.12;
+    font-weight: 760;
+    font-variant-numeric: tabular-nums;
+    transition: transform 160ms ease, color 160ms ease;
+}
+
+.monitor-value.bump {
+    color: #67e8f9;
+    transform: scale(1.06);
+}
+
+.unit {
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+.progress {
+    margin-top: 10px;
+    height: 7px;
+    border-radius: 999px;
+    background: rgba(2, 6, 23, 0.72);
+    overflow: hidden;
+}
+
+.progress-fill {
+    width: 0%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #22c55e, #06b6d4);
+    transition: width 260ms ease, background 160ms ease;
+}
+
+.monitor-card.alert .progress-fill {
+    background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+
+.meta, .cache-line {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+    color: #94a3b8;
+    font-size: 11px;
+}
+
+.cache-line {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.context-menu {
+    position: fixed;
+    display: none;
+    min-width: 142px;
+    padding: 6px;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(15, 23, 42, 0.94);
+    box-shadow: 0 18px 40px rgba(2, 6, 23, 0.42);
+    backdrop-filter: blur(16px);
+    z-index: 10;
+}
+
+.context-menu.open {
+    display: block;
+}
+
+.context-menu button {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #e2e8f0;
+    text-align: left;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.context-menu button:hover {
+    background: rgba(59, 130, 246, 0.16);
+}
+
+@keyframes enter {
+    from { opacity: 0; transform: translateY(10px) scale(.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes alert-pulse {
+    0%, 100% { box-shadow: 0 20px 52px rgba(2, 6, 23, 0.36), 0 0 0 rgba(245, 158, 11, 0); }
+    50% { box-shadow: 0 20px 52px rgba(2, 6, 23, 0.36), 0 0 30px rgba(245, 158, 11, 0.28); }
+}

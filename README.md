@@ -11,7 +11,7 @@
 
 ### Token Monitoring
 - Always-on token dashboard with overview cards, model/provider charts, hourly distribution, and top sessions.
-- Floating semi-transparent token monitor with drag, collapse, animation, and alert state.
+- Desktop always-on-top semi-transparent token monitor with right-click menu, drag, collapse, animation, and alert state.
 - Token usage tracker for a work interval, with configurable alert threshold.
 - When tracking is not active, the floating monitor shows the last 1 hour of token usage.
 - Large numbers automatically compact into K/M/B or localized Chinese units.
@@ -96,7 +96,7 @@ Settings are stored in `~/.codex_gui_config.json`.
 | `backup_dir` | Backup output directory |
 | `codex_cli_path` | Codex CLI executable path |
 | `codex_plus_plus_path` | Codex++ launcher path |
-| `cc_switch_db_path` | Optional proxy database path for future cache statistics |
+| Proxy cache database | Optional path for proxy cache-token statistics |
 | `page_size` | Session list page size |
 | `backup_interval_hours` | Auto-backup interval |
 | `max_backups` | Backup retention count |

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Token Monitor</title>
+    <link rel="stylesheet" href="css/monitor.css">
+</head>
+<body>
+    <main id="monitor-card" class="monitor-card">
+        <header id="drag-zone" class="monitor-header">
+            <div>
+                <div class="monitor-kicker">Token 监控</div>
+                <div id="monitor-mode" class="monitor-mode">近 1 小时用量</div>
+            </div>
+            <button id="compact-btn" class="icon-btn" title="折叠">
+                <span id="compact-glyph">−</span>
+            </button>
+        </header>
+        <section id="monitor-body" class="monitor-body">
+            <div class="value-row">
+                <span id="monitor-value" class="monitor-value">0</span>
+                <span class="unit">tokens</span>
+            </div>
+            <div class="progress"><div id="monitor-fill" class="progress-fill"></div></div>
+            <div class="meta">
+                <span id="monitor-threshold">0 / 100K</span>
+                <span id="monitor-updated">--:--</span>
+            </div>
+            <div id="monitor-cache" class="cache-line">缓存: --</div>
+        </section>
+    </main>
+
+    <nav id="context-menu" class="context-menu">
+        <button data-action="compact">折叠 / 展开</button>
+        <button data-action="refresh">立即刷新</button>
+        <button data-action="hide">隐藏悬浮窗</button>
+        <button data-action="main">显示主窗口</button>
+    </nav>
+
+    <script src="js/monitor.js"></script>
+</body>
+</html>

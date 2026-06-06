@@ -91,6 +91,11 @@ function formatTokens(n) {
     return formatNumber(n);
 }
 
+/** Counts stay exact so labels like total sessions never become 2.38K/千. */
+function formatCount(n) {
+    return formatNumber(n, { compact: false });
+}
+
 /** Format unix timestamp to date string */
 function formatDate(ts) {
     if (!ts) return '-';

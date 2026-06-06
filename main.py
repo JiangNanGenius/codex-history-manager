@@ -26,6 +26,27 @@ IDNO = 7
 
 tray_icon = None
 allow_exit = False
+main_window = None
+monitor_window = None
+
+
+class DesktopApi:
+    def show_monitor(self):
+        _show_monitor()
+
+    def hide_monitor(self):
+        _hide_monitor()
+
+    def show_main(self):
+        if main_window is not None:
+            _show_window(main_window)
+
+    def notify_monitor_alert(self, message: str):
+        try:
+            if tray_icon is not None:
+                tray_icon.notify(message, APP_TITLE)
+        except Exception:
+            pass
 
 
 def start_flask():
@@ -69,6 +90,23 @@ def _hide_to_tray(window):
         pass
 
 
+def _show_monitor():
+    try:
+        if monitor_window is not None:
+            monitor_window.show()
+            monitor_window.restore()
+    except Exception:
+        pass
+
+
+def _hide_monitor():
+    try:
+        if monitor_window is not None:
+            monitor_window.hide()
+    except Exception:
+        pass
+
+
 def _exit_app(window):
     global allow_exit
     allow_exit = True
@@ -77,10 +115,13 @@ def _exit_app(window):
             tray_icon.stop()
     except Exception:
         pass
-    try:
-        window.destroy()
-    except Exception:
-        os._exit(0)
+    for candidate in (monitor_window, window):
+        try:
+            if candidate is not None:
+                candidate.destroy()
+        except Exception:
+            pass
+    os._exit(0)
 
 
 def _ask_close_action(window) -> str:
@@ -122,6 +163,9 @@ def _setup_tray(window):
     def show_from_menu(icon=None, item=None):
         _show_window(window)
 
+    def show_monitor_from_menu(icon=None, item=None):
+        _show_monitor()
+
     def exit_from_menu(icon=None, item=None):
         _exit_app(window)
 
@@ -131,6 +175,7 @@ def _setup_tray(window):
         APP_TITLE,
         menu=pystray.Menu(
             pystray.MenuItem("显示窗口", show_from_menu, default=True),
+            pystray.MenuItem("显示 Token 监控", show_monitor_from_menu),
             pystray.MenuItem("退出", exit_from_menu),
         ),
     )
@@ -155,6 +200,7 @@ def _setup_tray(window):
 
 
 def main():
+    global main_window, monitor_window
     # 启动 Flask 后台线程
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
@@ -164,14 +210,35 @@ def main():
     time.sleep(2)
 
     # 创建 PyWebView 窗口（内嵌 Edge WebView2）
+    api = DesktopApi()
     window = webview.create_window(
         title=APP_TITLE,
         url=URL,
+        js_api=api,
         width=1280,
         height=800,
         min_size=(900, 600),
         confirm_close=False,
         text_select=True,
+    )
+    main_window = window
+    monitor_window = webview.create_window(
+        title="Token Monitor",
+        url=f"{URL}/monitor",
+        js_api=api,
+        width=300,
+        height=178,
+        x=40,
+        y=80,
+        resizable=False,
+        frameless=True,
+        easy_drag=True,
+        on_top=True,
+        transparent=True,
+        background_color="#00000000",
+        hidden=True,
+        focus=False,
+        text_select=False,
     )
     _setup_tray(window)
     webview.start(gui="edgechromium")

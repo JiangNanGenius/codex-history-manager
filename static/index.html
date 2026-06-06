@@ -84,7 +84,7 @@
                 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
                         <h2 class="text-lg font-semibold text-white" data-i18n="realtimeStats">Token 实时统计</h2>
-                        <p class="text-sm text-dark-400 mt-1" data-i18n="realtimeDesc">Codex DB 统计实时性取决于 Codex 写入 state_5.sqlite 的频率；缓存命中仅 CC Switch 代理数据源可用，未配置时不会伪造。</p>
+                        <p class="text-sm text-dark-400 mt-1" data-i18n="realtimeDesc">Codex DB 统计实时性取决于 Codex 写入 state_5.sqlite 的频率；缓存统计来自代理缓存数据库，官方 API 和自定义 API 只要经过代理都可统计。</p>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
                         <span class="status-dot bg-emerald-500 pulse-dot"></span>
@@ -108,7 +108,7 @@
                         <button id="stopwatch-start-btn" onclick="startStopwatch()" class="btn btn-primary" data-i18n="start">开始追踪</button>
                         <button id="stopwatch-stop-btn" onclick="stopStopwatch()" class="btn btn-warning" disabled data-i18n="stop">结束追踪</button>
                         <button onclick="resetStopwatch()" class="btn btn-secondary" data-i18n="reset">重置</button>
-                        <button onclick="toggleTokenMonitor()" class="btn btn-ghost" data-i18n="toggleMonitor">悬浮窗</button>
+                        <button onclick="showDesktopTokenMonitor()" class="btn btn-ghost" data-i18n="toggleMonitor">悬浮窗</button>
                     </div>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
@@ -431,9 +431,9 @@
                         <input id="setting-codex-pp" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="ccSwitchDbPath">CC Switch 数据库路径（可选）</label>
+                        <label class="text-xs text-dark-400" data-i18n="ccSwitchDbPath">代理缓存数据库路径（可选）</label>
                         <input id="setting-cc-switch-db" type="text" class="input mt-1" placeholder="proxy_request_logs 所在数据库路径">
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">用于未来读取 cache_read_tokens 等代理统计；未配置时缓存命中显示不支持。</p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">用于读取代理数据库中的 cache/token 字段；官方 API 和自定义 API 只要经过代理都可统计。</p>
                     </div>
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="pageSize">Page Size</label>
@@ -481,37 +481,6 @@
     <!-- Toast notification -->
     <div id="toast" class="fixed bottom-4 right-4 transform translate-y-20 opacity-0 transition-all duration-300 z-50">
         <div id="toast-inner" class="px-4 py-3 rounded-lg shadow-lg text-sm font-medium"></div>
-    </div>
-
-    <!-- Floating token monitor -->
-    <div id="token-monitor" class="token-monitor" aria-live="polite">
-        <div id="token-monitor-drag" class="token-monitor-header">
-            <div>
-                <div class="token-monitor-kicker" data-i18n="tokenMonitor">Token 监控</div>
-                <div id="token-monitor-mode" class="token-monitor-mode" data-i18n="lastHourUsage">近 1 小时用量</div>
-            </div>
-            <div class="flex items-center gap-1">
-                <button class="token-monitor-icon-btn" onclick="toggleTokenMonitorCompact()" title="Collapse">
-                    <svg id="token-monitor-collapse-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
-                </button>
-                <button class="token-monitor-icon-btn" onclick="toggleTokenMonitor(false)" title="Hide">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                </button>
-            </div>
-        </div>
-        <div id="token-monitor-body" class="token-monitor-body">
-            <div class="token-monitor-value-row">
-                <span id="token-monitor-value" class="token-monitor-value">0</span>
-                <span class="token-monitor-unit">tokens</span>
-            </div>
-            <div class="token-monitor-progress">
-                <div id="token-monitor-progress-fill" class="token-monitor-progress-fill"></div>
-            </div>
-            <div class="token-monitor-meta">
-                <span id="token-monitor-threshold-label">0 / 100K</span>
-                <span id="token-monitor-updated">--:--</span>
-            </div>
-        </div>
     </div>
 
     <script src="js/i18n.js"></script>
