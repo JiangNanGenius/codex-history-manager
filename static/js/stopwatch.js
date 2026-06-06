@@ -1,10 +1,12 @@
 /**
- * stopwatch.js - Token 秒表和时间段实时统计
+ * stopwatch.js - Token 用量追踪和时间段实时统计
  */
 
 const STOPWATCH_TOKEN_REFRESH_MS = 4000;
 const RANGE_REFRESH_MS = 20000;
 const STATS_REFRESH_MS = 20000;
+const TOKEN_MONITOR_REFRESH_MS = 10000;
+const TOKEN_ALERT_DEFAULT = 100000;
 
 let stopwatchState = {
     running: false,
@@ -14,6 +16,13 @@ let stopwatchState = {
 };
 
 let rangeTrendChart = null;
+let rangeDefaultsInitialized = false;
+let tokenMonitorState = {
+    visible: localStorage.getItem('token_monitor_visible') !== 'false',
+    compact: localStorage.getItem('token_monitor_compact') === 'true',
+    threshold: Number(localStorage.getItem('token_alert_threshold') || TOKEN_ALERT_DEFAULT),
+    lastAlertBucket: 0,
+};
 
 function formatElapsed(ms) {
     const totalSeconds = Math.max(Math.floor(ms / 1000), 0);
@@ -39,6 +48,188 @@ async function fetchCurrentTokenStats(params = {}) {
     }
     const query = searchParams.toString();
     return api(query ? `/api/token/current?${query}` : '/api/token/current');
+}
+
+function getOneHourRangeQuery() {
+    const end = new Date();
+    const start = new Date(end.getTime() - 60 * 60 * 1000);
+    return {
+        start: start.toISOString(),
+        end: end.toISOString(),
+        granularity: 'total',
+    };
+}
+
+function getTokenAlertThreshold() {
+    const input = document.getElementById('token-alert-threshold');
+    const raw = input ? Number(input.value) : tokenMonitorState.threshold;
+    const threshold = Number.isFinite(raw) && raw > 0 ? raw : 0;
+    tokenMonitorState.threshold = threshold;
+    return threshold;
+}
+
+function saveTokenMonitorSettings() {
+    const threshold = getTokenAlertThreshold();
+    localStorage.setItem('token_alert_threshold', String(threshold || TOKEN_ALERT_DEFAULT));
+    updateTokenMonitor().catch(err => console.warn('Token monitor refresh failed', err));
+}
+
+function initTokenMonitorSettings() {
+    const thresholdInput = document.getElementById('token-alert-threshold');
+    if (thresholdInput) {
+        thresholdInput.value = String(tokenMonitorState.threshold || TOKEN_ALERT_DEFAULT);
+    }
+    const monitor = document.getElementById('token-monitor');
+    if (monitor) {
+        monitor.classList.toggle('hidden-monitor', !tokenMonitorState.visible);
+        monitor.classList.toggle('compact', tokenMonitorState.compact);
+        const savedLeft = localStorage.getItem('token_monitor_left');
+        const savedTop = localStorage.getItem('token_monitor_top');
+        if (savedLeft && savedTop) {
+            monitor.style.left = savedLeft;
+            monitor.style.top = savedTop;
+            monitor.style.right = 'auto';
+            monitor.style.bottom = 'auto';
+        }
+    }
+    setupTokenMonitorDrag();
+    realtimeController.start('token-monitor', updateTokenMonitor, TOKEN_MONITOR_REFRESH_MS, true);
+}
+
+async function updateTokenMonitor() {
+    const monitor = document.getElementById('token-monitor');
+    if (!monitor || !tokenMonitorState.visible) return;
+
+    let modeText = t('lastHourUsage');
+    let currentValue = 0;
+    let threshold = getTokenAlertThreshold();
+
+    if (stopwatchState.running) {
+        await refreshStopwatchTokens();
+        currentValue = Math.max(stopwatchState.currentTotalTokens - stopwatchState.baseTotalTokens, 0);
+        modeText = t('trackingDelta');
+    } else {
+        const data = await fetchCurrentTokenStats(getOneHourRangeQuery());
+        currentValue = Number(data.total_tokens || 0);
+    }
+
+    renderTokenMonitor(currentValue, threshold, modeText);
+}
+
+function renderTokenMonitor(value, threshold, modeText) {
+    const monitor = document.getElementById('token-monitor');
+    const valueEl = document.getElementById('token-monitor-value');
+    const modeEl = document.getElementById('token-monitor-mode');
+    const fillEl = document.getElementById('token-monitor-progress-fill');
+    const thresholdEl = document.getElementById('token-monitor-threshold-label');
+    const updatedEl = document.getElementById('token-monitor-updated');
+    if (!monitor || !valueEl || !modeEl || !fillEl) return;
+
+    modeEl.textContent = modeText;
+    valueEl.textContent = formatTokens(value);
+    valueEl.classList.remove('updated');
+    void valueEl.offsetWidth;
+    valueEl.classList.add('updated');
+    setTimeout(() => valueEl.classList.remove('updated'), 180);
+
+    const pct = threshold > 0 ? Math.min((value / threshold) * 100, 100) : 0;
+    fillEl.style.width = `${pct}%`;
+    monitor.classList.toggle('alert', threshold > 0 && value >= threshold);
+    if (thresholdEl) {
+        thresholdEl.textContent = threshold > 0
+            ? `${formatTokens(value)} / ${formatTokens(threshold)}`
+            : `${formatTokens(value)} / ${t('disabled')}`;
+    }
+    if (updatedEl) {
+        updatedEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    maybeAlertTokenThreshold(value, threshold);
+}
+
+function maybeAlertTokenThreshold(value, threshold) {
+    if (!threshold || value < threshold) return;
+    const bucket = Math.floor(value / threshold);
+    if (bucket <= tokenMonitorState.lastAlertBucket) return;
+    tokenMonitorState.lastAlertBucket = bucket;
+    showToast(`${t('tokenAlertReached')}: ${formatTokens(value)}`, 'warning', 6000);
+    if (navigator.vibrate) {
+        navigator.vibrate([120, 60, 120]);
+    }
+}
+
+function toggleTokenMonitor(forceVisible) {
+    tokenMonitorState.visible = typeof forceVisible === 'boolean' ? forceVisible : !tokenMonitorState.visible;
+    localStorage.setItem('token_monitor_visible', String(tokenMonitorState.visible));
+    const monitor = document.getElementById('token-monitor');
+    if (monitor) {
+        monitor.classList.toggle('hidden-monitor', !tokenMonitorState.visible);
+    }
+    if (tokenMonitorState.visible) {
+        updateTokenMonitor().catch(err => console.warn('Token monitor refresh failed', err));
+    }
+}
+
+function toggleTokenMonitorCompact() {
+    tokenMonitorState.compact = !tokenMonitorState.compact;
+    localStorage.setItem('token_monitor_compact', String(tokenMonitorState.compact));
+    const monitor = document.getElementById('token-monitor');
+    if (monitor) monitor.classList.toggle('compact', tokenMonitorState.compact);
+}
+
+function setupTokenMonitorDrag() {
+    const monitor = document.getElementById('token-monitor');
+    const handle = document.getElementById('token-monitor-drag');
+    if (!monitor || !handle || handle.dataset.dragReady === '1') return;
+    handle.dataset.dragReady = '1';
+
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    let dragging = false;
+
+    const onMove = (event) => {
+        if (!dragging) return;
+        const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+        const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+        const nextLeft = Math.min(Math.max(startLeft + clientX - startX, 8), window.innerWidth - monitor.offsetWidth - 8);
+        const nextTop = Math.min(Math.max(startTop + clientY - startY, 8), window.innerHeight - monitor.offsetHeight - 8);
+        monitor.style.left = `${nextLeft}px`;
+        monitor.style.top = `${nextTop}px`;
+        monitor.style.right = 'auto';
+        monitor.style.bottom = 'auto';
+    };
+
+    const onEnd = () => {
+        if (!dragging) return;
+        dragging = false;
+        localStorage.setItem('token_monitor_left', monitor.style.left);
+        localStorage.setItem('token_monitor_top', monitor.style.top);
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onEnd);
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', onEnd);
+    };
+
+    const onStart = (event) => {
+        if (event.target.closest('button')) return;
+        const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+        const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+        const rect = monitor.getBoundingClientRect();
+        dragging = true;
+        startX = clientX;
+        startY = clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onEnd);
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onEnd);
+    };
+
+    handle.addEventListener('mousedown', onStart);
+    handle.addEventListener('touchstart', onStart, { passive: true });
 }
 
 function updateStopwatchElapsed() {
@@ -83,6 +274,8 @@ async function startStopwatch() {
 
         realtimeController.start('stopwatch-elapsed', updateStopwatchElapsed, 1000, true);
         realtimeController.start('stopwatch-tokens', refreshStopwatchTokens, STOPWATCH_TOKEN_REFRESH_MS, false);
+        tokenMonitorState.lastAlertBucket = 0;
+        updateTokenMonitor().catch(err => console.warn('Token monitor refresh failed', err));
         setStatus(t('stopwatchRecording'));
     } catch (err) {
         showToast(t('failed') + err.message, 'error');
@@ -130,6 +323,8 @@ function resetStopwatch() {
     setTextById('stopwatch-current-total', '0');
     setTextById('stopwatch-cache-hits', t('cacheNotSupported'));
     setTextById('stopwatch-note', t('noDataYet'));
+    tokenMonitorState.lastAlertBucket = 0;
+    updateTokenMonitor().catch(err => console.warn('Token monitor refresh failed', err));
 }
 
 function getRangeQuery() {
@@ -230,41 +425,26 @@ function renderRangeTrend(buckets, granularity) {
     });
 }
 
-function toggleRangeRealtime() {
-    const enabled = Boolean(document.getElementById('range-realtime-toggle')?.checked);
-    if (enabled) {
-        realtimeController.start('range-stats', refreshRangeStats, RANGE_REFRESH_MS, true);
-    } else {
-        realtimeController.stop('range-stats');
-    }
+function startRangeRealtime() {
+    realtimeController.start('range-stats', refreshRangeStats, RANGE_REFRESH_MS, true);
 }
 
-function restartRangeRealtimeIfEnabled() {
-    const enabled = Boolean(document.getElementById('range-realtime-toggle')?.checked);
-    if (enabled) {
-        realtimeController.restart('range-stats', refreshRangeStats, RANGE_REFRESH_MS, true);
-    } else {
-        refreshRangeStats().catch(err => console.warn('Range refresh failed', err));
-    }
+function restartRangeRealtime() {
+    realtimeController.restart('range-stats', refreshRangeStats, RANGE_REFRESH_MS, true);
 }
 
-function toggleStatsRealtime() {
-    const enabled = Boolean(document.getElementById('stats-realtime-toggle')?.checked);
-    const status = document.getElementById('stats-realtime-status');
-    if (enabled) {
-        if (status) status.textContent = t('enabled');
-        realtimeController.start('stats-dashboard', loadStats, STATS_REFRESH_MS, true);
-    } else {
-        if (status) status.textContent = t('disabled');
-        realtimeController.stop('stats-dashboard');
-    }
+function startStatsRealtime() {
+    realtimeController.start('stats-dashboard', loadStats, STATS_REFRESH_MS, false);
 }
 
 function initRangeDefaults() {
     const endInput = document.getElementById('range-end');
     const startInput = document.getElementById('range-start');
-    const rangeToggle = document.getElementById('range-realtime-toggle');
     if (!endInput || !startInput) return;
+    if (rangeDefaultsInitialized) {
+        if (!realtimeController.isRunning('range-stats')) startRangeRealtime();
+        return;
+    }
 
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -274,16 +454,12 @@ function initRangeDefaults() {
     if (!endInput.value) endInput.value = fmt(now);
     if (!startInput.value) startInput.value = fmt(sevenDaysAgo);
 
-    refreshRangeStats().catch(err => console.warn('Initial range refresh failed', err));
-
-    // Auto-enable range realtime if toggle exists and not checked
-    if (rangeToggle && !rangeToggle.checked) {
-        rangeToggle.checked = true;
-        toggleRangeRealtime();
-    }
+    startRangeRealtime();
+    rangeDefaultsInitialized = true;
 }
 
 // Auto-init range defaults when stats page loads
 window.addEventListener('DOMContentLoaded', () => {
     initRangeDefaults();
+    initTokenMonitorSettings();
 });

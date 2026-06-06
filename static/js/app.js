@@ -26,20 +26,10 @@ function navigateTo(page) {
     switch (page) {
         case 'stats':
             loadStats();
-            // Auto-enable realtime refresh on stats page
+            // Stats refreshes continuously while the page is active.
             setTimeout(() => {
-                const statsToggle = document.getElementById('stats-realtime-toggle');
-                const rangeToggle = document.getElementById('range-realtime-toggle');
-                const statsStatus = document.getElementById('stats-realtime-status');
-                if (statsToggle && !statsToggle.checked) {
-                    statsToggle.checked = true;
-                    if (statsStatus) statsStatus.textContent = t('enabled');
-                    toggleStatsRealtime();
-                }
-                if (rangeToggle && !rangeToggle.checked) {
-                    rangeToggle.checked = true;
-                    toggleRangeRealtime();
-                }
+                if (typeof startStatsRealtime === 'function') startStatsRealtime();
+                if (typeof startRangeRealtime === 'function') startRangeRealtime();
             }, 100);
             break;
         case 'sessions': loadSessions(); break;
@@ -52,18 +42,53 @@ function navigateTo(page) {
 // ─────────────── Utility Functions ───────────────
 
 /** Format large numbers with commas */
-function formatNumber(n) {
+function formatNumber(n, options = {}) {
     if (n === undefined || n === null) return '0';
-    return Number(n).toLocaleString();
+    const value = Number(n);
+    if (!Number.isFinite(value)) return '0';
+    if (options.compact === false) {
+        return value.toLocaleString();
+    }
+    return formatCompactNumber(value);
+}
+
+/** Format large numbers into readable K/M/B or 千/百万/亿 units. */
+function formatCompactNumber(value) {
+    const abs = Math.abs(value);
+    const zh = typeof currentLang !== 'undefined' && currentLang === 'zh';
+    const units = zh
+        ? [
+            { value: 100000000, suffix: '亿' },
+            { value: 1000000, suffix: '百万' },
+            { value: 1000, suffix: '千' },
+        ]
+        : [
+            { value: 1000000000, suffix: 'B' },
+            { value: 1000000, suffix: 'M' },
+            { value: 1000, suffix: 'K' },
+        ];
+
+    for (const unit of units) {
+        if (abs >= unit.value) {
+            const scaled = value / unit.value;
+            const digits = Math.abs(scaled) < 10 ? 2 : 1;
+            return trimNumber(scaled, digits) + unit.suffix;
+        }
+    }
+
+    return Math.round(value).toLocaleString();
+}
+
+function trimNumber(value, maxDigits = 2) {
+    return Number(value.toFixed(maxDigits)).toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: maxDigits,
+    });
 }
 
 /** Format token count (e.g. 1.2M, 345K) */
 function formatTokens(n) {
-    if (n === undefined || n === null) return '0';
-    n = Number(n);
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-    return n.toString();
+    return formatNumber(n);
 }
 
 /** Format unix timestamp to date string */
@@ -151,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
         searchInput.addEventListener('input', () => {
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
-                if (currentPage === 'sessions') loadSessions();
+                if (currentPage === 'sessions') resetSessionsAndLoad();
             }, 300);
         });
     }

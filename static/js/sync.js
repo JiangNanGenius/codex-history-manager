@@ -98,7 +98,7 @@ async function syncPreview() {
     const targetModel = document.getElementById('sync-target-model')?.value || '';
 
     try {
-        setStatus('Preview sync...');
+        setStatus(t('previewSyncStatus'));
         const data = await api('/api/sync/preview', {
             method: 'POST',
             body: JSON.stringify({ target_provider: targetProvider, target_model: targetModel }),
@@ -114,10 +114,10 @@ async function syncExecute() {
     const targetProvider = document.getElementById('sync-target-provider')?.value || '';
     const targetModel = document.getElementById('sync-target-model')?.value || '';
 
-    if (!confirm('Execute sync? This will modify the database and session files.')) return;
+    if (!confirm(t('confirmExecuteSync'))) return;
 
     try {
-        setStatus('Executing sync...');
+        setStatus(t('executingSyncStatus'));
         const data = await api('/api/sync/execute', {
             method: 'POST',
             body: JSON.stringify({ target_provider: targetProvider, target_model: targetModel }),
@@ -130,23 +130,20 @@ async function syncExecute() {
 }
 
 async function oneClickSyncRestart() {
-    if (!confirm('One-click sync + restart?\n\n1. Kill Codex\n2. Execute sync\n3. Restart Codex')) return;
+    if (!confirm(t('confirmOneClickSyncRestart'))) return;
 
     try {
         // Step 1: Kill
-        setStatus('Step 1/3: Killing Codex...');
+        setStatus(t('oneClickStepKill'));
         await api('/api/codex/kill', { method: 'POST' });
 
         // Wait for process to exit
         await new Promise(r => setTimeout(r, 2000));
 
-        // Step 2: Sync
-        setStatus('Step 2/3: Executing sync...');
-        const syncData = await api('/api/sync/execute', { method: 'POST' });
-
-        // Step 3: Start
-        setStatus('Step 3/3: Starting Codex...');
+        // Step 2: Start endpoint auto-syncs current provider/model before launching.
+        setStatus(t('oneClickStepStart'));
         const startData = await api('/api/codex/start', { method: 'POST' });
+        const syncData = startData.sync || {};
 
         showSyncResult(syncData, false);
         if (startData.success) {
@@ -157,7 +154,7 @@ async function oneClickSyncRestart() {
 
         setTimeout(() => loadSyncStatus(), 1000);
     } catch (err) {
-        showToast('One-click failed: ' + err.message, 'error');
+        showToast(t('failedOneClickSync') + err.message, 'error');
     }
 }
 
@@ -180,6 +177,9 @@ function showSyncResult(data, isPreview) {
     if (data.malformed_lines) {
         output += `\nMalformed lines skipped: ${data.malformed_lines}\n`;
     }
+    if (data.backup_path) {
+        output += `\nSafety backup:\n  ${data.backup_path}\n`;
+    }
     if (data.errors && data.errors.length > 0) {
         output += `\nErrors:\n`;
         data.errors.forEach(e => { output += `  - ${e}\n`; });
@@ -191,5 +191,5 @@ function showSyncResult(data, isPreview) {
     }
 
     textEl.textContent = output;
-    setStatus('Sync result displayed');
+    setStatus(t('syncResultDisplayed'));
 }

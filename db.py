@@ -5,6 +5,7 @@ Web 版增强：返回更多字段支持前端展示和 Token 统计
 """
 import sqlite3
 import os
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple
 
 
@@ -96,35 +97,37 @@ class CodexDB:
         返回 (rows, total_count)
         """
         self._ensure_connected()
+        columns = set(self.get_columns())
         conditions = []
         params = []
 
-        if filter_mode == "active":
+        if "archived" in columns and filter_mode == "active":
             conditions.append("archived=0")
-        elif filter_mode == "archived":
+        elif "archived" in columns and filter_mode == "archived":
             conditions.append("archived=1")
 
         # source 列名兼容
-        source_col = "source" if self.has_column("source") else (
-            "thread_source" if self.has_column("thread_source") else ""
+        source_col = "source" if "source" in columns else (
+            "thread_source" if "thread_source" in columns else ""
         )
         if source_filter == "user" and source_col:
             conditions.append(f"{source_col}='user'")
         elif source_filter == "agent" and source_col:
             conditions.append(f"{source_col}='agent'")
 
-        if model_filter and self.has_column("model"):
+        if model_filter and "model" in columns:
             conditions.append("model=?")
             params.append(model_filter)
 
-        if provider_filter and self.has_column("model_provider"):
+        if provider_filter and "model_provider" in columns:
             conditions.append("model_provider=?")
             params.append(provider_filter)
 
-        if search.strip():
-            conditions.append("(title LIKE ? OR id LIKE ?)")
+        searchable_cols = [c for c in ("title", "id", "cwd") if c in columns]
+        if search.strip() and searchable_cols:
+            conditions.append("(" + " OR ".join(f"{c} LIKE ?" for c in searchable_cols) + ")")
             like = f"%{search.strip()}%"
-            params.extend([like, like])
+            params.extend([like] * len(searchable_cols))
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -133,27 +136,28 @@ class CodexDB:
         total = self._conn.execute(count_sql, params).fetchone()[0]
 
         # 安全排序字段白名单
-        allowed_sort = {"created_at_ms", "updated_at", "tokens_used", "title", "created_at"}
+        allowed_sort = {"created_at_ms", "updated_at", "tokens_used", "title", "created_at", "id"}
         if sort_by not in allowed_sort:
             sort_by = "created_at_ms"
         if sort_order not in ("asc", "desc"):
             sort_order = "desc"
 
-        # 检查排序字段是否存在
-        if sort_by != "created_at_ms" and not self.has_column(sort_by):
-            sort_by = "created_at_ms"
+        # 检查排序字段是否存在，并为旧 DB 选择可用回退字段
+        if sort_by not in columns:
+            sort_by = next((c for c in ("created_at_ms", "updated_at", "created_at", "id") if c in columns), "id")
 
         # 获取分页数据
+        page = max(0, int(page or 0))
+        page_size = min(max(1, int(page_size or 50)), 500)
         offset = page * page_size
 
         # 选择更多字段
-        select_cols = [
-            "id", "title", "archived",
-            "rollout_path", "created_at", "updated_at",
-        ]
+        select_cols = [c for c in ("id", "title", "archived", "rollout_path", "created_at", "updated_at") if c in columns]
         for col in ["created_at_ms", "tokens_used", "model", "model_provider", "source", "thread_source", "cwd"]:
-            if self.has_column(col):
+            if col in columns and col not in select_cols:
                 select_cols.append(col)
+        if not select_cols:
+            return [], total
 
         data_sql = f"""
             SELECT {', '.join(select_cols)}
@@ -202,18 +206,45 @@ class CodexDB:
     def get_threads_since(self, since_ts: str) -> List[Dict]:
         """获取某时间戳之后变更的所有 threads（用于增量备份）"""
         self._ensure_connected()
-        cur = self._conn.execute(
-            "SELECT * FROM threads WHERE updated_at > ? OR created_at > ?",
-            (since_ts, since_ts)
-        )
+        columns = set(self.get_columns())
+        since_sec = _parse_since_to_epoch(since_ts)
+        since_ms = since_sec * 1000
+        clauses = []
+        params = []
+
+        if "updated_at" in columns:
+            clauses.append("CAST(COALESCE(updated_at, 0) AS INTEGER) > ?")
+            params.append(since_sec)
+        if "created_at_ms" in columns:
+            clauses.append("CAST(COALESCE(created_at_ms, 0) AS INTEGER) > ?")
+            params.append(since_ms)
+        if "created_at" in columns:
+            clauses.append(
+                "(CASE WHEN CAST(created_at AS TEXT) GLOB '[0-9]*' "
+                "THEN CAST(created_at AS INTEGER) > ? ELSE CAST(created_at AS TEXT) > ? END)"
+            )
+            params.extend([since_sec, _epoch_to_iso(since_sec)])
+
+        where = " OR ".join(clauses)
+        sql = "SELECT * FROM threads"
+        if where:
+            sql += f" WHERE {where}"
+        cur = self._conn.execute(sql, params)
         return [dict(row) for row in cur.fetchall()]
 
     def search_full_text(self, keyword: str, limit: int = 100) -> List[Dict]:
         """全文搜索 title"""
         self._ensure_connected()
+        columns = set(self.get_columns())
+        if "title" not in columns:
+            return []
+        order_col = "created_at_ms" if "created_at_ms" in columns else ("updated_at" if "updated_at" in columns else "id")
+        select_cols = [c for c in ("id", "title", "archived", "created_at") if c in columns]
+        if not select_cols:
+            return []
         cur = self._conn.execute(
-            "SELECT id, title, archived, created_at FROM threads "
-            "WHERE title LIKE ? ORDER BY created_at_ms DESC LIMIT ?",
+            f"SELECT {', '.join(select_cols)} FROM threads "
+            f"WHERE title LIKE ? ORDER BY {order_col} DESC LIMIT ?",
             (f"%{keyword}%", limit)
         )
         return [dict(row) for row in cur.fetchall()]
@@ -260,3 +291,30 @@ class CodexDB:
             return [row[0] for row in cur.fetchall()]
         except Exception:
             return []
+
+
+def _parse_since_to_epoch(value: str) -> int:
+    """Parse ISO/numeric timestamps to epoch seconds for DB comparisons."""
+    if not value:
+        return 0
+    text = str(value).strip()
+    if not text:
+        return 0
+    if text.isdigit():
+        number = int(text)
+        return int(number / 1000) if number > 10_000_000_000 else number
+    try:
+        normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return int(parsed.timestamp())
+    except ValueError:
+        return 0
+
+
+def _epoch_to_iso(epoch_seconds: int) -> str:
+    try:
+        return datetime.fromtimestamp(epoch_seconds).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return ""

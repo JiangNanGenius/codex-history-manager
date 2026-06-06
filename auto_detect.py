@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Dict, Optional
 
+CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
 
 def detect_codex_db() -> str:
     """自动检测 Codex SQLite 数据库路径（优先最大编号）"""
@@ -80,7 +82,7 @@ def detect_codex_cli() -> str:
     try:
         result = subprocess.run(
             ["where", "codex"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=5, creationflags=CREATE_NO_WINDOW
         )
         if result.returncode == 0 and result.stdout.strip():
             path = result.stdout.strip().splitlines()[0].strip()

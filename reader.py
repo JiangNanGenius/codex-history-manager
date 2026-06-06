@@ -86,8 +86,9 @@ def read_messages(
     # 超大文件限制读取条数
     effective_max = max_messages if not is_large else min(max_messages, 500)
 
-    # 需要显示的 role 白名单
-    SHOW_ROLES = {"user", "assistant", "developer", "system", "tool"}
+    # 需要显示的 role 白名单。Codex 工具调用在不同版本里可能以 function_call
+    # 或 function_call_output 出现，统一映射为 tool，避免详情页漏掉关键上下文。
+    SHOW_ROLES = {"user", "assistant", "developer", "system", "tool", "function_call", "function_call_output"}
 
     messages = []
     lines_read = 0
@@ -163,9 +164,15 @@ def _extract_message(payload: Dict, timestamp: str = "") -> Optional[Dict]:
     if not text and role in ("function_call_output",):
         # 工具输出
         text = f"[工具输出: {str(payload.get('output', ''))[:300]}]"
+    elif not text and role in ("function_call",):
+        tool_name = payload.get("name") or payload.get("call_id") or "tool"
+        text = f"[调用工具: {tool_name}]"
 
     if not text:
         return None
+
+    if role in ("function_call", "function_call_output"):
+        role = "tool"
 
     return {
         "role": role,

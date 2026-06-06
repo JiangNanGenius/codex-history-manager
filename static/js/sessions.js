@@ -6,6 +6,12 @@
 let sessionPage = 0;
 let sessionTotal = 0;
 let sessionPageSize = 50;
+let currentSessionId = '';
+
+function resetSessionsAndLoad() {
+    sessionPage = 0;
+    loadSessions();
+}
 
 async function loadSessions() {
     const search = document.getElementById('session-search')?.value || '';
@@ -125,6 +131,7 @@ async function loadFilterOptions() {
 async function openSessionDetail(sessionId) {
     try {
         const data = await api('/api/sessions/' + sessionId);
+        currentSessionId = sessionId;
         renderSessionDetail(data);
         document.getElementById('session-detail-modal').classList.remove('hidden');
     } catch (err) {
@@ -201,6 +208,25 @@ function closeSessionDetail() {
     document.getElementById('session-detail-modal').classList.add('hidden');
 }
 
+async function exportCurrentSession(format) {
+    if (!currentSessionId) return;
+    try {
+        const data = await api(`/api/sessions/${currentSessionId}/export/${format}`);
+        const blob = new Blob([data.content || ''], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = data.filename || `session.${format}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        showToast(t('exportReady'), 'success');
+    } catch (err) {
+        showToast(t('failed') + err.message, 'error');
+    }
+}
+
 async function toggleArchive(sessionId, archived) {
     try {
         const endpoint = archived ? `/api/sessions/${sessionId}/archive` : `/api/sessions/${sessionId}/unarchive`;
@@ -208,7 +234,7 @@ async function toggleArchive(sessionId, archived) {
         showToast(archived ? t('sessionArchived') : t('sessionUnarchived'), 'success');
         loadSessions();
     } catch (err) {
-        showToast('Failed: ' + err.message, 'error');
+        showToast(t('failed') + err.message, 'error');
     }
 }
 

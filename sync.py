@@ -36,6 +36,9 @@ CODEX_PLUS_PLUS_PATH = os.path.expandvars(
     r"C:\Users\zhaos\AppData\Local\Programs\Codex++\codex-plus-plus.exe"
 )
 
+CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+DETACHED_PROCESS = 0x00000008 if os.name == "nt" else 0
+
 
 @dataclass
 class SyncStats:
@@ -135,7 +138,7 @@ def _find_pids_by_image(image_name: str) -> List[int]:
         import subprocess
         result = subprocess.run(
             ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
-            capture_output=True, timeout=10
+            capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW
         )
         output = _decode_tasklist_output(result.stdout)
         for line in output.strip().splitlines():
@@ -157,7 +160,7 @@ def _find_node_codex_pids() -> List[int]:
         import subprocess
         result = subprocess.run(
             ["wmic", "process", "where", "name='node.exe'", "get", "ProcessId,CommandLine", "/format:csv"],
-            capture_output=True, timeout=10
+            capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW
         )
         output = _decode_tasklist_output(result.stdout)
         for line in output.strip().splitlines():
@@ -179,8 +182,9 @@ def is_codex_running() -> Tuple[bool, List[int]]:
     检查 Codex 进程是否在运行
     返回 (是否运行中, [PID列表])
     """
-    pids = _find_pids_by_image("codex.exe")
-    pids.extend(_find_pids_by_image("Code.exe"))
+    pids = []
+    for image_name in CODEX_PROCESS_NAMES:
+        pids.extend(_find_pids_by_image(image_name))
     pids.extend(_find_node_codex_pids())
     # Deduplicate
     unique_pids = list(dict.fromkeys(pids))
@@ -199,7 +203,12 @@ def kill_codex() -> Tuple[bool, str]:
     try:
         import subprocess
         for pid in pids:
-            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=10)
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/F"],
+                capture_output=True,
+                timeout=10,
+                creationflags=CREATE_NO_WINDOW,
+            )
         time.sleep(1)
         # 验证是否已关闭
         still_running, _ = is_codex_running()
@@ -210,7 +219,11 @@ def kill_codex() -> Tuple[bool, str]:
         return False, f"关闭 Codex 失败: {e}"
 
 
-def start_codex(use_codex_plus_plus: bool = False) -> Tuple[bool, str]:
+def start_codex(
+    use_codex_plus_plus: bool = False,
+    codex_plus_plus_path: str = "",
+    codex_cli_path: str = "",
+) -> Tuple[bool, str]:
     """
     启动 Codex（或 Codex++）
 
@@ -224,10 +237,13 @@ def start_codex(use_codex_plus_plus: bool = False) -> Tuple[bool, str]:
 
         # Codex++ 优先级最高（用独立启动器）
         if use_codex_plus_plus:
-            if os.path.exists(CODEX_PLUS_PLUS_PATH):
-                codex_paths.append(CODEX_PLUS_PLUS_PATH)
+            for candidate in (codex_plus_plus_path, CODEX_PLUS_PLUS_PATH):
+                if candidate and os.path.exists(candidate):
+                    codex_paths.append(candidate)
 
-        # 1. 从 CODEX_CLI_PATH 环境变量（config.toml 中 MCP 配置）
+        # 1. 从用户设置或 CODEX_CLI_PATH 环境变量（config.toml 中 MCP 配置）
+        if codex_cli_path and os.path.exists(codex_cli_path):
+            codex_paths.append(codex_cli_path)
         env_cli = os.environ.get("CODEX_CLI_PATH", "")
         if env_cli and os.path.exists(env_cli):
             codex_paths.append(env_cli)
@@ -249,9 +265,9 @@ def start_codex(use_codex_plus_plus: bool = False) -> Tuple[bool, str]:
         if which:
             codex_paths.append(which)
 
-        for path in codex_paths:
+        for path in dict.fromkeys(codex_paths):
             if os.path.exists(path):
-                subprocess.Popen([path], creationflags=0x00000008)  # DETACHED_PROCESS
+                subprocess.Popen([path], creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW)
                 label = "Codex++" if "codex-plus-plus" in path.lower() else "Codex"
                 return True, f"已启动 {label}: {path}"
 
@@ -489,9 +505,6 @@ def sync_session_index(
             _apply_model_fields(record, target_provider, target_model)
             output.append(record)
 
-    seen = len(existing_entries)
-    updated = len(output)
-
     # 比较是否有变化
     desired_text = "\n".join(json.dumps(e, ensure_ascii=False, separators=(",", ":")) for e in output)
     if desired_text:
@@ -502,7 +515,11 @@ def sync_session_index(
         with open(index_path, "r", encoding="utf-8", errors="replace") as f:
             current_text = f.read()
 
-    if desired_text != current_text and not dry_run:
+    seen = len(existing_entries)
+    changed = desired_text != current_text
+    updated = len(output) if changed else 0
+
+    if changed and not dry_run:
         _atomic_write_text(index_path, desired_text)
 
     return seen, updated, malformed

@@ -7,7 +7,7 @@ async function loadSettings() {
     try {
         const data = await api('/api/settings');
         populateSettingsForm(data);
-        setStatus('Settings loaded');
+        setStatus(t('settingsLoaded'));
 
         // Auto-detect paths if key paths are missing
         const hasDbPath = data.db_path && String(data.db_path).trim().length > 0;
@@ -16,7 +16,7 @@ async function loadSettings() {
             await runAutoDetect();
         }
     } catch (err) {
-        showToast('Failed to load settings: ' + err.message, 'error');
+        showToast(t('failedLoadSettings') + err.message, 'error');
     }
 }
 
@@ -83,37 +83,37 @@ async function saveSettings() {
             body: JSON.stringify(data),
         });
         if (result.success) {
-            showToast('Settings saved!' + (result.warning ? ' Warning: ' + result.warning : ''), 'success');
+            showToast(t('settingsSaved') + (result.warning ? ' ' + t('warning') + ': ' + result.warning : ''), 'success');
         } else {
-            showToast('Save failed: ' + (result.error || 'Unknown'), 'error');
+            showToast(t('saveFailed') + (result.error || t('unknownError')), 'error');
         }
     } catch (err) {
-        showToast('Save failed: ' + err.message, 'error');
+        showToast(t('saveFailed') + err.message, 'error');
     }
 }
 
 async function resetSettings() {
-    if (!confirm('Reset all settings to defaults? This cannot be undone.')) return;
+    if (!confirm(t('confirmResetSettings'))) return;
 
     try {
         const result = await api('/api/settings/reset', { method: 'POST' });
         if (result.success) {
-            showToast('Settings reset to defaults', 'success');
+            showToast(t('settingsReset'), 'success');
             loadSettings();
         } else {
-            showToast('Reset failed: ' + (result.error || 'Unknown'), 'error');
+            showToast(t('resetFailed') + (result.error || t('unknownError')), 'error');
         }
     } catch (err) {
-        showToast('Reset failed: ' + err.message, 'error');
+        showToast(t('resetFailed') + err.message, 'error');
     }
 }
 
 async function runAutoDetect() {
     try {
-        setStatus('Detecting paths...');
+        setStatus(t('detectingPaths'));
         const data = await api('/api/detect');
         renderDetectResults(data);
-        showToast('Auto-detect complete', 'success');
+        showToast(t('autoDetectComplete'), 'success');
 
         // Also update settings form with detected values
         if (data.db_path) document.getElementById('setting-db-path').value = data.db_path;
@@ -124,7 +124,7 @@ async function runAutoDetect() {
             document.getElementById('setting-codex-cli').value = data.codex_config.codex_cli_path;
         }
     } catch (err) {
-        showToast('Auto-detect failed: ' + err.message, 'error');
+        showToast(t('autoDetectFailed') + err.message, 'error');
     }
 }
 

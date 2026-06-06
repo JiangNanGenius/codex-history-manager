@@ -177,15 +177,27 @@ class BackupManager:
 
             with zipfile.ZipFile(backup_path, "r") as zf:
                 if "state_5.sqlite" not in zf.namelist():
+                    self.db.connect()
                     return {"success": False, "error": "备份文件不含 state_5.sqlite（可能是增量备份，无法还原）"}
-                # 解压覆盖
-                zf.extract("state_5.sqlite", path=os.path.dirname(db_path))
+
+                target = Path(db_path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                tmp_path = target.with_name(f".{target.name}.restore_tmp")
+                with zf.open("state_5.sqlite", "r") as src, open(tmp_path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                os.replace(tmp_path, target)
 
             # 重新连接
             self.db.connect()
             return {"success": True, "message": "还原成功，原数据库已备份到: " + pre_backup["path"]}
 
         except Exception as e:
+            tmp_path = Path(db_path).with_name(f".{Path(db_path).name}.restore_tmp")
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
             # 尝试恢复连接
             try:
                 self.db.connect()

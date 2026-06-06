@@ -4,6 +4,7 @@ app.py - Flask Web 应用 + 所有 API 端点
 """
 import os
 import json
+import re
 import subprocess
 import threading
 from datetime import datetime
@@ -59,8 +60,8 @@ def create_app() -> Flask:
     def list_sessions():
         """获取会话列表（支持搜索、分页、排序）"""
         try:
-            page = int(request.args.get("page", 0))
-            page_size = int(request.args.get("page_size", config.get("page_size", 50)))
+            page = _clamp_int(request.args.get("page", 0), 0, 0, 100000)
+            page_size = _clamp_int(request.args.get("page_size", config.get("page_size", 50)), 50, 10, 200)
             search = request.args.get("search", "")
             filter_mode = request.args.get("filter", "all")
             source = request.args.get("source", "all")
@@ -154,17 +155,18 @@ def create_app() -> Flask:
                 return jsonify({"error": "找不到 jsonl 文件"}), 404
 
             title = thread.get("title") or "会话"
+            safe_title = _safe_export_filename(title)
 
             if fmt == "md":
                 content = export_to_markdown(rollout_path, title=title)
-                return jsonify({"content": content, "filename": f"{title[:30]}.md", "format": "markdown"})
+                return jsonify({"content": content, "filename": f"{safe_title}.md", "format": "markdown"})
             elif fmt == "txt":
                 content = export_to_text(rollout_path, title=title)
-                return jsonify({"content": content, "filename": f"{title[:30]}.txt", "format": "text"})
+                return jsonify({"content": content, "filename": f"{safe_title}.txt", "format": "text"})
             elif fmt == "json":
                 data = read_messages(rollout_path, max_messages=99999, large_file_limit=99999)
                 output = {"thread": thread, "messages": data["messages"]}
-                return jsonify({"content": json.dumps(output, ensure_ascii=False, indent=2), "filename": f"{title[:30]}.json", "format": "json"})
+                return jsonify({"content": json.dumps(output, ensure_ascii=False, indent=2), "filename": f"{safe_title}.json", "format": "json"})
             else:
                 return jsonify({"error": f"不支持的格式: {fmt}"}), 400
         except Exception as e:
@@ -174,7 +176,7 @@ def create_app() -> Flask:
 
     @app.route("/api/token/current")
     def get_current_tokens():
-        """获取轻量当前 Token 统计（秒表/实时面板轮询使用）。"""
+        """获取轻量当前 Token 统计（用量追踪/实时面板轮询使用）。"""
         try:
             token_stats.db_path = config.get("db_path")
             start = request.args.get("start", "")
@@ -231,7 +233,7 @@ def create_app() -> Flask:
     def stats_daily_trend():
         """每日趋势"""
         try:
-            days = int(request.args.get("days", 30))
+            days = _clamp_int(request.args.get("days", 30), 30, 1, 365)
             token_stats.db_path = config.get("db_path")
             data = token_stats.get_daily_trend(days=days)
             return jsonify(data)
@@ -242,7 +244,7 @@ def create_app() -> Flask:
     def stats_top_sessions():
         """最耗 Token 会话排行"""
         try:
-            limit = int(request.args.get("limit", 20))
+            limit = _clamp_int(request.args.get("limit", 20), 20, 1, 100)
             token_stats.db_path = config.get("db_path")
             data = token_stats.get_top_sessions(limit=limit)
             return jsonify(data)
@@ -274,17 +276,7 @@ def create_app() -> Flask:
                 target_model=target_model,
                 dry_run=True,
             )
-            return jsonify({
-                "db_threads_seen": stats.db_threads_seen,
-                "db_threads_updated": stats.db_threads_updated,
-                "rollout_files_seen": stats.rollout_files_seen,
-                "rollout_files_updated": stats.rollout_files_updated,
-                "index_rows_seen": stats.index_rows_seen,
-                "index_rows_updated": stats.index_rows_updated,
-                "malformed_lines": stats.malformed_lines,
-                "errors": stats.errors,
-                "changed": stats.changed,
-            })
+            return jsonify(_sync_stats_to_dict(stats))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -296,11 +288,13 @@ def create_app() -> Flask:
             target_provider = body.get("target_provider", "")
             target_model = body.get("target_model", "")
 
-            stats = full_sync(
+            payload, status = _run_sync_with_backup(
+                backup_mgr,
                 target_provider=target_provider,
                 target_model=target_model,
-                dry_run=False,
             )
+            if status >= 400:
+                return jsonify(payload), status
 
             # 同步后刷新数据库连接
             try:
@@ -310,17 +304,7 @@ def create_app() -> Flask:
             except Exception:
                 pass
 
-            return jsonify({
-                "db_threads_seen": stats.db_threads_seen,
-                "db_threads_updated": stats.db_threads_updated,
-                "rollout_files_seen": stats.rollout_files_seen,
-                "rollout_files_updated": stats.rollout_files_updated,
-                "index_rows_seen": stats.index_rows_seen,
-                "index_rows_updated": stats.index_rows_updated,
-                "malformed_lines": stats.malformed_lines,
-                "errors": stats.errors,
-                "changed": stats.changed,
-            })
+            return jsonify(payload)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -365,12 +349,19 @@ def create_app() -> Flask:
 
     @app.route("/api/codex/start", methods=["POST"])
     def codex_start():
-        """启动 Codex/Codex++"""
+        """启动 Codex/Codex++（启动前自动同步当前 provider/model）。"""
         try:
             body = request.get_json(silent=True) or {}
             use_cpp = body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
-            ok, msg = start_codex(use_codex_plus_plus=use_cpp)
-            return jsonify({"success": ok, "message": msg})
+            sync_payload, sync_status = _run_sync_with_backup(backup_mgr)
+            if sync_status >= 400:
+                return jsonify(sync_payload), sync_status
+            ok, msg = start_codex(
+                use_codex_plus_plus=use_cpp,
+                codex_plus_plus_path=config.get("codex_plus_plus_path", ""),
+                codex_cli_path=config.get("codex_cli_path", ""),
+            )
+            return jsonify({"success": ok, "message": msg, "sync": sync_payload})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -398,11 +389,10 @@ def create_app() -> Flask:
     def restore_backup(backup_id):
         """还原备份"""
         try:
-            backup_dir = str(backup_mgr.get_backup_dir())
-            backup_path = os.path.join(backup_dir, backup_id)
-            if not os.path.exists(backup_path):
+            backup_path = _resolve_backup_path(backup_id, backup_mgr.get_backup_dir())
+            if not backup_path or not os.path.exists(backup_path):
                 return jsonify({"error": "备份文件不存在"}), 404
-            result = backup_mgr.restore_backup(backup_path)
+            result = backup_mgr.restore_backup(str(backup_path))
             return jsonify(result)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -494,7 +484,86 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/health")
+    def health():
+        """轻量健康检查，供前端和打包后排障使用。"""
+        settings = config.get_all()
+        db_path = settings.get("db_path", "")
+        sessions_dir = settings.get("sessions_dir", "")
+        return jsonify({
+            "ok": True,
+            "db_path_configured": bool(db_path),
+            "db_path_exists": bool(db_path and os.path.exists(db_path)),
+            "sessions_dir_configured": bool(sessions_dir),
+            "sessions_dir_exists": bool(sessions_dir and os.path.isdir(sessions_dir)),
+            "auto_backup": bool(settings.get("auto_backup")),
+        })
+
     return app
+
+
+def _clamp_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, minimum), maximum)
+
+
+def _safe_export_filename(title: str) -> str:
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", str(title or "").strip())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
+    return (cleaned or "session")[:80]
+
+
+def _resolve_backup_path(backup_id: str, backup_dir: Path) -> Path | None:
+    if not backup_id or "/" in backup_id or "\\" in backup_id or backup_id.startswith("."):
+        return None
+    base = backup_dir.resolve()
+    candidate = (base / backup_id).resolve()
+    if candidate.parent != base:
+        return None
+    return candidate
+
+
+def _sync_stats_to_dict(stats) -> Dict:
+    return {
+        "db_threads_seen": stats.db_threads_seen,
+        "db_threads_updated": stats.db_threads_updated,
+        "rollout_files_seen": stats.rollout_files_seen,
+        "rollout_files_updated": stats.rollout_files_updated,
+        "index_rows_seen": stats.index_rows_seen,
+        "index_rows_updated": stats.index_rows_updated,
+        "malformed_lines": stats.malformed_lines,
+        "errors": stats.errors,
+        "changed": stats.changed,
+    }
+
+
+def _run_sync_with_backup(backup_mgr: BackupManager, target_provider: str = "", target_model: str = "") -> tuple[Dict, int]:
+    preview = full_sync(
+        target_provider=target_provider,
+        target_model=target_model,
+        dry_run=True,
+    )
+    if not preview.changed:
+        payload = _sync_stats_to_dict(preview)
+        payload["backup_path"] = ""
+        payload["skipped_backup"] = True
+        return payload, 200
+
+    pre_backup = backup_mgr.do_full_backup(label="pre_sync")
+    if not pre_backup.get("success"):
+        return {"error": f"同步前数据库备份失败: {pre_backup.get('error', 'unknown')}"}, 500
+
+    stats = full_sync(
+        target_provider=target_provider,
+        target_model=target_model,
+        dry_run=False,
+    )
+    payload = _sync_stats_to_dict(stats)
+    payload["backup_path"] = pre_backup.get("path", "")
+    return payload, 200
 
 
 def _find_file_for_thread(thread: Dict, config: Config) -> str:

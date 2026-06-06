@@ -1,6 +1,6 @@
 /**
  * realtime.js - 单一实时轮询控制器
- * 统一管理 token 秒表、统计页、时间段图表的轮询，避免重复 interval。
+ * 统一管理 Token 用量追踪、统计页、时间段图表的轮询，避免重复 interval。
  */
 
 class RealtimeController {

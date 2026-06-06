@@ -10,7 +10,11 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).parent
 OUTPUT_DIR = PROJECT_DIR / "dist"
 DESKTOP_DIR = Path("C:/Users/Public/Desktop")
+USER_DESKTOP_DIR = Path.home() / "OneDrive" / "桌面"
+if not USER_DESKTOP_DIR.exists():
+    USER_DESKTOP_DIR = Path.home() / "Desktop"
 EXE_NAME = "CodexHistoryManager.exe"
+LAST_COPIED_EXE: Path | None = None
 
 # 本地项目模块（必须作为 hiddenimports 加入，否则 PyInstaller 检测不到）
 LOCAL_MODULES = [
@@ -30,6 +34,15 @@ WEBVIEW_IMPORTS = [
     "webview.guilib",
     "webview.platforms.winforms",
     "webview.platforms.edgechromium",
+]
+
+TRAY_IMPORTS = [
+    "pystray",
+    "PIL",
+    "PIL.Image",
+    "PIL.ImageDraw",
+    "PIL.IcoImagePlugin",
+    "PIL.PngImagePlugin",
 ]
 
 # Flask / Werkzeug 生态 hidden imports
@@ -83,7 +96,7 @@ def build():
     project_dir = str(PROJECT_DIR).replace("\\", "/")
     static_dir = str(PROJECT_DIR / "static").replace("\\", "/")
 
-    all_hiddenimports = STDLIB_IMPORTS + FLASK_IMPORTS + WEBVIEW_IMPORTS + LOCAL_MODULES
+    all_hiddenimports = STDLIB_IMPORTS + FLASK_IMPORTS + WEBVIEW_IMPORTS + TRAY_IMPORTS + LOCAL_MODULES
     hiddenimports_str = ",\n                   ".join([f'"{m}"' for m in all_hiddenimports])
 
     icon_path = str(PROJECT_DIR / "icon.ico").replace("\\", "/")
@@ -148,7 +161,7 @@ exe = EXE(
 
     # 确保依赖已安装
     print("检查并安装依赖...")
-    deps = ["pyinstaller", "flask", "pywebview"]
+    deps = ["pyinstaller", "flask", "pywebview", "pystray", "Pillow"]
     for dep in deps:
         try:
             __import__(dep.replace("pyinstaller", "PyInstaller").lower().replace("pyinstaller", "pyinstaller"))
@@ -194,28 +207,32 @@ exe = EXE(
 
 def copy_to_desktop():
     """复制 EXE 到公共桌面"""
+    global LAST_COPIED_EXE
     exe_path = PROJECT_DIR / "dist" / EXE_NAME
     if not exe_path.exists():
         print("源 EXE 不存在")
         return False
 
-    DESKTOP_DIR.mkdir(parents=True, exist_ok=True)
-    target = DESKTOP_DIR / EXE_NAME
+    targets = [DESKTOP_DIR / EXE_NAME, USER_DESKTOP_DIR / EXE_NAME]
 
-    try:
-        shutil.copy2(str(exe_path), str(target))
-        print(f"已复制到桌面: {target}")
-        size_mb = target.stat().st_size / (1024 * 1024)
-        print(f"文件大小: {size_mb:.1f} MB")
-        return True
-    except Exception as e:
-        print(f"复制到桌面失败: {e}")
-        return False
+    for target in targets:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(exe_path), str(target))
+            LAST_COPIED_EXE = target
+            print(f"已复制到桌面: {target}")
+            size_mb = target.stat().st_size / (1024 * 1024)
+            print(f"文件大小: {size_mb:.1f} MB")
+            return True
+        except Exception as e:
+            print(f"复制到 {target} 失败: {e}")
+
+    return False
 
 
 def verify_exe():
     """验证 EXE 文件是否存在且大小合理"""
-    target = DESKTOP_DIR / EXE_NAME
+    target = LAST_COPIED_EXE or (PROJECT_DIR / "dist" / EXE_NAME)
     if not target.exists():
         print(f"验证失败: 文件不存在 {target}")
         return False
