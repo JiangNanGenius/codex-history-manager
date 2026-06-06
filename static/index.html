@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Codex History Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+                    colors: {
+                        dark: { 50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1', 400: '#94a3b8', 500: '#64748b', 600: '#475569', 700: '#334155', 800: '#1e293b', 900: '#0f172a', 950: '#020617' },
+                        accent: { 50: '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe', 300: '#93c5fd', 400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8' },
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-dark-900 text-dark-100 font-sans min-h-screen flex">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="w-60 bg-dark-950 border-r border-dark-700 flex flex-col shrink-0 h-screen sticky top-0">
+        <!-- Logo -->
+        <div class="px-5 py-5 border-b border-dark-700">
+            <h1 class="text-lg font-bold text-white flex items-center gap-2">
+                <svg class="w-6 h-6 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
+                Codex Manager
+            </h1>
+            <p class="text-xs text-dark-400 mt-1">History &middot; Sync &middot; Backup</p>
+        </div>
+        <!-- Nav -->
+        <nav class="flex-1 py-4 px-3 space-y-1">
+            <button onclick="navigateTo('stats')" data-nav="stats" class="nav-btn active w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                Token Dashboard
+            </button>
+            <button onclick="navigateTo('sessions')" data-nav="sessions" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                Sessions
+            </button>
+            <button onclick="navigateTo('sync')" data-nav="sync" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Sync
+            </button>
+            <button onclick="navigateTo('backup')" data-nav="backup" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                Backup
+            </button>
+            <button onclick="navigateTo('settings')" data-nav="settings" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                Settings
+            </button>
+        </nav>
+        <!-- Status bar -->
+        <div id="sidebar-status" class="px-5 py-3 border-t border-dark-700 text-xs text-dark-400">
+            <span id="status-text">Ready</span>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-auto">
+        <!-- Stats Page -->
+        <div id="page-stats" class="page active p-6 space-y-6">
+            <!-- Hero Cards -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="card bg-gradient-to-br from-accent-600/20 to-accent-700/10 border-accent-500/20">
+                    <div class="card-label">Total Tokens</div>
+                    <div class="card-value" id="stat-total-tokens">0</div>
+                </div>
+                <div class="card bg-gradient-to-br from-emerald-600/20 to-emerald-700/10 border-emerald-500/20">
+                    <div class="card-label">Total Sessions</div>
+                    <div class="card-value" id="stat-total-sessions">0</div>
+                </div>
+                <div class="card bg-gradient-to-br from-amber-600/20 to-amber-700/10 border-amber-500/20">
+                    <div class="card-label">Today</div>
+                    <div class="card-value" id="stat-today-tokens">0</div>
+                    <div class="card-sub" id="stat-today-sessions">0 sessions</div>
+                </div>
+                <div class="card bg-gradient-to-br from-purple-600/20 to-purple-700/10 border-purple-500/20">
+                    <div class="card-label">This Week</div>
+                    <div class="card-value" id="stat-week-tokens">0</div>
+                    <div class="card-sub" id="stat-week-sessions">0 sessions</div>
+                </div>
+            </div>
+            <!-- Charts Row 1 -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div class="lg:col-span-2 card">
+                    <h3 class="card-title">Daily Trend (30d)</h3>
+                    <div class="chart-container"><canvas id="chart-daily-trend"></canvas></div>
+                </div>
+                <div class="card">
+                    <h3 class="card-title">By Model</h3>
+                    <div class="chart-container"><canvas id="chart-by-model"></canvas></div>
+                </div>
+            </div>
+            <!-- Charts Row 2 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div class="card">
+                    <h3 class="card-title">By Provider</h3>
+                    <div class="chart-container"><canvas id="chart-by-provider"></canvas></div>
+                </div>
+                <div class="card">
+                    <h3 class="card-title">Hourly Distribution</h3>
+                    <div class="chart-container"><canvas id="chart-hourly"></canvas></div>
+                </div>
+            </div>
+            <!-- Top Sessions -->
+            <div class="card">
+                <h3 class="card-title">Top 10 Token-Heavy Sessions</h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-dark-400 border-b border-dark-700">
+                                <th class="text-left py-2 px-3">#</th>
+                                <th class="text-left py-2 px-3">Title</th>
+                                <th class="text-left py-2 px-3">Model</th>
+                                <th class="text-right py-2 px-3">Tokens</th>
+                            </tr>
+                        </thead>
+                        <tbody id="top-sessions-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sessions Page -->
+        <div id="page-sessions" class="page p-6 space-y-4">
+            <!-- Search & Filters -->
+            <div class="flex flex-wrap gap-3 items-center">
+                <div class="flex-1 min-w-[200px]">
+                    <input id="session-search" type="text" placeholder="Search sessions..." class="input w-full">
+                </div>
+                <select id="filter-status" class="input w-32" onchange="loadSessions()">
+                    <option value="all">All</option>
+                    <option value="active">Active</option>
+                    <option value="archived">Archived</option>
+                </select>
+                <select id="filter-source" class="input w-32" onchange="loadSessions()">
+                    <option value="all">All Sources</option>
+                    <option value="user">User</option>
+                    <option value="agent">Agent</option>
+                </select>
+                <select id="filter-model" class="input w-40" onchange="loadSessions()">
+                    <option value="">All Models</option>
+                </select>
+                <select id="filter-provider" class="input w-36" onchange="loadSessions()">
+                    <option value="">All Providers</option>
+                </select>
+                <select id="sort-by" class="input w-36" onchange="loadSessions()">
+                    <option value="created_at_ms">Created</option>
+                    <option value="updated_at">Updated</option>
+                    <option value="tokens_used">Tokens</option>
+                    <option value="title">Title</option>
+                </select>
+                <button onclick="loadSessions()" class="btn btn-primary">Refresh</button>
+            </div>
+            <!-- Session Table -->
+            <div class="card overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-dark-400 border-b border-dark-700 bg-dark-800/50">
+                                <th class="text-left py-3 px-4">Title</th>
+                                <th class="text-left py-3 px-4">Model</th>
+                                <th class="text-left py-3 px-4">Provider</th>
+                                <th class="text-right py-3 px-4">Tokens</th>
+                                <th class="text-left py-3 px-4">Date</th>
+                                <th class="text-center py-3 px-4">Status</th>
+                                <th class="text-center py-3 px-4">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sessions-table-body">
+                            <tr><td colspan="7" class="text-center py-8 text-dark-400">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <!-- Pagination -->
+            <div class="flex items-center justify-between">
+                <span id="sessions-info" class="text-sm text-dark-400"></span>
+                <div class="flex gap-2">
+                    <button id="btn-prev-page" onclick="prevPage()" class="btn btn-secondary" disabled>Previous</button>
+                    <button id="btn-next-page" onclick="nextPage()" class="btn btn-secondary">Next</button>
+                </div>
+            </div>
+            <!-- Session Detail Modal -->
+            <div id="session-detail-modal" class="modal-overlay hidden">
+                <div class="modal-content">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 id="detail-title" class="text-lg font-semibold text-white truncate"></h2>
+                        <button onclick="closeSessionDetail()" class="text-dark-400 hover:text-white transition">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+                    <div id="detail-meta" class="flex flex-wrap gap-2 mb-4 text-xs text-dark-400"></div>
+                    <div id="detail-messages" class="space-y-3 max-h-[60vh] overflow-y-auto pr-2"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sync Page -->
+        <div id="page-sync" class="page p-6 space-y-6">
+            <!-- Current Config -->
+            <div class="card">
+                <h3 class="card-title">Current Config</h3>
+                <div class="grid grid-cols-2 gap-4 mt-3">
+                    <div>
+                        <div class="text-xs text-dark-400 mb-1">Model Provider</div>
+                        <div id="sync-current-provider" class="text-sm font-mono text-accent-400">-</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-dark-400 mb-1">Model</div>
+                        <div id="sync-current-model" class="text-sm font-mono text-accent-400">-</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Provider Distribution -->
+            <div class="card">
+                <h3 class="card-title">DB Provider Distribution</h3>
+                <div id="sync-provider-dist" class="mt-3 space-y-2"></div>
+            </div>
+            <!-- Codex Process -->
+            <div class="card">
+                <h3 class="card-title">Codex Process</h3>
+                <div class="flex items-center gap-4 mt-3">
+                    <div id="sync-codex-status" class="flex items-center gap-2">
+                        <span class="status-dot bg-dark-500"></span>
+                        <span class="text-sm">Checking...</span>
+                    </div>
+                    <button onclick="checkCodexStatus()" class="btn btn-secondary text-xs">Refresh</button>
+                    <button onclick="killCodex()" class="btn btn-danger text-xs">Kill Codex</button>
+                </div>
+            </div>
+            <!-- Sync Target -->
+            <div class="card">
+                <h3 class="card-title">Sync Target</h3>
+                <div class="grid grid-cols-2 gap-4 mt-3">
+                    <div>
+                        <label class="text-xs text-dark-400">Target Provider (empty = use config.toml)</label>
+                        <input id="sync-target-provider" type="text" class="input mt-1" placeholder="e.g. custom">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Target Model (empty = use config.toml)</label>
+                        <input id="sync-target-model" type="text" class="input mt-1" placeholder="e.g. gpt-5">
+                    </div>
+                </div>
+            </div>
+            <!-- Actions -->
+            <div class="flex flex-wrap gap-3">
+                <button onclick="syncPreview()" class="btn btn-secondary">Preview (Dry Run)</button>
+                <button onclick="syncExecute()" class="btn btn-warning">Execute Sync</button>
+                <button onclick="oneClickSyncRestart()" class="btn btn-primary">One-Click Sync + Restart</button>
+            </div>
+            <!-- Sync Result -->
+            <div id="sync-result" class="card hidden">
+                <h3 class="card-title">Result</h3>
+                <pre id="sync-result-text" class="mt-3 text-sm font-mono text-dark-200 bg-dark-950 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap"></pre>
+            </div>
+        </div>
+
+        <!-- Backup Page -->
+        <div id="page-backup" class="page p-6 space-y-4">
+            <div class="flex flex-wrap gap-3 items-center">
+                <button onclick="createFullBackup()" class="btn btn-primary">Full Backup</button>
+                <button onclick="createIncrementalBackup()" class="btn btn-secondary">Incremental Backup</button>
+                <button onclick="loadBackups()" class="btn btn-ghost">Refresh</button>
+            </div>
+            <div id="backup-info" class="text-sm text-dark-400"></div>
+            <div class="card overflow-hidden">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-dark-400 border-b border-dark-700 bg-dark-800/50">
+                            <th class="text-left py-3 px-4">Name</th>
+                            <th class="text-right py-3 px-4">Size (MB)</th>
+                            <th class="text-left py-3 px-4">Time</th>
+                            <th class="text-left py-3 px-4">Type</th>
+                            <th class="text-center py-3 px-4">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="backups-table-body">
+                        <tr><td colspan="5" class="text-center py-8 text-dark-400">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Settings Page -->
+        <div id="page-settings" class="page p-6 space-y-6">
+            <div class="card">
+                <h3 class="card-title">Auto-Detected Paths</h3>
+                <div class="mt-3">
+                    <button onclick="runAutoDetect()" class="btn btn-secondary mb-4">Re-Detect All Paths</button>
+                    <div id="detect-results" class="space-y-3"></div>
+                </div>
+            </div>
+            <div class="card">
+                <h3 class="card-title">Configuration</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                        <label class="text-xs text-dark-400">DB Path</label>
+                        <input id="setting-db-path" type="text" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Sessions Dir</label>
+                        <input id="setting-sessions-dir" type="text" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Archived Dir</label>
+                        <input id="setting-archived-dir" type="text" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Backup Dir</label>
+                        <input id="setting-backup-dir" type="text" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Codex CLI Path</label>
+                        <input id="setting-codex-cli" type="text" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Codex++ Path</label>
+                        <input id="setting-codex-pp" type="text" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Page Size</label>
+                        <input id="setting-page-size" type="number" class="input mt-1" min="10" max="200">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Backup Interval (hours)</label>
+                        <input id="setting-backup-interval" type="number" class="input mt-1" min="1" max="168">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Max Backups</label>
+                        <input id="setting-max-backups" type="number" class="input mt-1" min="1" max="100">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Large File Threshold (MB)</label>
+                        <input id="setting-large-threshold" type="number" class="input mt-1" min="100">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Max Messages (Large Files)</label>
+                        <input id="setting-max-lines" type="number" class="input mt-1" min="100">
+                    </div>
+                </div>
+                <div class="flex items-center gap-4 mt-4">
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input id="setting-auto-backup" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        Auto Backup
+                    </label>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input id="setting-use-codex-pp" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        Use Codex++
+                    </label>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input id="setting-dark-mode" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        Dark Mode
+                    </label>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="saveSettings()" class="btn btn-primary">Save Settings</button>
+                <button onclick="resetSettings()" class="btn btn-danger">Reset to Defaults</button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Toast notification -->
+    <div id="toast" class="fixed bottom-4 right-4 transform translate-y-20 opacity-0 transition-all duration-300 z-50">
+        <div id="toast-inner" class="px-4 py-3 rounded-lg shadow-lg text-sm font-medium"></div>
+    </div>
+
+    <script src="js/app.js"></script>
+    <script src="js/stats.js"></script>
+    <script src="js/sessions.js"></script>
+    <script src="js/sync.js"></script>
+    <script src="js/backup.js"></script>
+    <script src="js/settings.js"></script>
+</body>
+</html>
