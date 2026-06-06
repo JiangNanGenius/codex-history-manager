@@ -9,6 +9,16 @@ let currentPage = 'stats';
 
 function navigateTo(page) {
     currentPage = page;
+    if (page !== 'stats' && typeof realtimeController !== 'undefined') {
+        realtimeController.stop('stats-dashboard');
+        realtimeController.stop('range-stats');
+        const statsToggle = document.getElementById('stats-realtime-toggle');
+        const rangeToggle = document.getElementById('range-realtime-toggle');
+        const statsStatus = document.getElementById('stats-realtime-status');
+        if (statsToggle) statsToggle.checked = false;
+        if (rangeToggle) rangeToggle.checked = false;
+        if (statsStatus) statsStatus.textContent = '未开启';
+    }
     // Hide all pages
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     // Show target page

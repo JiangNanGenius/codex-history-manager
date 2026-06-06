@@ -1,32 +1,45 @@
 """
-main.py - Web 应用启动入口
-启动 Flask 本地 HTTP 服务器 + 自动打开浏览器
+main.py - 启动入口（PyWebView 内嵌窗口）
+启动 Flask 后台线程 + PyWebView 内嵌浏览器窗口
 """
 import sys
-import webbrowser
+import os
 import threading
-from pathlib import Path
+import webview
 
-# 加入当前目录到模块搜索路径
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app import create_app
+PORT = 51234
+URL = f"http://127.0.0.1:{PORT}"
 
 
-def open_browser(url: str):
-    """延迟 1.5 秒后打开浏览器"""
-    threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+def start_flask():
+    """在后台线程启动 Flask，不自动重载"""
+    from app import create_app
+    app = create_app()
+    app.run(host="127.0.0.1", port=PORT, debug=False, use_reloader=False)
 
 
 def main():
-    app = create_app()
-    port = 51234
-    host = "127.0.0.1"
-    url = f"http://{host}:{port}"
-    open_browser(url)
-    print(f"Codex History Manager 已启动: {url}")
-    print("按 Ctrl+C 退出")
-    app.run(host=host, port=port, debug=False)
+    # 启动 Flask 后台线程
+    flask_thread = threading.Thread(target=start_flask, daemon=True)
+    flask_thread.start()
+
+    # 等待 Flask 启动
+    import time
+    time.sleep(2)
+
+    # 创建 PyWebView 窗口（内嵌 Edge WebView2）
+    webview.create_window(
+        title="Codex 历史记录管理器",
+        url=URL,
+        width=1280,
+        height=800,
+        min_size=(900, 600),
+        confirm_close=True,
+        text_select=True,
+    )
+    webview.start(gui="edgechromium")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ function populateSettingsForm(data) {
         'setting-backup-dir': 'backup_dir',
         'setting-codex-cli': 'codex_cli_path',
         'setting-codex-pp': 'codex_plus_plus_path',
+        'setting-cc-switch-db': 'cc_switch_db_path',
         'setting-page-size': 'page_size',
         'setting-backup-interval': 'backup_interval_hours',
         'setting-max-backups': 'max_backups',
@@ -58,6 +59,7 @@ async function saveSettings() {
         backup_dir: document.getElementById('setting-backup-dir')?.value || '',
         codex_cli_path: document.getElementById('setting-codex-cli')?.value || '',
         codex_plus_plus_path: document.getElementById('setting-codex-pp')?.value || '',
+        cc_switch_db_path: document.getElementById('setting-cc-switch-db')?.value || '',
         page_size: parseInt(document.getElementById('setting-page-size')?.value) || 50,
         backup_interval_hours: parseInt(document.getElementById('setting-backup-interval')?.value) || 6,
         max_backups: parseInt(document.getElementById('setting-max-backups')?.value) || 20,
@@ -65,7 +67,7 @@ async function saveSettings() {
         max_lines_large_file: parseInt(document.getElementById('setting-max-lines')?.value) || 2000,
         auto_backup: document.getElementById('setting-auto-backup')?.checked || false,
         use_codex_plus_plus: document.getElementById('setting-use-codex-pp')?.checked || false,
-        dark_mode: document.getElementById('setting-dark-mode')?.checked || true,
+        dark_mode: document.getElementById('setting-dark-mode')?.checked ?? true,
     };
 
     try {

@@ -24,6 +24,7 @@ DEFAULT_CONFIG = {
     "use_codex_plus_plus": False,
     "codex_cli_path": "",
     "codex_plus_plus_path": "",
+    "cc_switch_db_path": "",
     "dark_mode": True,
     "sort_by": "created_at_ms",
     "sort_order": "desc",

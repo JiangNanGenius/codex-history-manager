@@ -1,0 +1,231 @@
+/**
+ * stopwatch.js - Token 秒表和时间段实时统计
+ */
+
+const STOPWATCH_TOKEN_REFRESH_MS = 4000;
+const RANGE_REFRESH_MS = 20000;
+const STATS_REFRESH_MS = 20000;
+
+let stopwatchState = {
+    running: false,
+    startMs: 0,
+    baseTotalTokens: 0,
+    currentTotalTokens: 0,
+};
+
+let rangeTrendChart = null;
+
+function formatElapsed(ms) {
+    const totalSeconds = Math.max(Math.floor(ms / 1000), 0);
+    const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+    const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+    const seconds = String(totalSeconds % 60).padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
+}
+
+function setTextById(id, text) {
+    const element = document.getElementById(id);
+    if (element) {
+        element.textContent = text;
+    }
+}
+
+async function fetchCurrentTokenStats(params = {}) {
+    const searchParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null && value !== '') {
+            searchParams.set(key, value);
+        }
+    }
+    const query = searchParams.toString();
+    return api(query ? `/api/token/current?${query}` : '/api/token/current');
+}
+
+function updateStopwatchElapsed() {
+    if (!stopwatchState.running) return;
+    setTextById('stopwatch-elapsed', formatElapsed(Date.now() - stopwatchState.startMs));
+}
+
+async function refreshStopwatchTokens() {
+    const data = await fetchCurrentTokenStats();
+    const totalTokens = Number(data.total_tokens || 0);
+    stopwatchState.currentTotalTokens = totalTokens;
+    const tokenDiff = Math.max(totalTokens - stopwatchState.baseTotalTokens, 0);
+
+    setTextById('stopwatch-current-total', formatNumber(totalTokens));
+    setTextById('stopwatch-token-diff', formatNumber(tokenDiff));
+    setTextById('stopwatch-cache-hits', data.cache_supported ? '可用' : '不支持');
+    setTextById('stopwatch-note', data.cache_note || data.realtime_note || 'Token 统计已刷新。');
+}
+
+async function startStopwatch() {
+    if (stopwatchState.running) return;
+    try {
+        const data = await fetchCurrentTokenStats();
+        const totalTokens = Number(data.total_tokens || 0);
+        stopwatchState = {
+            running: true,
+            startMs: Date.now(),
+            baseTotalTokens: totalTokens,
+            currentTotalTokens: totalTokens,
+        };
+
+        const startBtn = document.getElementById('stopwatch-start-btn');
+        const stopBtn = document.getElementById('stopwatch-stop-btn');
+        if (startBtn) startBtn.disabled = true;
+        if (stopBtn) stopBtn.disabled = false;
+
+        setTextById('stopwatch-elapsed', '00:00:00');
+        setTextById('stopwatch-current-total', formatNumber(totalTokens));
+        setTextById('stopwatch-token-diff', '0');
+        setTextById('stopwatch-cache-hits', data.cache_supported ? '可用' : '不支持');
+        setTextById('stopwatch-note', data.realtime_note || '记录中。');
+
+        realtimeController.start('stopwatch-elapsed', updateStopwatchElapsed, 1000, true);
+        realtimeController.start('stopwatch-tokens', refreshStopwatchTokens, STOPWATCH_TOKEN_REFRESH_MS, false);
+        setStatus('Stopwatch recording token delta');
+    } catch (err) {
+        showToast('Start stopwatch failed: ' + err.message, 'error');
+    }
+}
+
+async function stopStopwatch() {
+    if (!stopwatchState.running) return;
+    const finalElapsedMs = Date.now() - stopwatchState.startMs;
+    realtimeController.stop('stopwatch-elapsed');
+    realtimeController.stop('stopwatch-tokens');
+    stopwatchState.running = false;
+
+    const startBtn = document.getElementById('stopwatch-start-btn');
+    const stopBtn = document.getElementById('stopwatch-stop-btn');
+    if (startBtn) startBtn.disabled = false;
+    if (stopBtn) stopBtn.disabled = true;
+
+    setTextById('stopwatch-elapsed', formatElapsed(finalElapsedMs));
+    try {
+        await refreshStopwatchTokens();
+    } catch (err) {
+        console.warn('Final stopwatch token refresh failed', err);
+    }
+    setStatus('Stopwatch stopped');
+}
+
+function resetStopwatch() {
+    realtimeController.stop('stopwatch-elapsed');
+    realtimeController.stop('stopwatch-tokens');
+    stopwatchState = {
+        running: false,
+        startMs: 0,
+        baseTotalTokens: 0,
+        currentTotalTokens: 0,
+    };
+
+    const startBtn = document.getElementById('stopwatch-start-btn');
+    const stopBtn = document.getElementById('stopwatch-stop-btn');
+    if (startBtn) startBtn.disabled = false;
+    if (stopBtn) stopBtn.disabled = true;
+
+    setTextById('stopwatch-elapsed', '00:00:00');
+    setTextById('stopwatch-token-diff', '0');
+    setTextById('stopwatch-current-total', '0');
+    setTextById('stopwatch-cache-hits', '不支持');
+    setTextById('stopwatch-note', '暂无数据，请点击“开始记录”。');
+}
+
+function getRangeQuery() {
+    return {
+        start: document.getElementById('range-start')?.value || '',
+        end: document.getElementById('range-end')?.value || '',
+        granularity: document.getElementById('range-granularity')?.value || 'day',
+    };
+}
+
+async function refreshRangeStats() {
+    const query = getRangeQuery();
+    const data = await fetchCurrentTokenStats(query);
+    setTextById('range-total-tokens', formatNumber(data.total_tokens || 0));
+    setTextById('range-note', data.realtime_note || '时间段统计已刷新。');
+    renderRangeTrend(data.buckets || [], query.granularity);
+    setStatus(`Range tokens: ${formatTokens(data.total_tokens || 0)}`);
+}
+
+function renderRangeTrend(buckets, granularity) {
+    const ctx = document.getElementById('chart-range-trend');
+    if (!ctx) return;
+
+    if (rangeTrendChart) {
+        rangeTrendChart.destroy();
+        rangeTrendChart = null;
+    }
+
+    const labels = buckets.map(item => item.bucket || '');
+    const tokens = buckets.map(item => Number(item.tokens || 0));
+    if (granularity === 'total' || labels.length === 0) {
+        return;
+    }
+
+    rangeTrendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Range Tokens',
+                data: tokens,
+                borderColor: '#22c55e',
+                backgroundColor: 'rgba(34, 197, 94, 0.12)',
+                fill: true,
+                tension: 0.35,
+                pointRadius: 2,
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: true },
+                tooltip: {
+                    backgroundColor: '#0f172a',
+                    borderColor: '#334155',
+                    borderWidth: 1,
+                    callbacks: {
+                        label: ctx => `${formatNumber(ctx.parsed.y)} tokens`,
+                    },
+                },
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { maxTicksLimit: 10, font: { size: 10 } } },
+                y: { grid: { color: '#1e293b' }, ticks: { callback: value => formatTokens(value) } },
+            },
+        },
+    });
+}
+
+function toggleRangeRealtime() {
+    const enabled = Boolean(document.getElementById('range-realtime-toggle')?.checked);
+    if (enabled) {
+        realtimeController.start('range-stats', refreshRangeStats, RANGE_REFRESH_MS, true);
+    } else {
+        realtimeController.stop('range-stats');
+    }
+}
+
+function restartRangeRealtimeIfEnabled() {
+    const enabled = Boolean(document.getElementById('range-realtime-toggle')?.checked);
+    if (enabled) {
+        realtimeController.restart('range-stats', refreshRangeStats, RANGE_REFRESH_MS, true);
+    } else {
+        refreshRangeStats().catch(err => console.warn('Range refresh failed', err));
+    }
+}
+
+function toggleStatsRealtime() {
+    const enabled = Boolean(document.getElementById('stats-realtime-toggle')?.checked);
+    const status = document.getElementById('stats-realtime-status');
+    if (enabled) {
+        if (status) status.textContent = '已开启';
+        realtimeController.start('stats-dashboard', loadStats, STATS_REFRESH_MS, true);
+    } else {
+        if (status) status.textContent = '未开启';
+        realtimeController.stop('stats-dashboard');
+    }
+}

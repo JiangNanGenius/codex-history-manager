@@ -172,6 +172,31 @@ def create_app() -> Flask:
 
     # ─────────────── Token 统计 API ───────────────
 
+    @app.route("/api/token/current")
+    def get_current_tokens():
+        """获取轻量当前 Token 统计（秒表/实时面板轮询使用）。"""
+        try:
+            token_stats.db_path = config.get("db_path")
+            start = request.args.get("start", "")
+            end = request.args.get("end", "")
+            granularity = request.args.get("granularity", "total")
+            data = token_stats.get_current_stats(
+                start=start,
+                end=end,
+                granularity=granularity,
+            )
+            cc_switch_db_path = config.get("cc_switch_db_path", "")
+            data["cc_switch_db_configured"] = bool(cc_switch_db_path)
+            data["cc_switch_db_path"] = cc_switch_db_path
+            if cc_switch_db_path:
+                data["cache_note"] = (
+                    "已配置 CC Switch DB 路径；当前版本预留代理缓存统计接口，"
+                    "不会从 Codex DB 伪造缓存命中。"
+                )
+            return jsonify(data)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/stats/overview")
     def stats_overview():
         """Token 总览"""

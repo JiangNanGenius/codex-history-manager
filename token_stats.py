@@ -3,8 +3,8 @@ token_stats.py - Token 统计查询引擎
 基于 threads 表的 tokens_used 字段提供统计查询
 """
 import sqlite3
-from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
 
 
 class TokenStats:
@@ -25,6 +25,135 @@ class TokenStats:
         cur = conn.execute("PRAGMA table_info(threads)")
         columns = {row[1] for row in cur.fetchall()}
         return column in columns
+
+    def _parse_datetime_to_unix(self, value: Optional[str], end_of_day: bool = False) -> Optional[int]:
+        """将前端日期/时间字符串解析为 Unix 秒级时间戳。"""
+        if not value:
+            return None
+
+        normalized = value.strip()
+        if not normalized:
+            return None
+
+        try:
+            if normalized.isdigit():
+                number = int(normalized)
+                if number > 10_000_000_000:
+                    return int(number / 1000)
+                return number
+
+            if normalized.endswith("Z"):
+                normalized = normalized[:-1] + "+00:00"
+
+            if "T" in normalized or ":" in normalized:
+                parsed = datetime.fromisoformat(normalized)
+            else:
+                parsed = datetime.fromisoformat(normalized)
+                if end_of_day:
+                    parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return int(parsed.timestamp())
+        except (TypeError, ValueError):
+            return None
+
+    def _build_time_filter(
+        self,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> Tuple[str, List[Any], Optional[int], Optional[int]]:
+        """根据 start/end 构建 updated_at 过滤 SQL。"""
+        where_parts: List[str] = []
+        params: List[Any] = []
+        start_ts = self._parse_datetime_to_unix(start, end_of_day=False)
+        end_ts = self._parse_datetime_to_unix(end, end_of_day=True)
+
+        if start_ts is not None:
+            where_parts.append("updated_at >= ?")
+            params.append(start_ts)
+        if end_ts is not None:
+            where_parts.append("updated_at <= ?")
+            params.append(end_ts)
+
+        where_sql = " WHERE " + " AND ".join(where_parts) if where_parts else ""
+        return where_sql, params, start_ts, end_ts
+
+    def get_current_total(self) -> int:
+        """获取当前所有会话的 Token 使用总量。"""
+        data = self.get_current_stats()
+        return int(data.get("total_tokens", 0) or 0)
+
+    def get_current_stats(
+        self,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        granularity: str = "total",
+    ) -> Dict[str, Any]:
+        """获取轻量当前统计，支持按 updated_at 过滤和可选趋势桶。"""
+        result: Dict[str, Any] = {
+            "total_tokens": 0,
+            "session_count": 0,
+            "start_ts": None,
+            "end_ts": None,
+            "granularity": granularity,
+            "buckets": [],
+            "data_source": "codex_db",
+            "realtime_note": "Codex DB 统计实时性取决于 Codex 写入 state_5.sqlite 的频率。",
+            "cache_supported": False,
+            "cache_note": "Codex 原生数据库不保存 cache_read_tokens/cache_creation_tokens；缓存命中仅在配置 CC Switch 代理数据库后可用。",
+        }
+
+        try:
+            conn = self._connect()
+            try:
+                has_tokens = self._check_column(conn, "tokens_used")
+                has_updated = self._check_column(conn, "updated_at")
+                if not has_tokens:
+                    result["warning"] = "threads 表未发现 tokens_used 字段。"
+                    return result
+
+                where_sql = ""
+                params: List[Any] = []
+                start_ts: Optional[int] = None
+                end_ts: Optional[int] = None
+                if has_updated:
+                    where_sql, params, start_ts, end_ts = self._build_time_filter(start, end)
+                elif start or end:
+                    result["warning"] = "threads 表未发现 updated_at 字段，无法按时间段过滤。"
+
+                row = conn.execute(
+                    f"SELECT COUNT(*) AS cnt, COALESCE(SUM(tokens_used), 0) AS total FROM threads{where_sql}",
+                    params,
+                ).fetchone()
+                result["session_count"] = int(row["cnt"] or 0)
+                result["total_tokens"] = int(row["total"] or 0)
+                result["start_ts"] = start_ts
+                result["end_ts"] = end_ts
+
+                if has_updated and granularity in {"hour", "day"}:
+                    time_expr = "strftime('%Y-%m-%d %H:00', updated_at, 'unixepoch', 'localtime')"
+                    if granularity == "day":
+                        time_expr = "date(updated_at, 'unixepoch', 'localtime')"
+                    bucket_rows = conn.execute(
+                        f"SELECT {time_expr} AS bucket, COUNT(*) AS cnt, "
+                        f"COALESCE(SUM(tokens_used), 0) AS tokens FROM threads{where_sql} "
+                        f"GROUP BY bucket ORDER BY bucket",
+                        params,
+                    ).fetchall()
+                    result["buckets"] = [
+                        {
+                            "bucket": row["bucket"] or "",
+                            "sessions": int(row["cnt"] or 0),
+                            "tokens": int(row["tokens"] or 0),
+                        }
+                        for row in bucket_rows
+                    ]
+            finally:
+                conn.close()
+        except Exception as exc:
+            result["error"] = str(exc)
+        return result
 
     def get_overview(self) -> Dict:
         """总览：总会话数、总 Token、时间范围、今日/本周/本月使用量"""

@@ -7,6 +7,7 @@ let dailyTrendChart = null;
 let byModelChart = null;
 let byProviderChart = null;
 let hourlyChart = null;
+let statsLoadInProgress = false;
 
 // Chart.js 全局配置
 Chart.defaults.color = '#94a3b8';
@@ -14,6 +15,8 @@ Chart.defaults.borderColor = '#1e293b';
 Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
 
 async function loadStats() {
+    if (statsLoadInProgress) return;
+    statsLoadInProgress = true;
     try {
         const [overview, byModel, byProvider, dailyTrend, topSessions, hourly] = await Promise.all([
             api('/api/stats/overview'),
@@ -34,6 +37,8 @@ async function loadStats() {
         setStatus(`Stats loaded - ${formatTokens(overview.total_tokens)} total tokens`);
     } catch (err) {
         showToast('Failed to load stats: ' + err.message, 'error');
+    } finally {
+        statsLoadInProgress = false;
     }
 }
 
