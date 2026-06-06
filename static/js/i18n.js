@@ -76,6 +76,8 @@ const translations = {
     rangeTotalTokens: '时间段 Token 总数',
     rangeRealtime: '实时模式（20 秒）',
     rangeNote: '查询参数变化时会重启轮询并立即刷新。',
+    selectRangeToViewTrend: '选择时间段查看趋势',
+    noRangeData: '该时间段暂无数据',
 
     // 秒表
     stopwatch: 'Token 秒表',
@@ -136,6 +138,8 @@ const translations = {
     codexStatus: 'Codex 进程状态',
     running: '运行中',
     notRunning: '未运行',
+    codexRunning: '运行中',
+    codexNotRunning: '未运行',
     killCodex: '关闭 Codex',
     startCodex: '启动 Codex',
     startCodexPP: '启动 Codex++',
@@ -264,6 +268,8 @@ const translations = {
     rangeTotalTokens: 'Range Total Tokens',
     rangeRealtime: 'Realtime Mode (20s)',
     rangeNote: 'Query changes will restart polling and refresh immediately.',
+    selectRangeToViewTrend: 'Select a time range to view trend',
+    noRangeData: 'No data for this time range',
 
     // Stopwatch
     stopwatch: 'Token Stopwatch',
@@ -324,6 +330,8 @@ const translations = {
     codexStatus: 'Codex Process Status',
     running: 'Running',
     notRunning: 'Not Running',
+    codexRunning: 'Running',
+    codexNotRunning: 'Not Running',
     killCodex: 'Kill Codex',
     startCodex: 'Start Codex',
     startCodexPP: 'Start Codex++',
@@ -407,6 +415,8 @@ function applyI18n() {
         el.value = text;
       } else if (el.tagName === 'TITLE') {
         document.title = text;
+      } else if (el.tagName === 'OPTION') {
+        el.textContent = text;
       } else {
         el.textContent = text;
       }

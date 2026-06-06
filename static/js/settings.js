@@ -8,6 +8,13 @@ async function loadSettings() {
         const data = await api('/api/settings');
         populateSettingsForm(data);
         setStatus('Settings loaded');
+
+        // Auto-detect paths if key paths are missing
+        const hasDbPath = data.db_path && String(data.db_path).trim().length > 0;
+        const hasSessionsDir = data.sessions_dir && String(data.sessions_dir).trim().length > 0;
+        if (!hasDbPath || !hasSessionsDir) {
+            await runAutoDetect();
+        }
     } catch (err) {
         showToast('Failed to load settings: ' + err.message, 'error');
     }

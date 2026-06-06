@@ -54,8 +54,8 @@ async function refreshStopwatchTokens() {
 
     setTextById('stopwatch-current-total', formatNumber(totalTokens));
     setTextById('stopwatch-token-diff', formatNumber(tokenDiff));
-        setTextById('stopwatch-cache-hits', data.cache_supported ? t('cacheAvailable') : t('cacheNotSupported'));
-        setTextById('stopwatch-note', data.cache_note || data.realtime_note || t('noDataYet'));
+    setTextById('stopwatch-cache-hits', data.cache_supported ? t('cacheAvailable') : t('cacheNotSupported'));
+    setTextById('stopwatch-note', data.cache_note || data.realtime_note || t('noDataYet'));
 }
 
 async function startStopwatch() {
@@ -149,6 +149,33 @@ async function refreshRangeStats() {
     setStatus(`Range tokens: ${formatTokens(data.total_tokens || 0)}`);
 }
 
+function showRangePlaceholder() {
+    const wrapper = document.getElementById('range-chart-wrapper');
+    const canvas = document.getElementById('chart-range-trend');
+    if (!wrapper) return;
+    if (canvas) canvas.style.display = 'none';
+    let placeholder = wrapper.querySelector('.range-placeholder');
+    if (!placeholder) {
+        placeholder = document.createElement('div');
+        placeholder.className = 'range-placeholder flex flex-col items-center justify-center text-dark-400 py-8';
+        placeholder.innerHTML = `
+            <svg class="w-10 h-10 mb-2 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>
+            <span class="text-sm">${t('selectRangeToViewTrend')}</span>
+        `;
+        wrapper.appendChild(placeholder);
+    }
+    placeholder.style.display = 'flex';
+}
+
+function hideRangePlaceholder() {
+    const wrapper = document.getElementById('range-chart-wrapper');
+    const canvas = document.getElementById('chart-range-trend');
+    if (!wrapper) return;
+    const placeholder = wrapper.querySelector('.range-placeholder');
+    if (placeholder) placeholder.style.display = 'none';
+    if (canvas) canvas.style.display = 'block';
+}
+
 function renderRangeTrend(buckets, granularity) {
     const ctx = document.getElementById('chart-range-trend');
     if (!ctx) return;
@@ -161,8 +188,11 @@ function renderRangeTrend(buckets, granularity) {
     const labels = buckets.map(item => item.bucket || '');
     const tokens = buckets.map(item => Number(item.tokens || 0));
     if (granularity === 'total' || labels.length === 0) {
+        showRangePlaceholder();
         return;
     }
+
+    hideRangePlaceholder();
 
     rangeTrendChart = new Chart(ctx, {
         type: 'line',
@@ -225,7 +255,28 @@ function toggleStatsRealtime() {
         if (status) status.textContent = t('enabled');
         realtimeController.start('stats-dashboard', loadStats, STATS_REFRESH_MS, true);
     } else {
-        if (status) status.textContent = '未开启';
+        if (status) status.textContent = t('disabled');
         realtimeController.stop('stats-dashboard');
     }
 }
+
+function initRangeDefaults() {
+    const endInput = document.getElementById('range-end');
+    const startInput = document.getElementById('range-start');
+    if (!endInput || !startInput) return;
+
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const fmt = (d) => d.toISOString().split('T')[0];
+
+    if (!endInput.value) endInput.value = fmt(now);
+    if (!startInput.value) startInput.value = fmt(sevenDaysAgo);
+
+    refreshRangeStats().catch(err => console.warn('Initial range refresh failed', err));
+}
+
+// Auto-init range defaults when stats page loads
+window.addEventListener('DOMContentLoaded', () => {
+    initRangeDefaults();
+});

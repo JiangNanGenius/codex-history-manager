@@ -8,7 +8,8 @@
 
 /* Card */
 .card {
-    @apply bg-dark-800 border border-dark-700 rounded-xl p-5;
+    @apply bg-dark-800/80 backdrop-blur-sm border border-dark-700/60 rounded-xl p-5;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255,255,255,0.03);
 }
 .card-title {
     @apply text-sm font-semibold text-dark-300 uppercase tracking-wider mb-1;
@@ -107,6 +108,10 @@
     @apply mt-3 relative;
     height: 250px;
 }
+.chart-container:has(.range-placeholder) {
+    height: auto;
+    min-height: 120px;
+}
 
 /* Toast */
 .toast-success { @apply bg-emerald-600 text-white; }
@@ -124,6 +129,14 @@
 
 /* Table rows hover */
 tbody tr { @apply border-b border-dark-700/50 hover:bg-dark-800/50 transition; }
+
+/* Empty state */
+.empty-state {
+    @apply flex flex-col items-center justify-center py-10 text-dark-400;
+}
+.empty-state-icon {
+    @apply w-12 h-12 mb-3 opacity-30;
+}
 
 /* Pulse animation */
 @keyframes pulse-dot {

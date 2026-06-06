@@ -118,30 +118,73 @@ def load_config_toml(config_path: str) -> Dict[str, str]:
     return result
 
 
-def is_codex_running() -> Tuple[bool, List[int]]:
-    """
-    检查 Codex 进程是否在运行
-    返回 (是否运行中, [PID列表])
-    """
+def _decode_tasklist_output(stdout: bytes) -> str:
+    """Decode tasklist output with multiple encoding fallback."""
+    for encoding in ("utf-8", "gbk", "cp936", "cp1252"):
+        try:
+            return stdout.decode(encoding)
+        except Exception:
+            continue
+    return stdout.decode("utf-8", errors="replace")
+
+
+def _find_pids_by_image(image_name: str) -> List[int]:
+    """Find PIDs by image name using tasklist."""
     pids = []
     try:
         import subprocess
         result = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq codex.exe", "/FO", "CSV", "/NH"],
+            ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
             capture_output=True, timeout=10
         )
-        # Windows tasklist 输出可能不是 UTF-8
-        output = result.stdout.decode("utf-8", errors="replace")
+        output = _decode_tasklist_output(result.stdout)
         for line in output.strip().splitlines():
             parts = line.strip('"').split('","')
             if len(parts) >= 2:
                 name = parts[0]
                 pid_str = parts[1]
-                if name.lower() in ("codex.exe",) and pid_str.isdigit():
+                if name.lower() == image_name.lower() and pid_str.isdigit():
                     pids.append(int(pid_str))
     except Exception:
         pass
-    return len(pids) > 0, pids
+    return pids
+
+
+def _find_node_codex_pids() -> List[int]:
+    """Find node.exe processes that appear to be running codex."""
+    pids = []
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["wmic", "process", "where", "name='node.exe'", "get", "ProcessId,CommandLine", "/format:csv"],
+            capture_output=True, timeout=10
+        )
+        output = _decode_tasklist_output(result.stdout)
+        for line in output.strip().splitlines():
+            if "node" not in line.lower():
+                continue
+            parts = line.strip('"').split('","')
+            if len(parts) >= 3:
+                cmdline = parts[-2].lower()
+                pid_str = parts[-1]
+                if "codex" in cmdline and pid_str.isdigit():
+                    pids.append(int(pid_str))
+    except Exception:
+        pass
+    return pids
+
+
+def is_codex_running() -> Tuple[bool, List[int]]:
+    """
+    检查 Codex 进程是否在运行
+    返回 (是否运行中, [PID列表])
+    """
+    pids = _find_pids_by_image("codex.exe")
+    pids.extend(_find_pids_by_image("Code.exe"))
+    pids.extend(_find_node_codex_pids())
+    # Deduplicate
+    unique_pids = list(dict.fromkeys(pids))
+    return len(unique_pids) > 0, unique_pids
 
 
 def kill_codex() -> Tuple[bool, str]:

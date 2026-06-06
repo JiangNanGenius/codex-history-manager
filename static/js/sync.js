@@ -57,15 +57,17 @@ function renderCodexStatus(running, pids) {
     const container = document.getElementById('sync-codex-status');
     if (!container) return;
 
-    if (running) {
+    const pidList = Array.isArray(pids) ? pids : [];
+
+    if (running && pidList.length > 0) {
         container.innerHTML = `
-            <span class="status-dot bg-red-500 pulse-dot"></span>
-            <span class="text-sm text-red-400">${t('running')} (PID: ${pids.join(', ')})</span>
+            <span class="status-dot bg-emerald-500 pulse-dot"></span>
+            <span class="text-sm text-emerald-400">${t('codexRunning')} (PID: ${pidList.join(', ')})</span>
         `;
     } else {
         container.innerHTML = `
-            <span class="status-dot bg-emerald-500"></span>
-            <span class="text-sm text-emerald-400">${t('notRunning')}</span>
+            <span class="status-dot bg-dark-500"></span>
+            <span class="text-sm text-dark-400">${t('codexNotRunning')}</span>
         `;
     }
 }
