@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import _cleanup_target, _uninstall_cleanup_targets
+from app import _cleanup_target, _cleanup_targets, _uninstall_cleanup_targets
 
 
 class CleanupGuardrailTest(unittest.TestCase):
@@ -46,6 +46,30 @@ class CleanupGuardrailTest(unittest.TestCase):
             external = next(target for target in targets if target["id"] == "external_provider_store")
             self.assertFalse(external["safe"])
             self.assertEqual(external["path"], str(external_store))
+
+    def test_cleanup_preview_targets_have_descriptions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            app_root = tmp / "Codex Enhance Manager"
+            app_root.mkdir()
+            temp_dir = app_root / "temp"
+            temp_dir.mkdir()
+
+            class StubConfig:
+                def get_all(self):
+                    return {
+                        "temp_dir": str(temp_dir),
+                        "diagnostics_dir": str(app_root / "diagnostics"),
+                        "exports_dir": str(app_root / "exports"),
+                    }
+
+            with patch("app.app_data_dir", return_value=app_root):
+                targets = _cleanup_targets(StubConfig())
+
+            temp = next(target for target in targets if target["id"] == "temp")
+            self.assertTrue(temp["safe"])
+            self.assertEqual(temp["description"], "Temporary app files")
+            self.assertIn("short-lived", temp["effect"])
 
 
 if __name__ == "__main__":

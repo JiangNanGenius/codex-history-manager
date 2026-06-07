@@ -128,6 +128,22 @@
 ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #475569; }
 
+body {
+  background: var(--bg-base) !important;
+  color: var(--text-primary);
+}
+
+#sidebar {
+  background: linear-gradient(180deg, var(--bg-deep), var(--bg-base)) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+main {
+  background:
+    radial-gradient(circle at 12% 8%, var(--accent-glow), transparent 28rem),
+    linear-gradient(180deg, var(--bg-base), var(--bg-deep));
+}
+
 /* ─────────────── 3. 基础组件过渡 ───────────────
    全局默认过渡属性限制在 color/background/border/box-shadow
    与 opacity，避免意外触发 layout 属性（width/height/top）

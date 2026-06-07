@@ -1,81 +1,78 @@
 # Codex Enhance Manager
 
-> A local-first Windows desktop control center for Codex: history, token/cache usage, provider presets, unified model visibility, adaptive routing, safe Codex config previews, and a localhost proxy with redacted diagnostics.
+<p align="center">
+  <strong>A local-first Windows control center for Codex power users.</strong>
+</p>
 
-[中文说明](README.zh-CN.md)
+<p align="center">
+  Manage Codex history, token/cache usage, provider presets, unified model visibility,
+  adaptive routing, local proxy diagnostics, safe config previews, and recovery tools.
+</p>
 
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
-[![Platform](https://img.shields.io/badge/Platform-Windows-informational.svg)](#quick-start)
+<p align="center">
+  <a href="README.zh-CN.md">中文说明</a>
+  ·
+  <a href="https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases">Releases</a>
+  ·
+  <a href="#quick-start">Quick Start</a>
+  ·
+  <a href="#safety-model">Safety Model</a>
+</p>
 
-Codex Enhance Manager started as a Codex history and token manager. It is now evolving into a local operations layer for Codex: multi-provider setup, model catalog visibility, request routing, cache/cost accounting, diagnostics, and recovery tools.
+<p align="center">
+  <a href="https://opensource.org/licenses/Apache-2.0">
+    <img alt="License: Apache-2.0" src="https://img.shields.io/badge/License-Apache--2.0-green.svg">
+  </a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue.svg">
+  <img alt="Platform: Windows" src="https://img.shields.io/badge/Platform-Windows-informational.svg">
+  <img alt="Local first" src="https://img.shields.io/badge/Design-local--first-0f766e.svg">
+</p>
 
-The project is intentionally local-first. Provider secrets, app settings, request-log metadata, backups, exports, and diagnostics stay on your machine by default.
+---
 
-## Current Build
+## Why This Exists
 
-| Area | Status | Notes |
-| --- | --- | --- |
-| Session history | Working | Browse, filter, inspect, export, archive, and repair moved sessions. |
-| Token/cache usage | Working | Reads Codex DB totals, Codex rollout cache events, local proxy logs, and compatible proxy DBs. |
-| Provider registry | Working | 16 built-in presets with aliases, regions, currencies, headers, User-Agent, media profile, and visibility policy. |
-| Unified Model Catalog | Working | Shows selected models from multiple providers at once with provider-prefixed model IDs. |
-| Adaptive Model Rotation | Working scaffold | Priority/capability routing, cooldown, context limiter, explanations, and JSON persistence. |
-| Local proxy | Working scaffold | Chat, Responses, Models, media pass-through scaffolding, port backoff, route diagnostics, metadata-only logs. |
-| Protocol adapters | Working scaffold | Responses <-> Chat, Anthropic Messages foundation, domestic Responses guardrails. Unknown shapes stay blocked. |
-| Cost and currency | Working scaffold | Native/display currency, manual FX overrides, local estimate breakdowns, request FX snapshots. |
-| Quota/balance | Working scaffold | Generic JSON endpoint probe with TTL cache and redacted failure snapshots. |
-| Codex config safety | Working | Diff preview, backups, rollback, auth preservation, and explicit mutation confirmation. |
+Codex is strongest when it can stay logged in, keep its local history intact, and move between providers without breaking config, sandbox, or token accounting. Codex Enhance Manager is the local operations layer around that workflow.
 
-## Highlights
+It began as a Codex history and token manager. It is now growing into a safer desktop toolkit for provider setup, model catalog visibility, local proxy routing, usage/cost analysis, diagnostics, and rollback.
 
-### Unified Provider Setup
+The project is intentionally local-first: provider settings, backups, request-log metadata, diagnostics, exports, and temporary files live on your machine by default.
 
-- Local provider registry with OpenAI, Azure, OpenRouter, DeepSeek, Moonshot, Zhipu, SiliconFlow, MiniMax, Alibaba Bailian, Volcengine Ark, ModelScope, StepFun, NVIDIA, and custom endpoint presets.
-- Provider fields include `short_alias`, native currency, country/region, custom headers, User-Agent, media profile, quota template, and model pricing hints.
-- Provider visibility supports hidden, focused-only, always-visible, and selected-models modes.
+## What You Can Do Today
 
-### Unified Model Catalog
+| Area | Current state |
+| --- | --- |
+| History and usage | Browse sessions, inspect heavy conversations, read Codex DB totals, and add cache read/write usage from rollout events, proxy logs, and compatible proxy DBs. |
+| Provider setup | Manage provider presets with `short_alias`, region, currency, custom headers, `User-Agent`, media profile, quota template, and catalog visibility. |
+| Unified Model Catalog | Preview Codex-visible model IDs such as `qwen/qwen3-coder-plus` from always-visible, selected, focused-provider, and AMR entries. |
+| Local proxy | Run an independent localhost proxy with automatic occupied-port backoff, route diagnostics, metadata-only request logs, and OpenAI-compatible route scaffolding. |
+| Protocol adapters | Convert verified Responses, Chat, Anthropic Messages, tools, images, SSE events, and domestic Responses profiles only where behavior is sourced. |
+| Cost and currency | Estimate input/output/cache/reasoning/media cost, preserve per-request FX snapshots, support manual FX overrides, and keep online FX blocked until verified. |
+| Config recovery | Preview Codex config diffs, create backups, restore config/auth, preserve official login state, and repair moved session/project metadata. |
+| Settings polish | Use richer built-in themes, full custom theme colors, theme import/export, settings import/export, cleanup preview/execute, and uninstall cleanup write-lock. |
 
-- Builds one visible catalog from multiple providers.
-- Uses provider-prefixed IDs such as `qwen/qwen3-coder-plus`.
-- Keeps a manual Provider Focus Switch while still preserving always-visible and selected models.
-- Previews catalog output before writing anything into Codex.
+## The Desktop Surface
 
-### Local Proxy
+The app is organized as an operational console rather than a marketing dashboard.
 
-- Runs as an independent localhost HTTP server, separate from Flask.
-- Supports `/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/responses/compact`, and OpenAI-compatible media route scaffolding.
-- Routes by `provider/model` hard prefix, exact model match, UMC entries, media profile, or AMR group.
-- Uses strict Windows port binding where available and automatically backs off when the configured port is occupied.
-- Writes metadata-only JSONL logs for non-streaming requests: endpoint, provider, model, status, duration, normalized usage, cache read/write, local cost estimate, and FX snapshot.
-- Surfaces those logs in the Token Dashboard with filters, cache read/write columns, cost display, FX display, and retention cleanup.
-- Does not store prompts, request bodies, raw request headers, or raw upstream responses in proxy logs.
-
-### Usage, Cost, And Currency
-
-- Reads collapsed Codex totals from `threads.tokens_used`.
-- Adds cache read/write details from Codex rollout `token_count` events, local proxy logs, and compatible proxy databases.
-- Estimates input, output, cache read, cache write, reasoning, image, and video costs.
-- Supports provider/model native currency, display currency, manual FX overrides, cached rates, and per-request FX snapshots.
-- Online exchange-rate adapters are intentionally blocked until the official API shape is reachable and verified.
-
-### Diagnostics And Recovery
-
-- Redacted diagnostics cover Codex config, auth mode, local proxy status, providers, UMC, AMR, quota snapshots, request-log summaries, and system environment.
-- Config/auth writes create backups and support rollback.
-- Thread/project move repair updates SQLite, JSONL metadata, and `session_index.jsonl` with dry-run and rollback.
-- Cleanup APIs use allowlists and confirmation phrases.
+- **Overview**: health, current paths, guardrails, and high-signal status.
+- **Token Dashboard**: Codex totals, cache read/write, request-log summaries, cost snapshots, and floating token monitor controls.
+- **Providers**: preset-first setup, focused editing, section-local testing, status strips, custom `User-Agent`, and visibility policy.
+- **Unified Model Catalog**: preview before writing anything into Codex.
+- **Local Proxy**: start/stop/status, actual bound port, route explanations, and log retention.
+- **Settings**: storage paths, theme editor, import/export, safe cleanup, uninstall cleanup, currency settings, and monitor field customization.
+- **Diagnostics and Recovery**: redacted diagnostics, backup/restore, rollback, and move repair.
 
 ## Safety Model
 
 | Boundary | Rule |
 | --- | --- |
-| Codex auth/config/model catalog/process writes | Preview and dry-run are allowed here; real mutation testing must be performed manually by the user. |
-| Protocol conversion | No guessed adapters. Responses, Chat, Anthropic, SSE, tools, media, and domestic provider differences must be verified from official docs/source or explicit source analysis. |
+| Codex auth/config/model catalog/process writes | Read-only checks, dry-runs, and previews are allowed in this Codex window. Real mutation testing must be performed manually by the user. |
+| Protocol conversion | No guessed adapters. Responses, Chat, Anthropic, SSE, tool, media, and domestic provider differences must be verified from official docs/source or explicit source analysis. |
 | Secrets | API keys, bearer tokens, and sensitive headers are redacted in diagnostics and request logs. |
+| Request logs | Local proxy logs are metadata-only. They do not store prompts, request bodies, raw headers, or raw upstream responses. |
 | Local-only materials | `_local_notes/`, `research/`, diagnostics with secrets, and temporary research output are ignored and must not be pushed. |
-| Codex++ content | Useful implementation ideas may be studied, but sponsor/recommendation/ad content is not migrated. |
+| Codex++ content | Implementation ideas may be studied. Sponsor, recommendation, marketplace ad, or promotional content is not migrated. |
 
 ## Quick Start
 
@@ -90,7 +87,11 @@ pip install -r requirements.txt
 python main.py
 ```
 
-The desktop window is backed by a local Flask service at `http://127.0.0.1:51234`.
+The desktop window is backed by a local Flask service at:
+
+```text
+http://127.0.0.1:51234
+```
 
 ### Build EXE
 
@@ -98,11 +99,11 @@ The desktop window is backed by a local Flask service at `http://127.0.0.1:51234
 python build_exe.py
 ```
 
-The build script creates a single-file Windows EXE with bundled static assets, icons, PyWebView, Flask, Pillow, and tray support.
+The build script creates a single-file Windows EXE with bundled static assets, icon, PyWebView, Flask, Pillow, and tray support.
 
-## Storage
+## Local Storage
 
-User data defaults to:
+New user data defaults to:
 
 ```text
 Documents/Codex Enhance Manager/
@@ -110,15 +111,52 @@ Documents/Codex Enhance Manager/
 
 Legacy settings from `~/.codex_gui_config.json` are imported when present.
 
-| Path or setting | Purpose |
+| Path | Purpose |
 | --- | --- |
 | `config.json` | Main app settings. |
 | `providers/providers.json` | Local provider registry. |
 | `logs/proxy_requests.jsonl` | Metadata-only local proxy request log. |
-| `backups/` and `codex_backups/` | App and Codex config backups. |
+| `backups/`, `codex_backups/` | App and Codex config backups. |
 | `diagnostics/` | Redacted diagnostics bundles. |
 | `exports/` | User-requested exports. |
 | `temp/` | Temporary app files. |
+
+## Provider And Model Flow
+
+Codex Enhance Manager treats model visibility separately from routing.
+
+1. Add or import providers with aliases such as `qwen`, `ds`, `kimi`, or `openai`.
+2. Choose which providers or models are always visible.
+3. Select extra models manually when needed.
+4. Use the Provider Focus Switch to temporarily show every model from one provider.
+5. Preview the final Codex catalog before any Codex config write.
+
+The visible catalog is built from:
+
+```text
+always-visible models
++ selected models
++ focused-provider models
++ Adaptive Model Rotation groups
+```
+
+## Local Proxy Logging
+
+The local proxy writes non-streaming request metadata into `logs/proxy_requests.jsonl`.
+
+Recorded:
+
+- endpoint, provider, model, status, duration
+- normalized input/output/cache/reasoning/media usage
+- local cost estimate and FX snapshot
+- safe route diagnostics
+
+Never recorded:
+
+- prompt text
+- raw request body
+- raw request headers
+- raw upstream response
 
 ## Account Sync
 
@@ -140,30 +178,30 @@ After sync, sessions remain visible across account/provider switches.
 | `app.py` | Flask API surface and desktop backend orchestration. |
 | `main.py` | PyWebView desktop entry point. |
 | `app_paths.py`, `config.py` | Documents-based storage and settings migration. |
-| `providers.py` | Provider registry, presets, schema normalization, redaction. |
-| `model_catalog.py` | Unified Model Catalog generation. |
+| `providers.py` | Provider registry, presets, schema normalization, and redaction. |
+| `model_catalog.py` | Unified Model Catalog generation and preview. |
 | `model_rotation.py`, `amr_registry.py` | Adaptive Model Rotation engine and persistence. |
 | `proxy_server.py` | Local OpenAI-compatible proxy server. |
-| `request_logs.py` | Metadata-only proxy request logs, retention, summaries, cost snapshots. |
+| `request_logs.py` | Metadata-only proxy request logs, retention, summaries, and cost snapshots. |
 | `responses_adapter.py` | Responses <-> Chat conversion and SSE normalization. |
 | `anthropic_adapter.py` | Anthropic Messages adapter foundation. |
-| `domestic_responses.py` | Alibaba Bailian and Volcengine Ark Responses compatibility profiles and guardrails. |
+| `domestic_responses.py` | Alibaba Bailian and Volcengine Ark Responses profiles and guardrails. |
 | `media_proxy.py` | OpenAI-compatible image/video route helpers. |
-| `codex_config.py` | Codex config/auth backup, diff preview, write, restore. |
+| `codex_config.py` | Codex config/auth backup, diff preview, write, and restore. |
 | `codex_rollout_usage.py`, `token_stats.py` | Token/cache usage readers. |
-| `currency.py`, `costing.py`, `quota.py` | FX snapshots, local cost estimates, generic quota probes. |
+| `currency.py`, `costing.py`, `quota.py` | FX snapshots, local cost estimates, and generic quota probes. |
 | `diagnostics.py`, `move_repair.py` | Safe diagnostics and project/thread move repair. |
 
 ## Roadmap
 
-| Next area | Direction |
+| Next | Direction |
 | --- | --- |
-| Media adapters | Add real Alibaba Bailian and Volcengine Ark image/video adapters after payload, polling, and response formats are verified. |
-| Streaming logs | Record streaming proxy requests only after lifecycle, final usage, and half-closed stream semantics are confirmed. |
-| Cost dashboard | Add UI columns for native/display currency, cache read/write, reasoning, image, video, and provider-reported-vs-estimated costs. |
+| Protocol verification | Continue source/doc comparison for official Codex, domestic Responses, Anthropic, tools, SSE, compacting, and media item behavior. |
+| Media adapters | Add real Alibaba Bailian and Volcengine Ark image/video adapters after payload, polling, cancel, and response formats are verified. |
+| Approval and sandbox repair | Audit official Codex approval paths and sandbox config behavior before implementing repairs. |
+| Cost dashboard | Add deeper native/display currency comparison, stale FX warnings, provider-reported-vs-estimated cost, and media pricing tiers. |
 | Quota integrations | Layer provider-specific balance/quota endpoints on top of the generic probe scaffold. |
-| Theme system | Add richer theme presets, custom theme editing, and theme import. |
-| Codex approval/sandbox repair | Audit official Codex approval paths and sandbox config handling before implementing fixes. |
+| UI polish | Continue cleaning legacy copy, icons, i18n coverage, screenshots, and narrow-window layout checks. |
 | Packaging | Build and publish a fresh EXE once the proxy/protocol layer reaches a stable milestone. |
 
 ## License

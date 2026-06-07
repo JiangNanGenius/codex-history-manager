@@ -3,13 +3,29 @@
  */
 
 const THEME_PRESETS = {
-    dark: { accent: '#3b82f6', background: '#0f172a', surface: '#1e293b' },
-    midnight: { accent: '#38bdf8', background: '#020617', surface: '#111827' },
-    graphite: { accent: '#22c55e', background: '#111827', surface: '#27272a' },
-    cobalt: { accent: '#06b6d4', background: '#0b1220', surface: '#172033' },
-    ember: { accent: '#f97316', background: '#18181b', surface: '#292524' },
-    custom: { accent: '#3b82f6', background: '#0f172a', surface: '#1e293b' },
+    dark: { accent: '#3b82f6', deep: '#020617', background: '#0f172a', elevated: '#1e293b', surface: '#1e293b', border: '#334155', text_primary: '#f8fafc', text_secondary: '#cbd5e1', text_muted: '#94a3b8' },
+    midnight: { accent: '#38bdf8', deep: '#010313', background: '#020617', elevated: '#0f172a', surface: '#111827', border: '#1f2a44', text_primary: '#f8fafc', text_secondary: '#cbd5e1', text_muted: '#94a3b8' },
+    graphite: { accent: '#22c55e', deep: '#09090b', background: '#111827', elevated: '#1f2937', surface: '#27272a', border: '#3f3f46', text_primary: '#fafafa', text_secondary: '#d4d4d8', text_muted: '#a1a1aa' },
+    cobalt: { accent: '#06b6d4', deep: '#07111f', background: '#0b1220', elevated: '#111c30', surface: '#172033', border: '#28415f', text_primary: '#f0f9ff', text_secondary: '#bae6fd', text_muted: '#7dd3fc' },
+    ember: { accent: '#f97316', deep: '#0c0a09', background: '#18181b', elevated: '#1f1f23', surface: '#292524', border: '#44403c', text_primary: '#fff7ed', text_secondary: '#fed7aa', text_muted: '#fdba74' },
+    jade: { accent: '#14b8a6', deep: '#04110f', background: '#08201d', elevated: '#102a27', surface: '#163733', border: '#24534e', text_primary: '#ecfdf5', text_secondary: '#ccfbf1', text_muted: '#99f6e4' },
+    rose: { accent: '#f43f5e', deep: '#12070b', background: '#1f1117', elevated: '#2a1720', surface: '#351b27', border: '#5f2638', text_primary: '#fff1f2', text_secondary: '#fecdd3', text_muted: '#fda4af' },
+    aurora: { accent: '#8b5cf6', deep: '#070818', background: '#111827', elevated: '#172033', surface: '#1f2937', border: '#3b4962', text_primary: '#f5f3ff', text_secondary: '#ddd6fe', text_muted: '#a5b4fc' },
+    paper: { accent: '#2563eb', deep: '#e5e7eb', background: '#f8fafc', elevated: '#ffffff', surface: '#eef2ff', border: '#cbd5e1', text_primary: '#0f172a', text_secondary: '#334155', text_muted: '#64748b' },
+    custom: { accent: '#3b82f6', deep: '#020617', background: '#0f172a', elevated: '#1e293b', surface: '#1e293b', border: '#334155', text_primary: '#f8fafc', text_secondary: '#cbd5e1', text_muted: '#94a3b8' },
 };
+
+const THEME_FIELDS = [
+    ['accent', 'setting-theme-accent'],
+    ['deep', 'setting-theme-deep'],
+    ['background', 'setting-theme-background'],
+    ['elevated', 'setting-theme-elevated'],
+    ['surface', 'setting-theme-surface'],
+    ['border', 'setting-theme-border'],
+    ['text_primary', 'setting-theme-text-primary'],
+    ['text_secondary', 'setting-theme-text-secondary'],
+    ['text_muted', 'setting-theme-text-muted'],
+];
 
 async function loadSettings() {
     try {
@@ -74,12 +90,11 @@ function populateSettingsForm(data) {
         if (el && data[key] !== undefined) el.checked = Boolean(data[key]);
     }
 
-    const themeAccent = document.getElementById('setting-theme-accent');
-    if (themeAccent) themeAccent.value = (data.theme_custom && data.theme_custom.accent) || '#3b82f6';
-    const themeBackground = document.getElementById('setting-theme-background');
-    if (themeBackground) themeBackground.value = (data.theme_custom && data.theme_custom.background) || '#0f172a';
-    const themeSurface = document.getElementById('setting-theme-surface');
-    if (themeSurface) themeSurface.value = (data.theme_custom && data.theme_custom.surface) || '#1e293b';
+    const themeCustom = normalizeThemeCustom(data.theme_custom || {});
+    for (const [key, elId] of THEME_FIELDS) {
+        const el = document.getElementById(elId);
+        if (el) el.value = themeCustom[key];
+    }
 
     const monitorFields = data.monitor_fields || {};
     const monitorMap = {
@@ -159,17 +174,39 @@ function resolveTheme(data) {
     const presetName = (data && data.theme_preset) || 'dark';
     const preset = THEME_PRESETS[presetName] || THEME_PRESETS.dark;
     if (presetName !== 'custom') return preset;
-    return { ...preset, ...((data && data.theme_custom) || {}) };
+    return normalizeThemeCustom({ ...preset, ...((data && data.theme_custom) || {}) });
 }
 
 function applyThemeSettings(data) {
     const palette = resolveTheme(data || {});
     document.documentElement.style.setProperty('--accent', palette.accent);
     document.documentElement.style.setProperty('--accent-glow', hexToRgba(palette.accent, 0.25));
+    document.documentElement.style.setProperty('--bg-deep', palette.deep);
     document.documentElement.style.setProperty('--bg-base', palette.background);
-    document.documentElement.style.setProperty('--bg-elevated', palette.surface);
+    document.documentElement.style.setProperty('--bg-elevated', palette.elevated);
+    document.documentElement.style.setProperty('--border-subtle', hexToRgba(palette.border, 0.55));
+    document.documentElement.style.setProperty('--text-primary', palette.text_primary);
+    document.documentElement.style.setProperty('--text-secondary', palette.text_secondary);
+    document.documentElement.style.setProperty('--text-muted', palette.text_muted);
     document.documentElement.style.setProperty('--bg-surface', hexToRgba(palette.surface, 0.72));
     document.documentElement.style.setProperty('--border-hover', hexToRgba(palette.accent, 0.35));
+}
+
+function normalizeThemeCustom(value) {
+    const raw = value && typeof value === 'object' ? value : {};
+    const base = { ...THEME_PRESETS.custom };
+    for (const key of Object.keys(base)) {
+        base[key] = sanitizeColor(raw[key], base[key]);
+    }
+    return base;
+}
+
+function readThemeCustomFromForm() {
+    const theme = {};
+    for (const [key, elId] of THEME_FIELDS) {
+        theme[key] = sanitizeColor(document.getElementById(elId)?.value, THEME_PRESETS.custom[key]);
+    }
+    return theme;
 }
 
 function hexToRgba(hex, alpha) {
@@ -199,11 +236,7 @@ async function saveSettings() {
         request_log_retention_days: parseInt(document.getElementById('setting-request-log-retention-days')?.value, 10) || 30,
         request_log_max_mb: parseFloat(document.getElementById('setting-request-log-max-mb')?.value) || 50,
         theme_preset: document.getElementById('setting-theme-preset')?.value || 'dark',
-        theme_custom: {
-            accent: document.getElementById('setting-theme-accent')?.value || '#3b82f6',
-            background: document.getElementById('setting-theme-background')?.value || '#0f172a',
-            surface: document.getElementById('setting-theme-surface')?.value || '#1e293b',
-        },
+        theme_custom: readThemeCustomFromForm(),
         monitor_fields: {
             tokens: document.getElementById('monitor-field-tokens')?.checked !== false,
             progress: document.getElementById('monitor-field-progress')?.checked !== false,
@@ -319,14 +352,10 @@ async function importThemeFromFile(input) {
     try {
         const payload = JSON.parse(await file.text());
         const themeCustom = payload.theme_custom || payload.custom || payload;
-        const hasCustomColors = Boolean(themeCustom.accent || themeCustom.background || themeCustom.surface);
+        const hasCustomColors = THEME_FIELDS.some(([key]) => Boolean(themeCustom[key]));
         const nextTheme = {
             theme_preset: hasCustomColors ? 'custom' : (payload.theme_preset || 'custom'),
-            theme_custom: {
-                accent: sanitizeColor(themeCustom.accent, '#3b82f6'),
-                background: sanitizeColor(themeCustom.background, '#0f172a'),
-                surface: sanitizeColor(themeCustom.surface, '#1e293b'),
-            },
+            theme_custom: normalizeThemeCustom(themeCustom),
         };
         const result = await api('/api/settings', {
             method: 'POST',
@@ -445,12 +474,14 @@ function renderCleanupTargets(container, targets, options = {}) {
     }
     container.innerHTML = targets.map(target => {
         const safeClass = target.safe ? 'text-emerald-400' : 'text-amber-400';
+        const inputId = `${prefix}-${target.id}`;
+        const labelFor = selectable && target.safe ? ` for="${escapeHtml(inputId)}"` : '';
         const checkbox = selectable && target.safe ? `
-            <input data-cleanup-target type="checkbox" value="${escapeHtml(target.id)}" checked
+            <input id="${escapeHtml(inputId)}" data-cleanup-target type="checkbox" value="${escapeHtml(target.id)}" checked
                 class="mt-1 w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
         ` : '<span class="mt-1 w-4 h-4"></span>';
         return `
-            <label for="${prefix}-${escapeHtml(target.id)}" class="flex gap-3 py-3 border-b border-dark-800 last:border-b-0">
+            <label${labelFor} class="flex gap-3 py-3 border-b border-dark-800 last:border-b-0">
                 ${checkbox}
                 <div class="min-w-0 flex-1">
                     <div class="flex flex-wrap items-center gap-2">
@@ -572,7 +603,7 @@ document.addEventListener('DOMContentLoaded', () => {
     api('/api/settings')
         .then(applyThemeSettings)
         .catch(() => {});
-    ['setting-theme-preset', 'setting-theme-accent', 'setting-theme-background', 'setting-theme-surface']
+    ['setting-theme-preset', ...THEME_FIELDS.map(([, elId]) => elId)]
         .forEach((id) => {
             const el = document.getElementById(id);
             if (!el) return;
@@ -584,10 +615,6 @@ document.addEventListener('DOMContentLoaded', () => {
 function previewThemeFromForm() {
     applyThemeSettings({
         theme_preset: document.getElementById('setting-theme-preset')?.value || 'dark',
-        theme_custom: {
-            accent: document.getElementById('setting-theme-accent')?.value || '#3b82f6',
-            background: document.getElementById('setting-theme-background')?.value || '#0f172a',
-            surface: document.getElementById('setting-theme-surface')?.value || '#1e293b',
-        },
+        theme_custom: readThemeCustomFromForm(),
     });
 }
