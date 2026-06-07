@@ -11,10 +11,10 @@ from app import (
 class RouteSimulatorHelpersTest(unittest.TestCase):
     def test_normalize_route_capabilities_accepts_list_and_ignores_unknowns(self):
         result = _normalize_route_capabilities({
-            "capabilities": ["text", "vision", "unknown", "tools"],
+            "capabilities": ["text", "vision", "unknown", "tools", "custom_tools"],
         })
 
-        self.assertEqual(result, {"text", "vision", "tools"})
+        self.assertEqual(result, {"text", "vision", "tools", "custom_tools"})
 
     def test_normalize_route_capabilities_defaults_to_text(self):
         result = _normalize_route_capabilities({"capabilities": ["unknown"]})

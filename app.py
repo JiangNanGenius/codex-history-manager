@@ -1870,7 +1870,7 @@ def _normalize_route_capabilities(body: Dict[str, Any]) -> set[str]:
         parts = [str(item).strip().lower() for item in raw if str(item).strip()]
     else:
         parts = []
-    allowed = {"text", "vision", "tools", "reasoning", "images", "videos"}
+    allowed = {"text", "vision", "tools", "custom_tools", "reasoning", "images", "videos"}
     capabilities = {item for item in parts if item in allowed}
     return capabilities or {"text"}
 

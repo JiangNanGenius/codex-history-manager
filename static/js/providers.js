@@ -474,6 +474,7 @@ function renderProviderEditor(provider) {
                     ${renderCapabilityToggle('cap-text', 'Text', provider.capabilities.text)}
                     ${renderCapabilityToggle('cap-vision', 'Vision Input', provider.capabilities.vision)}
                     ${renderCapabilityToggle('cap-tools', 'Tools', provider.capabilities.tools)}
+                    ${renderCapabilityToggle('cap-custom-tools', 'Custom Tools', provider.capabilities.custom_tools)}
                     ${renderCapabilityToggle('cap-reasoning', 'Reasoning', provider.capabilities.reasoning)}
                     ${renderCapabilityToggle('cap-images', 'Images', provider.capabilities.images)}
                     ${renderCapabilityToggle('cap-videos', 'Videos', provider.capabilities.videos)}
@@ -618,7 +619,7 @@ function renderCatalogFilters(entries, filteredEntries) {
         return alias && name && alias !== name ? `${alias} / ${name}` : (name || alias);
     });
     const currencyOptions = uniqueCatalogOptions(entries, entry => entry.native_currency, entry => entry.native_currency);
-    const capabilityOptions = ['text', 'vision', 'tools', 'reasoning', 'images', 'videos']
+    const capabilityOptions = ['text', 'vision', 'tools', 'custom_tools', 'reasoning', 'images', 'videos']
         .filter(capability => entries.some(entry => catalogHasCapability(entry, capability)))
         .map(capability => ({ value: capability, label: capability }));
     const countLabel = `${filteredEntries.length}/${entries.length} visible`;
@@ -800,6 +801,7 @@ function renderRouteSimulatorShell() {
                 ${renderRouteCapabilityToggle('route-sim-cap-text', 'text', true)}
                 ${renderRouteCapabilityToggle('route-sim-cap-vision', 'vision', false)}
                 ${renderRouteCapabilityToggle('route-sim-cap-tools', 'tools', false)}
+                ${renderRouteCapabilityToggle('route-sim-cap-custom-tools', 'custom_tools', false)}
                 ${renderRouteCapabilityToggle('route-sim-cap-reasoning', 'reasoning', false)}
                 ${renderRouteCapabilityToggle('route-sim-cap-images', 'images', false)}
                 ${renderRouteCapabilityToggle('route-sim-cap-videos', 'videos', false)}
@@ -1140,6 +1142,7 @@ function readProviderForm(existing) {
                 text: document.getElementById('cap-text')?.checked || false,
                 vision: document.getElementById('cap-vision')?.checked || false,
                 tools: document.getElementById('cap-tools')?.checked || false,
+                custom_tools: document.getElementById('cap-custom-tools')?.checked || false,
                 reasoning: document.getElementById('cap-reasoning')?.checked || false,
                 images: document.getElementById('cap-images')?.checked || false,
                 videos: document.getElementById('cap-videos')?.checked || false,
@@ -1454,7 +1457,7 @@ function renderMiniBadge(label) {
 
 function capabilityBadges(capabilities) {
     const caps = capabilities || {};
-    return ['text', 'vision', 'tools', 'reasoning', 'images', 'videos']
+    return ['text', 'vision', 'tools', 'custom_tools', 'reasoning', 'images', 'videos']
         .filter(key => caps[key])
         .map(renderMiniBadge);
 }

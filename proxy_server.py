@@ -75,6 +75,8 @@ from responses_adapter import (
     responses_url,
 )
 from request_logs import RequestLogStore, build_proxy_log_entry, extract_usage_from_response, normalize_usage
+from request_capabilities import classify_request_capabilities
+from amr_registry import AMRRegistry, DEFAULT_STORE_PATH as DEFAULT_AMR_STORE_PATH
 
 DEFAULT_PROXY_PORT = 8080
 PORT_BACKOFF_SCAN_LIMIT = 50
@@ -93,6 +95,9 @@ class LocalProxyHTTPServer(HTTPServer):
 
 # 全局配置（由 LocalProxyServer 在启动时设置）
 _provider_store_path: Optional[Path] = None
+# Global config set by LocalProxyServer at startup.
+_provider_store_path: Optional[Path] = None
+_amr_store_path: Optional[Path] = None
 _request_log_path: Optional[Path] = None
 _request_log_retention_days = 30
 _request_log_max_mb = 50.0
@@ -107,6 +112,12 @@ def _set_provider_store_path(path: str) -> None:
     """设置 provider registry 存储路径；供 LocalProxyServer 启动时调用。"""
     global _provider_store_path
     _provider_store_path = Path(path).expanduser() if path else None
+
+
+def _set_amr_store_path(path: str) -> None:
+    """Configure the AMR registry path used by proxy-side rotation routing."""
+    global _amr_store_path
+    _amr_store_path = Path(path).expanduser() if path else None
 
 
 def _set_request_log_config(
@@ -155,6 +166,12 @@ def _get_provider_store_path() -> Path:
         return _provider_store_path
     # 默认路径与 ProviderRegistry 保持一致
     return Path.home() / ".codex_enhance_manager" / "providers.json"
+
+
+def _get_amr_store_path() -> Path:
+    if _amr_store_path is not None:
+        return _amr_store_path
+    return DEFAULT_AMR_STORE_PATH
 
 
 def _load_providers_with_secrets() -> List[Dict[str, Any]]:
@@ -232,6 +249,129 @@ def _resolve_provider_for_model(model_id: str) -> Optional[Dict[str, Any]]:
                 return p
 
     return None
+
+
+def _resolve_provider_route_for_model(
+    model_id: str,
+    classification: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Resolve a request to either a direct provider route or an AMR candidate."""
+    provider = _resolve_provider_for_model(model_id)
+    if provider:
+        return {
+            "success": True,
+            "provider": provider,
+            "upstream_model": "",
+            "route_type": "direct",
+            "route_explanation": ["Direct provider/model route."],
+            "request_capabilities": (classification or {}).get("capabilities", ["text"]),
+        }
+
+    group_id = _amr_group_id_from_model_id(model_id)
+    if not group_id:
+        return {
+            "success": False,
+            "status": 404,
+            "error_type": "provider_not_found",
+            "error": (
+                f"No enabled provider found for model '{model_id}'. "
+                "Use 'provider/model' format, configure a provider model, or create an AMR group."
+            ),
+        }
+
+    registry = AMRRegistry(str(_get_amr_store_path()))
+    if not registry.get_group(group_id):
+        return {
+            "success": False,
+            "status": 404,
+            "error_type": "provider_not_found",
+            "error": (
+                f"No enabled provider or AMR group found for model '{model_id}'. "
+                "Use 'provider/model' format or configure an AMR group with that id."
+            ),
+        }
+
+    caps = set((classification or {}).get("capabilities") or ["text"])
+    decision = registry.route(group_id, request_capabilities=caps, required_context=0)
+    if not decision.get("success"):
+        return {
+            "success": False,
+            "status": 400,
+            "error_type": "amr_route_unavailable",
+            "error": str(decision.get("error") or "AMR route unavailable"),
+            "route_explanation": decision.get("explanation", []),
+        }
+
+    providers = _load_providers_with_secrets()
+    selected = _find_enabled_provider_by_id(providers, str(decision.get("provider_id") or ""))
+    if not selected:
+        return {
+            "success": False,
+            "status": 502,
+            "error_type": "amr_provider_unavailable",
+            "error": f"AMR selected provider '{decision.get('provider_id')}' but it is not enabled.",
+        }
+    upstream_model = str(decision.get("model_id") or "")
+    if upstream_model and not _provider_has_enabled_model(selected, upstream_model):
+        return {
+            "success": False,
+            "status": 502,
+            "error_type": "amr_model_unavailable",
+            "error": f"AMR selected model '{upstream_model}' but it is not enabled on provider '{selected.get('id')}'.",
+        }
+
+    explanation = []
+    explanation.extend((classification or {}).get("explanation") or [])
+    explanation.extend(decision.get("explanation") or [])
+    return {
+        "success": True,
+        "provider": selected,
+        "upstream_model": upstream_model,
+        "route_type": "amr",
+        "amr_decision": decision,
+        "route_explanation": explanation,
+        "request_capabilities": sorted(caps),
+    }
+
+
+def _amr_group_id_from_model_id(model_id: str) -> str:
+    raw = str(model_id or "").strip()
+    if not raw:
+        return ""
+    if "/" not in raw:
+        return raw
+    prefix, group_id = raw.split("/", 1)
+    if prefix.strip().lower() in {"amr", "rotation"}:
+        return group_id.strip()
+    return ""
+
+
+def _find_enabled_provider_by_id(providers: List[Dict[str, Any]], provider_id: str) -> Optional[Dict[str, Any]]:
+    for provider in providers:
+        if provider.get("enabled", True) and str(provider.get("id") or "") == provider_id:
+            return provider
+    return None
+
+
+def _provider_has_enabled_model(provider: Dict[str, Any], model_id: str) -> bool:
+    for model in provider.get("models", []):
+        if not isinstance(model, dict):
+            continue
+        if model.get("enabled", True) and str(model.get("id") or "") == model_id:
+            return True
+    return False
+
+
+def _route_explanation_text(route: Dict[str, Any], fallback: str) -> str:
+    lines = route.get("route_explanation") if isinstance(route, dict) else None
+    if isinstance(lines, list) and lines:
+        return "; ".join(str(line) for line in lines if line)
+    return fallback
+
+
+def _send_route_error(handler: BaseHTTPRequestHandler, route: Dict[str, Any]) -> None:
+    status = int(route.get("status") or 404)
+    _send_error(handler, status, str(route.get("error") or "Route unavailable"), str(route.get("error_type") or "provider_not_found"))
 
 
 def _extract_model_id_for_upstream(request_json: Dict[str, Any], provider: Dict[str, Any]) -> str:
@@ -726,16 +866,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         model_id = request_json.get("model", "")
-        provider = _resolve_provider_for_model(model_id)
-        if not provider:
-            _send_error(
-                self,
-                404,
-                f"No enabled provider found for model '{model_id}'. "
-                "Use 'provider/model' format or configure a provider that includes this model.",
-                "provider_not_found",
-            )
+        classification = classify_request_capabilities("chat_completions", request_json)
+        route = _resolve_provider_route_for_model(model_id, classification)
+        if not route.get("success"):
+            _send_route_error(self, route)
             return
+        provider = route["provider"]
 
         base_url = provider.get("base_url", "").rstrip("/")
         if not base_url:
@@ -752,7 +888,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             )
             return
 
-        upstream_model = _extract_model_id_for_upstream(request_json, provider)
+        upstream_model = str(route.get("upstream_model") or "") or _extract_model_id_for_upstream(request_json, provider)
         request_json["model"] = upstream_model
         upstream_body = json.dumps(request_json, ensure_ascii=False).encode("utf-8")
 
@@ -766,7 +902,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             model=model_id,
             upstream_model=upstream_model,
             stream=bool(is_stream),
-            route_explanation="provider/model route to Chat Completions upstream",
+            route_explanation=_route_explanation_text(route, "provider/model route to Chat Completions upstream"),
         )
 
         try:
@@ -923,16 +1059,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         model_id = request_json.get("model", "")
-        provider = _resolve_provider_for_model(model_id)
-        if not provider:
-            _send_error(
-                self,
-                404,
-                f"No enabled provider found for model '{model_id}' (from Responses request). "
-                "Use 'provider/model' format or configure a provider that includes this model.",
-                "provider_not_found",
-            )
+        classification = classify_request_capabilities("responses", request_json, compact=compact)
+        route = _resolve_provider_route_for_model(model_id, classification)
+        if not route.get("success"):
+            _send_route_error(self, route)
             return
+        provider = route["provider"]
 
         base_url = provider.get("base_url", "").rstrip("/")
         if not base_url:
@@ -941,10 +1073,23 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         api_format = _provider_api_format(provider)
         if api_format == "anthropic":
-            self._handle_responses_anthropic(request_json, provider, base_url)
+            self._handle_responses_anthropic(
+                request_json,
+                provider,
+                base_url,
+                upstream_model_override=str(route.get("upstream_model") or ""),
+                route_explanation=_route_explanation_text(route, "Responses request converted to Anthropic Messages upstream"),
+            )
             return
         if api_format == "openai_responses":
-            self._handle_responses_native(request_json, provider, base_url, compact=compact)
+            self._handle_responses_native(
+                request_json,
+                provider,
+                base_url,
+                compact=compact,
+                upstream_model_override=str(route.get("upstream_model") or ""),
+                route_explanation=_route_explanation_text(route, "native Responses upstream"),
+            )
             return
 
         # 转换 Responses -> Chat Completions
@@ -954,7 +1099,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             _send_error(self, 400, f"Request conversion failed: {e}", "invalid_request_error")
             return
 
-        upstream_model = _extract_model_id_for_upstream(chat_request, provider)
+        upstream_model = str(route.get("upstream_model") or "") or _extract_model_id_for_upstream(chat_request, provider)
         chat_request["model"] = upstream_model
         upstream_body = json.dumps(chat_request, ensure_ascii=False).encode("utf-8")
 
@@ -968,7 +1113,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             model=model_id,
             upstream_model=upstream_model,
             stream=bool(is_stream),
-            route_explanation="Responses request converted to Chat Completions upstream",
+            route_explanation=_route_explanation_text(route, "Responses request converted to Chat Completions upstream"),
         )
 
         try:
@@ -1006,6 +1151,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         provider: Dict[str, Any],
         base_url: str,
         compact: bool = False,
+        upstream_model_override: str = "",
+        route_explanation: str = "native Responses upstream",
     ) -> None:
         """Forward a Responses request to an upstream that natively speaks Responses."""
         unsupported_reason = _native_responses_unsupported_reason(provider, request_json, compact=compact)
@@ -1014,7 +1161,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         upstream_request = dict(request_json)
-        upstream_model = _extract_model_id_for_upstream(request_json, provider)
+        upstream_model = upstream_model_override or _extract_model_id_for_upstream(request_json, provider)
         upstream_request["model"] = upstream_model
         upstream_body = json.dumps(upstream_request, ensure_ascii=False).encode("utf-8")
 
@@ -1028,7 +1175,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             model=str(request_json.get("model") or ""),
             upstream_model=upstream_model,
             stream=is_stream,
-            route_explanation="native Responses upstream",
+            route_explanation=route_explanation,
         )
 
         try:
@@ -1065,9 +1212,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
         request_json: Dict[str, Any],
         provider: Dict[str, Any],
         base_url: str,
+        upstream_model_override: str = "",
+        route_explanation: str = "Responses request converted to Anthropic Messages upstream",
     ) -> None:
         """Forward a Responses request to an Anthropic Messages upstream."""
-        upstream_model = _extract_model_id_for_upstream(request_json, provider)
+        upstream_model = upstream_model_override or _extract_model_id_for_upstream(request_json, provider)
         try:
             anthropic_request = responses_to_anthropic_messages(request_json, upstream_model=upstream_model)
         except AnthropicConversionError as e:
@@ -1085,7 +1234,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             model=str(request_json.get("model") or ""),
             upstream_model=upstream_model,
             stream=is_stream,
-            route_explanation="Responses request converted to Anthropic Messages upstream",
+            route_explanation=route_explanation,
         )
 
         try:
@@ -1395,6 +1544,7 @@ class LocalProxyServer:
         self,
         port: int = DEFAULT_PROXY_PORT,
         provider_store_path: str = "",
+        amr_store_path: str = "",
         request_log_path: str = "",
         request_log_retention_days: int = 30,
         request_log_max_mb: float = 50,
@@ -1406,6 +1556,7 @@ class LocalProxyServer:
     ):
         self.port = port
         self.provider_store_path = provider_store_path
+        self.amr_store_path = amr_store_path
         self.request_log_path = request_log_path
         self.request_log_retention_days = request_log_retention_days
         self.request_log_max_mb = request_log_max_mb
@@ -1436,6 +1587,8 @@ class LocalProxyServer:
         # 设置全局 provider store 路径，供 ProxyHandler 使用
         if self.provider_store_path:
             _set_provider_store_path(self.provider_store_path)
+        if self.amr_store_path:
+            _set_amr_store_path(self.amr_store_path)
         _set_request_log_config(
             self.request_log_path,
             retention_days=self.request_log_retention_days,
@@ -1534,6 +1687,7 @@ class LocalProxyServer:
             "requested_port": self._last_requested_port,
             "base_url": f"http://127.0.0.1:{bound_port}/v1" if self.is_running() else "",
             "provider_store_path": str(_get_provider_store_path()),
+            "amr_store_path": str(_get_amr_store_path()),
             "request_log_enabled": effective_log_path is not None,
             "request_log_path": str(effective_log_path) if effective_log_path is not None else "",
             "request_log_retention_days": effective_retention_days,

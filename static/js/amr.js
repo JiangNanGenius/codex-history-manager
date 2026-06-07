@@ -1,4 +1,4 @@
-const AMR_CAPABILITIES = ['text', 'vision', 'tools', 'reasoning', 'images', 'videos'];
+const AMR_CAPABILITIES = ['text', 'vision', 'tools', 'custom_tools', 'reasoning', 'images', 'videos'];
 
 let amrState = {
     groups: [],

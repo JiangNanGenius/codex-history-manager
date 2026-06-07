@@ -14,6 +14,7 @@ from proxy_server import (
     _extract_model_id_for_upstream,
     _load_providers_with_secrets,
     _resolve_provider_for_model,
+    _set_amr_store_path,
     _set_media_approval_reviewer,
     _set_request_log_config,
     _set_provider_store_path,
@@ -410,12 +411,23 @@ class LocalProxyServerTest(unittest.TestCase):
             self.assertEqual(str(server.status()["provider_store_path"]), path)
             server.stop()
 
+    def test_sets_amr_store_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = str(Path(tmpdir) / "amr_groups.json")
+            server = LocalProxyServer(port=18087, amr_store_path=path)
+            server.start()
+            self.assertEqual(str(server.status()["amr_store_path"]), path)
+            server.stop()
+            _set_amr_store_path("")
+
 
 class ProxyIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.store_path = Path(self.tmpdir.name) / "providers.json"
+        self.amr_store_path = Path(self.tmpdir.name) / "amr_groups.json"
         _set_provider_store_path(str(self.store_path))
+        _set_amr_store_path(str(self.amr_store_path))
         self._write_providers({
             "providers": [
                 {
@@ -435,11 +447,18 @@ class ProxyIntegrationTest(unittest.TestCase):
     def tearDown(self):
         self.tmpdir.cleanup()
         _set_provider_store_path("")
+        _set_amr_store_path("")
         _set_request_log_config("")
         _set_media_approval_reviewer(None)
 
     def _write_providers(self, data):
         self.store_path.write_text(json.dumps(data), encoding="utf-8")
+
+    def _write_amr(self, groups):
+        self.amr_store_path.write_text(
+            json.dumps({"schema_version": 1, "groups": groups}),
+            encoding="utf-8",
+        )
 
     def _make_handler(self, path, body=None, method="GET", headers=None):
         request_lines = [f"{method} {path} HTTP/1.1", "Host: localhost"]
@@ -947,6 +966,167 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(args[0][1], "https://api.openai.com/v1/chat/completions")
         upstream_body = json.loads(args[1]["body"])
         self.assertIn("messages", upstream_body)
+
+    @patch("proxy_server._upstream_request")
+    def test_responses_amr_routes_vision_request_to_capable_candidate(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "openai-main",
+                    "short_alias": "openai",
+                    "display_name": "OpenAI",
+                    "enabled": True,
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key": "sk-openai",
+                    "models": [{"id": "gpt-5", "enabled": True}],
+                },
+                {
+                    "id": "qwen-cn",
+                    "short_alias": "qwen",
+                    "display_name": "Qwen",
+                    "enabled": True,
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "api_key": "sk-qwen",
+                    "models": [{"id": "qwen-vl", "enabled": True}],
+                },
+            ]
+        })
+        self._write_amr([
+            {
+                "id": "coder-pro",
+                "display_name": "Coder Pro",
+                "candidates": [
+                    {
+                        "id": "openai-main/gpt-5",
+                        "provider_id": "openai-main",
+                        "model_id": "gpt-5",
+                        "priority": 1,
+                        "enabled": True,
+                        "context_window": 128000,
+                        "capabilities": {"text": True, "vision": False},
+                    },
+                    {
+                        "id": "qwen-cn/qwen-vl",
+                        "provider_id": "qwen-cn",
+                        "model_id": "qwen-vl",
+                        "priority": 2,
+                        "enabled": True,
+                        "context_window": 128000,
+                        "capabilities": {"text": True, "vision": True},
+                    },
+                ],
+            }
+        ])
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "id": "chatcmpl-vision",
+            "object": "chat.completion",
+            "model": "qwen-vl",
+            "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+        }).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        self._make_handler(
+            "/v1/responses",
+            body={
+                "model": "coder-pro",
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "describe"},
+                            {"type": "input_image", "image_url": "https://example.test/a.png"},
+                        ],
+                    }
+                ],
+            },
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "qwen-vl")
+
+    @patch("proxy_server._upstream_request")
+    def test_responses_amr_custom_tool_requires_custom_tool_candidate(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "basic-tools",
+                    "short_alias": "basic",
+                    "display_name": "Basic Tools",
+                    "enabled": True,
+                    "base_url": "https://basic.example.test/v1",
+                    "api_key": "sk-basic",
+                    "models": [{"id": "basic-model", "enabled": True}],
+                },
+                {
+                    "id": "custom-tools",
+                    "short_alias": "custom",
+                    "display_name": "Custom Tools",
+                    "enabled": True,
+                    "base_url": "https://custom.example.test/v1",
+                    "api_key": "sk-custom",
+                    "models": [{"id": "custom-model", "enabled": True}],
+                },
+            ]
+        })
+        self._write_amr([
+            {
+                "id": "tool-pro",
+                "display_name": "Tool Pro",
+                "candidates": [
+                    {
+                        "id": "basic-tools/basic-model",
+                        "provider_id": "basic-tools",
+                        "model_id": "basic-model",
+                        "priority": 1,
+                        "enabled": True,
+                        "context_window": 128000,
+                        "capabilities": {"text": True, "tools": True, "custom_tools": False},
+                    },
+                    {
+                        "id": "custom-tools/custom-model",
+                        "provider_id": "custom-tools",
+                        "model_id": "custom-model",
+                        "priority": 2,
+                        "enabled": True,
+                        "context_window": 128000,
+                        "capabilities": {"text": True, "tools": True, "custom_tools": True},
+                    },
+                ],
+            }
+        ])
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "id": "chatcmpl-tool",
+            "object": "chat.completion",
+            "model": "custom-model",
+            "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+        }).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        self._make_handler(
+            "/v1/responses",
+            body={
+                "model": "tool-pro",
+                "input": "run custom tool",
+                "tools": [{"type": "custom", "name": "shell"}],
+            },
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://custom.example.test/v1/chat/completions")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "custom-model")
 
     @patch("proxy_server._upstream_request")
     def test_responses_endpoint_with_native_responses_provider(self, mock_upstream):
