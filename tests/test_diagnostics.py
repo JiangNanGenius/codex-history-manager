@@ -19,8 +19,17 @@ from providers import REDACTED_VALUE
 class MockConfig:
     """极简 Config mock，满足 DiagnosticsCollector 依赖。"""
 
+    def get(self, key, default=None):
+        return self.get_all().get(key, default)
+
     def get_all(self):
-        return {"db_path": ":memory:", "proxy_port": 8080}
+        return {
+            "db_path": ":memory:",
+            "proxy_port": 8080,
+            "request_log_path": "__missing_request_logs__.jsonl",
+            "request_log_retention_days": 30,
+            "request_log_max_mb": 50,
+        }
 
 
 class MockProxyServer:
@@ -100,6 +109,7 @@ class TestDiagnosticsCollector(unittest.TestCase):
             "model_catalog",
             "amr",
             "quota",
+            "request_logs",
             "system",
             "errors",
             "collected_at",
@@ -121,6 +131,7 @@ class TestDiagnosticsCollector(unittest.TestCase):
         self.assertIn("groups", result["amr"])
         self.assertEqual(len(result["amr"]["groups"]), 1)
         self.assertEqual(result["quota"], {"snapshots": {}})
+        self.assertEqual(result["request_logs"]["count"], 0)
 
     @patch("diagnostics.CodexConfigManager")
     def test_collect_all_includes_quota_cache_when_available(self, MockMgr):

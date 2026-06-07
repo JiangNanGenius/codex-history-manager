@@ -67,6 +67,7 @@ from currency import (
 )
 from costing import estimate_request_cost, pricing_preview_payload
 from quota import QuotaManager
+from request_logs import RequestLogStore
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -100,6 +101,10 @@ def create_app() -> Flask:
     proxy_server = LocalProxyServer(
         port=config.get("proxy_port", 8080),
         provider_store_path=config.get("provider_store_path", ""),
+        request_log_path=config.get("request_log_path", ""),
+        request_log_retention_days=config.get("request_log_retention_days", 30),
+        request_log_max_mb=config.get("request_log_max_mb", 50),
+        currency_settings=config.get_all(),
     )
     amr_registry = AMRRegistry()
     quota_manager = QuotaManager(lambda: provider_registry.list_providers(include_secrets=True).get("providers", []))
@@ -114,6 +119,19 @@ def create_app() -> Flask:
 
     def _refresh_provider_registry_path():
         provider_registry.store_path = Path(config.get("provider_store_path", "") or DEFAULT_STORE_PATH).expanduser()
+
+    def _request_log_store() -> RequestLogStore:
+        return RequestLogStore(
+            config.get("request_log_path", ""),
+            retention_days=config.get("request_log_retention_days", 30),
+            max_mb=config.get("request_log_max_mb", 50),
+        )
+
+    def _sync_proxy_request_log_config():
+        proxy_server.request_log_path = config.get("request_log_path", "")
+        proxy_server.request_log_retention_days = config.get("request_log_retention_days", 30)
+        proxy_server.request_log_max_mb = config.get("request_log_max_mb", 50)
+        proxy_server.currency_settings = config.get_all()
 
     def _require_codex_mutation_confirmation(body: Dict, action: str):
         """Require a typed confirmation for endpoints that mutate Codex state."""
@@ -560,6 +578,7 @@ def create_app() -> Flask:
             data = request.get_json(silent=True) or {}
             data = preserve_redacted_currency_secret(data, config.get_all())
             config.update(data)
+            _sync_proxy_request_log_config()
 
             # 重新连接数据库（路径可能变了）
             if "db_path" in data:
@@ -587,6 +606,7 @@ def create_app() -> Flask:
         """重置为默认"""
         try:
             config.reset_defaults()
+            _sync_proxy_request_log_config()
             # 重连数据库
             try:
                 db.close()
@@ -615,6 +635,9 @@ def create_app() -> Flask:
                 "temp_dir": settings.get("temp_dir", ""),
                 "diagnostics_dir": settings.get("diagnostics_dir", ""),
                 "exports_dir": settings.get("exports_dir", ""),
+                "request_log_path": settings.get("request_log_path", ""),
+                "request_log_retention_days": settings.get("request_log_retention_days", 30),
+                "request_log_max_mb": settings.get("request_log_max_mb", 50),
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -642,6 +665,7 @@ def create_app() -> Flask:
             imported = preserve_redacted_currency_secret(imported, config.get_all())
             config.update(imported)
             ensure_app_dirs()
+            _sync_proxy_request_log_config()
             return jsonify({"success": True, "settings": redact_currency_settings(config.get_all())})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -661,6 +685,7 @@ def create_app() -> Flask:
             body = request.get_json(silent=True) or {}
             update = update_currency_config(config.get_all(), body)
             config.update(update)
+            _sync_proxy_request_log_config()
             return jsonify({"success": True, "settings": redact_currency_settings(normalize_currency_settings(config.get_all()))})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -719,6 +744,42 @@ def create_app() -> Flask:
                 native_currency=native_currency,
                 display_currency=str(body.get("display_currency") or ""),
             ))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/request-logs")
+    def request_logs():
+        """Read redacted local proxy request logs."""
+        try:
+            success_arg = request.args.get("success")
+            success_filter = None
+            if success_arg is not None:
+                success_filter = str(success_arg).lower() in {"1", "true", "yes", "success"}
+            return jsonify(_request_log_store().read_entries(
+                limit=int(request.args.get("limit", 100)),
+                provider_id=request.args.get("provider_id", ""),
+                endpoint=request.args.get("endpoint", ""),
+                since=request.args.get("since", ""),
+                success=success_filter,
+            ))
+        except ValueError:
+            return jsonify({"error": "Invalid request log query"}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/request-logs/summary")
+    def request_logs_summary():
+        """Read local proxy request-log aggregates without network calls."""
+        try:
+            return jsonify(_request_log_store().summary())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/request-logs/retention/apply", methods=["POST"])
+    def apply_request_log_retention():
+        """Apply local request-log retention policy."""
+        try:
+            return jsonify({"success": True, "result": _request_log_store().enforce_retention()})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -1363,6 +1424,7 @@ def create_app() -> Flask:
             new_store = body.get("provider_store_path")
             if new_store:
                 proxy_server.provider_store_path = new_store
+            _sync_proxy_request_log_config()
             ok = proxy_server.start()
             if ok:
                 status = proxy_server.status()

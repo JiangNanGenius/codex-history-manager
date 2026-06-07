@@ -44,6 +44,9 @@ DEFAULT_CONFIG = {
     "temp_dir": str(app_data_path("temp")),
     "diagnostics_dir": str(app_data_path("diagnostics")),
     "exports_dir": str(app_data_path("exports")),
+    "request_log_path": str(app_data_path("logs", "proxy_requests.jsonl")),
+    "request_log_retention_days": 30,
+    "request_log_max_mb": 50,
     "proxy_port": 8080,
     "dark_mode": True,
     "theme_preset": "dark",
@@ -170,7 +173,7 @@ class Config:
             self._data["backup_dir"] = DEFAULT_CONFIG["backup_dir"]
         if self._data.get("provider_store_path") == LEGACY_DEFAULT_PROVIDER_STORE:
             self._data["provider_store_path"] = DEFAULT_CONFIG["provider_store_path"]
-        for key in ("backup_dir", "provider_store_path", "temp_dir", "diagnostics_dir", "exports_dir"):
+        for key in ("backup_dir", "provider_store_path", "temp_dir", "diagnostics_dir", "exports_dir", "request_log_path"):
             if not self._data.get(key):
                 self._data[key] = DEFAULT_CONFIG[key]
         if not isinstance(self._data.get("theme_custom"), dict):
@@ -197,6 +200,14 @@ class Config:
             self._data["exchange_rate_ttl_hours"] = max(int(self._data.get("exchange_rate_ttl_hours", 24)), 1)
         except (TypeError, ValueError):
             self._data["exchange_rate_ttl_hours"] = 24
+        try:
+            self._data["request_log_retention_days"] = max(int(self._data.get("request_log_retention_days", 30)), 1)
+        except (TypeError, ValueError):
+            self._data["request_log_retention_days"] = 30
+        try:
+            self._data["request_log_max_mb"] = max(float(self._data.get("request_log_max_mb", 50)), 1.0)
+        except (TypeError, ValueError):
+            self._data["request_log_max_mb"] = 50
 
     def _auto_detect_if_needed(self):
         """Auto-fill Codex paths only when the user has not configured them."""

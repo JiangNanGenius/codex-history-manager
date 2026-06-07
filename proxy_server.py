@@ -72,6 +72,7 @@ from responses_adapter import (
     responses_to_chat_completions,
     responses_url,
 )
+from request_logs import RequestLogStore, build_proxy_log_entry, extract_usage_from_response, normalize_usage
 
 DEFAULT_PROXY_PORT = 8080
 PORT_BACKOFF_SCAN_LIMIT = 50
@@ -90,12 +91,36 @@ class LocalProxyHTTPServer(HTTPServer):
 
 # 全局配置（由 LocalProxyServer 在启动时设置）
 _provider_store_path: Optional[Path] = None
+_request_log_path: Optional[Path] = None
+_request_log_retention_days = 30
+_request_log_max_mb = 50.0
+_request_log_currency_settings: Dict[str, Any] = {}
 
 
 def _set_provider_store_path(path: str) -> None:
     """设置 provider registry 存储路径；供 LocalProxyServer 启动时调用。"""
     global _provider_store_path
     _provider_store_path = Path(path).expanduser() if path else None
+
+
+def _set_request_log_config(
+    path: str = "",
+    retention_days: int = 30,
+    max_mb: float = 50,
+    currency_settings: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Configure metadata-only request logging for the proxy thread."""
+    global _request_log_path, _request_log_retention_days, _request_log_max_mb, _request_log_currency_settings
+    _request_log_path = Path(path).expanduser() if path else None
+    try:
+        _request_log_retention_days = max(int(retention_days), 1)
+    except (TypeError, ValueError):
+        _request_log_retention_days = 30
+    try:
+        _request_log_max_mb = max(float(max_mb), 1.0)
+    except (TypeError, ValueError):
+        _request_log_max_mb = 50.0
+    _request_log_currency_settings = dict(currency_settings or {})
 
 
 def _get_provider_store_path() -> Path:
@@ -337,6 +362,96 @@ def _upstream_request(
     return opener.open(req, timeout=timeout)
 
 
+def _make_request_log_context(
+    endpoint: str,
+    method: str,
+    provider: Dict[str, Any],
+    model: str = "",
+    upstream_model: str = "",
+    stream: bool = False,
+    media_kind: str = "",
+    usage_hint: Optional[Dict[str, Any]] = None,
+    route_explanation: str = "",
+) -> Dict[str, Any]:
+    return {
+        "started_at": time.time(),
+        "endpoint": endpoint,
+        "method": method,
+        "provider": provider,
+        "provider_id": provider.get("id") if isinstance(provider, dict) else "",
+        "provider_alias": provider.get("short_alias") if isinstance(provider, dict) else "",
+        "api_format": _provider_api_format(provider) if isinstance(provider, dict) else "",
+        "model": model or upstream_model,
+        "upstream_model": upstream_model or model,
+        "stream": bool(stream),
+        "media_kind": media_kind,
+        "usage_hint": usage_hint or {},
+        "route_explanation": route_explanation,
+    }
+
+
+def _record_request_log(
+    context: Optional[Dict[str, Any]],
+    status_code: int,
+    response_json: Any = None,
+    usage: Optional[Dict[str, Any]] = None,
+    error_type: str = "",
+    error_message: str = "",
+) -> None:
+    if not context or _request_log_path is None:
+        return
+    try:
+        duration_ms = (time.time() - float(context.get("started_at") or time.time())) * 1000
+        response_usage = usage or extract_usage_from_response(response_json) or context.get("usage_hint") or {}
+        entry = build_proxy_log_entry(
+            context,
+            response_json=response_json,
+            usage=normalize_usage(response_usage),
+            status_code=status_code,
+            duration_ms=duration_ms,
+            error_type=error_type,
+            error_message=error_message,
+            currency_settings=_request_log_currency_settings,
+        )
+        RequestLogStore(
+            _request_log_path,
+            retention_days=_request_log_retention_days,
+            max_mb=_request_log_max_mb,
+        ).append(entry)
+    except Exception:
+        pass
+
+
+def _media_usage_hint(body: bytes, content_type: str, media_kind: str) -> Dict[str, Any]:
+    if "json" not in str(content_type or "").lower() or not body:
+        return {}
+    try:
+        payload = json.loads(body.decode("utf-8", errors="replace"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    if media_kind == "image":
+        return {"image_count": _safe_positive_int(payload.get("n"), default=1)}
+    if media_kind == "video":
+        hint = {"video_job_count": 1}
+        duration = payload.get("duration") or payload.get("video_seconds")
+        try:
+            hint["video_seconds"] = max(int(float(duration or 0)), 0)
+        except (TypeError, ValueError):
+            pass
+        return hint
+    return {}
+
+
+def _safe_positive_int(value: Any, default: int = 0) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return default
+    return result if result > 0 else default
+
+
 def _send_error(self: BaseHTTPRequestHandler, status: int, message: str, error_type: str = "proxy_error") -> None:
     """发送统一的 JSON 错误响应。"""
     self.send_response(status)
@@ -497,6 +612,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
         upstream_url = f"{base_url}/chat/completions"
         headers = _build_upstream_headers(provider)
         is_stream = request_json.get("stream", False)
+        log_context = _make_request_log_context(
+            "chat_completions",
+            "POST",
+            provider,
+            model=model_id,
+            upstream_model=upstream_model,
+            stream=bool(is_stream),
+            route_explanation="provider/model route to Chat Completions upstream",
+        )
 
         try:
             upstream_resp = _upstream_request(
@@ -509,6 +633,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except urllib.error.HTTPError as e:
             # 透传上游 HTTP 错误
             error_body = e.read().decode("utf-8", errors="replace") if e.fp else "{}"
+            _record_request_log(log_context, e.code, error_type="upstream_http_error", error_message=error_body)
             self.send_response(e.code)
             for header_key, header_value in e.headers.items():
                 if header_key.lower() in ("content-type", "content-length"):
@@ -517,13 +642,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(error_body.encode("utf-8"))
             return
         except (urllib.error.URLError, socket.timeout, OSError) as e:
+            _record_request_log(log_context, 502, error_type="upstream_error", error_message=str(e))
             _send_error(self, 502, f"Upstream connection failed: {e}", "upstream_error")
             return
 
         if is_stream:
             self._forward_stream(upstream_resp)
         else:
-            self._forward_non_streaming(upstream_resp)
+            self._forward_non_streaming(upstream_resp, log_context=log_context)
 
     def _handle_media(self, body: bytes, method: str = "POST") -> None:
         """Forward OpenAI-compatible image/video requests to the media provider."""
@@ -563,6 +689,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
         headers = _build_upstream_headers(provider)
         if content_type:
             headers["Content-Type"] = content_type
+        media_endpoint = canonical_path.strip("/")
+        if media_endpoint.startswith("v1/"):
+            media_endpoint = media_endpoint[3:]
+        log_context = _make_request_log_context(
+            media_endpoint or "media",
+            method,
+            provider,
+            model=model_id,
+            upstream_model=str(route.get("upstream_model_id") or model_id or ""),
+            stream=False,
+            media_kind=str(media_kind or ""),
+            usage_hint=_media_usage_hint(body, content_type, str(media_kind or "")),
+            route_explanation="media provider route",
+        )
 
         try:
             upstream_resp = _upstream_request(
@@ -574,6 +714,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             )
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8", errors="replace") if e.fp else "{}"
+            _record_request_log(log_context, e.code, error_type="upstream_http_error", error_message=error_body)
             self.send_response(e.code)
             for header_key, header_value in e.headers.items():
                 if header_key.lower() in ("content-type", "content-length"):
@@ -582,10 +723,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(error_body.encode("utf-8"))
             return
         except (urllib.error.URLError, socket.timeout, OSError) as e:
+            _record_request_log(log_context, 502, error_type="upstream_error", error_message=str(e))
             _send_error(self, 502, f"Media upstream connection failed: {e}", "upstream_error")
             return
 
-        self._forward_non_streaming(upstream_resp)
+        self._forward_non_streaming(upstream_resp, log_context=log_context)
 
     def _handle_responses(self, body: bytes, compact: bool = False) -> None:
         """
@@ -651,6 +793,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
         upstream_url = f"{base_url}/chat/completions"
         headers = _build_upstream_headers(provider)
         is_stream = chat_request.get("stream", False)
+        log_context = _make_request_log_context(
+            "responses",
+            "POST",
+            provider,
+            model=model_id,
+            upstream_model=upstream_model,
+            stream=bool(is_stream),
+            route_explanation="Responses request converted to Chat Completions upstream",
+        )
 
         try:
             upstream_resp = _upstream_request(
@@ -662,6 +813,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             )
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8", errors="replace") if e.fp else "{}"
+            _record_request_log(log_context, e.code, error_type="upstream_http_error", error_message=error_body)
             self.send_response(e.code)
             for header_key, header_value in e.headers.items():
                 if header_key.lower() in ("content-type", "content-length"):
@@ -670,13 +822,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(error_body.encode("utf-8"))
             return
         except (urllib.error.URLError, socket.timeout, OSError) as e:
+            _record_request_log(log_context, 502, error_type="upstream_error", error_message=str(e))
             _send_error(self, 502, f"Upstream connection failed: {e}", "upstream_error")
             return
 
         if is_stream:
             self._forward_responses_stream(upstream_resp, request_json)
         else:
-            self._forward_responses_non_streaming(upstream_resp, request_json)
+            self._forward_responses_non_streaming(upstream_resp, request_json, log_context=log_context)
 
     def _handle_responses_native(
         self,
@@ -699,6 +852,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
         upstream_url = responses_url(base_url)
         headers = _build_upstream_headers(provider)
         is_stream = bool(upstream_request.get("stream"))
+        log_context = _make_request_log_context(
+            "responses",
+            "POST",
+            provider,
+            model=str(request_json.get("model") or ""),
+            upstream_model=upstream_model,
+            stream=is_stream,
+            route_explanation="native Responses upstream",
+        )
 
         try:
             upstream_resp = _upstream_request(
@@ -710,6 +872,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             )
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8", errors="replace") if e.fp else "{}"
+            _record_request_log(log_context, e.code, error_type="upstream_http_error", error_message=error_body)
             self.send_response(e.code)
             for header_key, header_value in e.headers.items():
                 if header_key.lower() in ("content-type", "content-length"):
@@ -718,13 +881,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(error_body.encode("utf-8"))
             return
         except (urllib.error.URLError, socket.timeout, OSError) as e:
+            _record_request_log(log_context, 502, error_type="upstream_error", error_message=str(e))
             _send_error(self, 502, f"Responses upstream connection failed: {e}", "upstream_error")
             return
 
         if is_stream:
             self._forward_stream(upstream_resp)
         else:
-            self._forward_non_streaming(upstream_resp)
+            self._forward_non_streaming(upstream_resp, log_context=log_context)
 
     def _handle_responses_anthropic(
         self,
@@ -744,6 +908,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
         upstream_url = anthropic_messages_url(base_url)
         headers = _build_upstream_headers(provider)
         is_stream = bool(anthropic_request.get("stream"))
+        log_context = _make_request_log_context(
+            "responses",
+            "POST",
+            provider,
+            model=str(request_json.get("model") or ""),
+            upstream_model=upstream_model,
+            stream=is_stream,
+            route_explanation="Responses request converted to Anthropic Messages upstream",
+        )
 
         try:
             upstream_resp = _upstream_request(
@@ -755,6 +928,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             )
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8", errors="replace") if e.fp else "{}"
+            _record_request_log(log_context, e.code, error_type="upstream_http_error", error_message=error_body)
             self.send_response(e.code)
             for header_key, header_value in e.headers.items():
                 if header_key.lower() in ("content-type", "content-length"):
@@ -763,15 +937,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(error_body.encode("utf-8"))
             return
         except (urllib.error.URLError, socket.timeout, OSError) as e:
+            _record_request_log(log_context, 502, error_type="upstream_error", error_message=str(e))
             _send_error(self, 502, f"Anthropic upstream connection failed: {e}", "upstream_error")
             return
 
         if is_stream:
             self._forward_anthropic_responses_stream(upstream_resp, request_json)
         else:
-            self._forward_anthropic_responses_non_streaming(upstream_resp, request_json)
+            self._forward_anthropic_responses_non_streaming(upstream_resp, request_json, log_context=log_context)
 
-    def _forward_non_streaming(self, upstream_resp: urllib.request.addinfourl) -> None:
+    def _forward_non_streaming(
+        self,
+        upstream_resp: urllib.request.addinfourl,
+        log_context: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         转发非流式上游响应。
 
@@ -780,7 +959,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
           - 保留上游的 Content-Type 头。
         """
         resp_body = upstream_resp.read()
-        self.send_response(upstream_resp.getcode() or 200)
+        status_code = upstream_resp.getcode() or 200
+        response_json = None
+        try:
+            response_json = json.loads(resp_body.decode("utf-8", errors="replace"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            response_json = None
+        _record_request_log(log_context, status_code, response_json=response_json)
+        self.send_response(status_code)
         ct = upstream_resp.headers.get("Content-Type", "application/json")
         self.send_header("Content-Type", ct)
         self.end_headers()
@@ -829,21 +1015,25 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self,
         upstream_resp: urllib.request.addinfourl,
         original_request: Dict[str, Any],
+        log_context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Convert a non-streaming Anthropic Messages response to Responses JSON."""
         try:
             resp_body = upstream_resp.read()
             anthropic_json = json.loads(resp_body.decode("utf-8", errors="replace"))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            _record_request_log(log_context, 502, error_type="upstream_error", error_message=f"Invalid JSON: {e}")
             _send_error(self, 502, f"Anthropic upstream returned invalid JSON: {e}", "upstream_error")
             return
 
         try:
             response_json = anthropic_message_to_response(anthropic_json, original_request)
         except Exception as e:
+            _record_request_log(log_context, 502, error_type="proxy_error", error_message=f"Anthropic conversion failed: {e}")
             _send_error(self, 502, f"Anthropic response conversion failed: {e}", "proxy_error")
             return
 
+        _record_request_log(log_context, 200, response_json=response_json)
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
@@ -898,6 +1088,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self,
         upstream_resp: urllib.request.addinfourl,
         original_request: Dict[str, Any],
+        log_context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         非流式 Responses：将 Chat Completions 响应转换回 Responses 格式。
@@ -911,15 +1102,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
             chat_resp_body = upstream_resp.read()
             chat_resp_json = json.loads(chat_resp_body.decode("utf-8", errors="replace"))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            _record_request_log(log_context, 502, error_type="upstream_error", error_message=f"Invalid JSON: {e}")
             _send_error(self, 502, f"Upstream returned invalid JSON: {e}", "upstream_error")
             return
 
         try:
             response_json = chat_completion_to_response(chat_resp_json, original_request)
         except Exception as e:
+            _record_request_log(log_context, 502, error_type="proxy_error", error_message=f"Response conversion failed: {e}")
             _send_error(self, 502, f"Response conversion failed: {e}", "proxy_error")
             return
 
+        _record_request_log(log_context, 200, response_json=response_json)
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
@@ -1026,9 +1220,21 @@ class LocalProxyServer:
         后续端口，并在 status() 中暴露退避结果，便于上层提示用户。
     """
 
-    def __init__(self, port: int = DEFAULT_PROXY_PORT, provider_store_path: str = ""):
+    def __init__(
+        self,
+        port: int = DEFAULT_PROXY_PORT,
+        provider_store_path: str = "",
+        request_log_path: str = "",
+        request_log_retention_days: int = 30,
+        request_log_max_mb: float = 50,
+        currency_settings: Optional[Dict[str, Any]] = None,
+    ):
         self.port = port
         self.provider_store_path = provider_store_path
+        self.request_log_path = request_log_path
+        self.request_log_retention_days = request_log_retention_days
+        self.request_log_max_mb = request_log_max_mb
+        self.currency_settings = dict(currency_settings or {})
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._last_requested_port = port
@@ -1050,6 +1256,12 @@ class LocalProxyServer:
         # 设置全局 provider store 路径，供 ProxyHandler 使用
         if self.provider_store_path:
             _set_provider_store_path(self.provider_store_path)
+        _set_request_log_config(
+            self.request_log_path,
+            retention_days=self.request_log_retention_days,
+            max_mb=self.request_log_max_mb,
+            currency_settings=self.currency_settings,
+        )
 
         if not isinstance(self.port, int) or self.port < 1 or self.port > 65535:
             self._last_requested_port = self.port
@@ -1124,12 +1336,21 @@ class LocalProxyServer:
 
     def status(self) -> Dict[str, Any]:
         bound_port = int(self._server.server_address[1]) if self._server is not None else self.port
+        effective_log_path = _request_log_path
+        if effective_log_path is None and self.request_log_path:
+            effective_log_path = Path(self.request_log_path).expanduser()
+        effective_retention_days = _request_log_retention_days if _request_log_path is not None else self.request_log_retention_days
+        effective_max_mb = _request_log_max_mb if _request_log_path is not None else self.request_log_max_mb
         return {
             "running": self.is_running(),
             "port": bound_port,
             "requested_port": self._last_requested_port,
             "base_url": f"http://127.0.0.1:{bound_port}/v1" if self.is_running() else "",
             "provider_store_path": str(_get_provider_store_path()),
+            "request_log_enabled": effective_log_path is not None,
+            "request_log_path": str(effective_log_path) if effective_log_path is not None else "",
+            "request_log_retention_days": effective_retention_days,
+            "request_log_max_mb": effective_max_mb,
             "port_backoff": self._last_port_backoff,
             "last_start_error": self._last_start_error,
         }

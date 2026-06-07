@@ -55,6 +55,7 @@ def ensure_app_dirs(extra_dirs: Iterable[Path] = ()) -> None:
         app_data_path("codex_backups"),
         app_data_path("diagnostics"),
         app_data_path("exports"),
+        app_data_path("logs"),
         app_data_path("temp"),
         app_data_path("providers"),
     ]

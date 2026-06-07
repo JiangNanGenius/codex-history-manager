@@ -14,9 +14,11 @@ from proxy_server import (
     _extract_model_id_for_upstream,
     _load_providers_with_secrets,
     _resolve_provider_for_model,
+    _set_request_log_config,
     _set_provider_store_path,
     _upstream_request,
 )
+from request_logs import RequestLogStore
 
 
 class ProviderRoutingTest(unittest.TestCase):
@@ -341,6 +343,7 @@ class ProxyIntegrationTest(unittest.TestCase):
     def tearDown(self):
         self.tmpdir.cleanup()
         _set_provider_store_path("")
+        _set_request_log_config("")
 
     def _write_providers(self, data):
         self.store_path.write_text(json.dumps(data), encoding="utf-8")
@@ -435,6 +438,68 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(upstream_headers["Content-Type"], "application/json")
         upstream_body = json.loads(args[1]["body"])
         self.assertEqual(upstream_body["model"], "gpt-5")
+
+    @patch("proxy_server._upstream_request")
+    def test_chat_completions_non_streaming_writes_metadata_log(self, mock_upstream):
+        log_path = Path(self.tmpdir.name) / "proxy_requests.jsonl"
+        _set_request_log_config(
+            str(log_path),
+            retention_days=30,
+            max_mb=1,
+            currency_settings={
+                "display_currency": "USD",
+                "exchange_rate_manual_overrides": {},
+            },
+        )
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "openai-main",
+                    "short_alias": "openai",
+                    "display_name": "OpenAI",
+                    "enabled": True,
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key": "sk-openai",
+                    "native_currency": "USD",
+                    "pricing": {"input_per_million": 1.0, "output_per_million": 2.0},
+                    "models": [{"id": "gpt-5", "enabled": True}],
+                }
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "model": "gpt-5",
+            "choices": [{"message": {"role": "assistant", "content": "Hello"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/chat/completions",
+            body={"model": "openai/gpt-5", "messages": [{"role": "user", "content": "private prompt"}]},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        entries = RequestLogStore(log_path).read_entries(limit=10)["entries"]
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["endpoint"], "chat_completions")
+        self.assertEqual(entry["provider_id"], "openai-main")
+        self.assertEqual(entry["model"], "openai/gpt-5")
+        self.assertEqual(entry["upstream_model"], "gpt-5")
+        self.assertEqual(entry["usage"]["input_tokens"], 10)
+        self.assertEqual(entry["usage"]["output_tokens"], 5)
+        self.assertTrue(entry["cost_estimate"]["estimate"])
+        log_text = log_path.read_text(encoding="utf-8")
+        self.assertNotIn("private prompt", log_text)
+        self.assertNotIn("sk-openai", log_text)
 
     @patch("proxy_server._upstream_request")
     def test_chat_completions_streaming(self, mock_upstream):

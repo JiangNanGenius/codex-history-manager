@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional
 
 from codex_config import CodexConfigManager, detect_auth_mode
 from providers import ProviderRegistry, redact_secrets
+from request_logs import RequestLogStore
 
 # 引用 config 模块的配置文件路径常量（Config 类未暴露此属性）
 from config import CONFIG_FILE
@@ -221,6 +222,16 @@ class DiagnosticsCollector:
             except Exception as e:
                 quota_section = {"error": str(e), "snapshots": {}}
 
+        request_logs_section: Dict[str, Any] = {}
+        try:
+            request_logs_section = RequestLogStore(
+                self.config.get("request_log_path", ""),
+                retention_days=self.config.get("request_log_retention_days", 30),
+                max_mb=self.config.get("request_log_max_mb", 50),
+            ).summary()
+        except Exception as e:
+            request_logs_section = {"error": str(e)}
+
         return {
             "codex_config": codex_config_section,
             "auth_mode": auth_section,
@@ -233,6 +244,7 @@ class DiagnosticsCollector:
             "model_catalog": model_catalog_section,
             "amr": amr_section,
             "quota": quota_section,
+            "request_logs": request_logs_section,
             "system": system_section,
             "errors": errors_section,
             "collected_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
