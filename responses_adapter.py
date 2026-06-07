@@ -87,7 +87,7 @@ def responses_to_chat_completions(body: Dict[str, Any]) -> Dict[str, Any]:
     这是协议转换的核心函数，Codex CLI 发送的是 Responses 格式，而大多数国内/第三方
     Provider 只支持 Chat Completions 格式，因此必须经过此转换。
 
-    Verified behaviors from Codex++ tests：
+    Verified behaviors from Codex++ / CC Switch tests and openai/codex item shapes：
     - instructions -> system message at head
     - input array -> messages array with role normalization
     - max_output_tokens -> max_tokens (o-series 用 max_completion_tokens)
@@ -97,6 +97,8 @@ def responses_to_chat_completions(body: Dict[str, Any]) -> Dict[str, Any]:
     - developer role -> system role
     - latest_reminder role -> user role
     - Multiple system messages collapsed to single head message
+    - input_image content -> Chat Completions image_url content block
+    - function/custom tool output arrays/objects -> compact JSON string
 
     工程权衡：
       - 使用 .get() 而非直接索引：Codex 可能在不同版本发送不同字段子集，
@@ -213,7 +215,7 @@ def _append_responses_input(input_value: Any, messages: List[Dict[str, Any]]) ->
                 role = "system"
             if role == "latest_reminder":
                 role = "user"
-            content = _responses_content_to_string(item.get("content"))
+            content = _responses_content_to_chat_content(item.get("content"))
             messages.append({"role": role, "content": content})
         elif item_type == "reasoning":
             summary = item.get("summary", [])
@@ -238,7 +240,7 @@ def _append_responses_input(input_value: Any, messages: List[Dict[str, Any]]) ->
         elif item_type == "function_call_output":
             call_id = item.get("call_id", "")
             output = item.get("output", "")
-            messages.append({"role": "tool", "tool_call_id": call_id, "content": str(output)})
+            messages.append({"role": "tool", "tool_call_id": call_id, "content": _tool_output_to_chat_content(output)})
         elif item_type in ("custom_tool_call", "tool_call"):
             call_id = item.get("call_id", "") or item.get("id", "")
             name = item.get("name", "")
@@ -255,27 +257,69 @@ def _append_responses_input(input_value: Any, messages: List[Dict[str, Any]]) ->
         elif item_type in ("custom_tool_call_output", "tool_result"):
             call_id = item.get("call_id", "")
             output = item.get("output", "")
-            if isinstance(output, dict):
-                output = json.dumps(output, ensure_ascii=False)
-            messages.append({"role": "tool", "tool_call_id": call_id, "content": str(output)})
+            messages.append({"role": "tool", "tool_call_id": call_id, "content": _tool_output_to_chat_content(output)})
 
 
-def _responses_content_to_string(content: Any) -> str:
+def _responses_content_to_chat_content(content: Any) -> Any:
+    """
+    Convert official Codex Responses content items into Chat message content.
+
+    openai/codex models.rs defines content items as input_text, input_image and
+    output_text. CodexPlusPlus and CC Switch both preserve input_image by
+    emitting Chat Completions image_url blocks. When a message is text-only we
+    keep the historic plain-string shape for broad Chat provider compatibility.
+    """
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        parts = []
+        chat_parts: List[Dict[str, Any]] = []
+        has_non_text_part = False
         for part in content:
             if isinstance(part, dict):
                 if part.get("type") in ("input_text", "output_text", "text"):
-                    parts.append(str(part.get("text", "")))
+                    text = str(part.get("text", ""))
+                    if text:
+                        chat_parts.append({"type": "text", "text": text})
                 elif part.get("type") == "input_image":
-                    # [PLACEHOLDER] Image content handling needs official doc verification
-                    parts.append("[image]")
+                    image_url = _chat_image_url_payload(part.get("image_url"))
+                    if image_url:
+                        chat_parts.append({"type": "image_url", "image_url": image_url})
+                        has_non_text_part = True
             elif isinstance(part, str):
-                parts.append(part)
-        return "\n".join(parts)
+                if part:
+                    chat_parts.append({"type": "text", "text": part})
+        if has_non_text_part:
+            return chat_parts
+        return "\n".join(str(part.get("text", "")) for part in chat_parts)
     return str(content) if content is not None else ""
+
+
+def _chat_image_url_payload(image_url: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(image_url, dict):
+        return copy.deepcopy(image_url)
+    if isinstance(image_url, str) and image_url:
+        return {"url": image_url}
+    return None
+
+
+def _tool_output_to_chat_content(output: Any) -> str:
+    if isinstance(output, str):
+        return _canonicalize_json_string_if_parseable(output)
+    if output is None:
+        return ""
+    return _canonical_json_string(output)
+
+
+def _canonicalize_json_string_if_parseable(value: str) -> str:
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return value
+    return _canonical_json_string(parsed)
+
+
+def _canonical_json_string(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _extract_summary_text(summary: Any) -> str:
@@ -439,7 +483,11 @@ def _responses_tools_to_chat_tools(tools: Any, context: Dict[str, Any]) -> List[
     return result
 
 
-def _responses_tool_choice_to_chat(tool_choice: Any, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _responses_tool_choice_to_chat(tool_choice: Any, context: Dict[str, Any]) -> Optional[Any]:
+    if isinstance(tool_choice, str):
+        if tool_choice in ("auto", "none", "required"):
+            return tool_choice
+        return None
     if not isinstance(tool_choice, dict):
         return None
     tc_type = tool_choice.get("type", "")
@@ -449,7 +497,7 @@ def _responses_tool_choice_to_chat(tool_choice: Any, context: Dict[str, Any]) ->
             "function": {"name": tool_choice.get("name", "")},
         }
     if tc_type in ("auto", "none", "required"):
-        return {"type": tc_type}
+        return tc_type
     if tc_type == "custom":
         return {"type": "function", "function": {"name": tool_choice.get("name", "")}}
     return None
@@ -678,6 +726,7 @@ class ChatSseToResponsesConverter:
         self.text_item: Dict[str, Any] = {"added": False, "done": False, "text": "", "item_id": ""}
         self.reasoning_item: Dict[str, Any] = {"added": False, "done": False, "text": "", "item_id": ""}
         self.tools: Dict[int, Dict[str, Any]] = {}
+        self.output_items: List[Dict[str, Any]] = []
         self.latest_usage: Optional[Dict[str, Any]] = None
         self.finish_reason: Optional[str] = None
         self.failed = False
@@ -913,8 +962,61 @@ class ChatSseToResponsesConverter:
         return "".join(parts)
 
     def _push_tool_call_delta(self, tc: Any) -> str:
-        # [PLACEHOLDER] Full tool call streaming reconstruction
-        return ""
+        if not isinstance(tc, dict):
+            return ""
+        try:
+            chat_index = int(tc.get("index", 0))
+        except (TypeError, ValueError):
+            chat_index = 0
+        state = self.tools.setdefault(chat_index, {
+            "added": False,
+            "done": False,
+            "call_id": "",
+            "name": "",
+            "arguments": "",
+            "item_id": "",
+            "output_index": None,
+        })
+
+        if isinstance(tc.get("id"), str) and tc["id"]:
+            state["call_id"] = tc["id"]
+        function = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+        if isinstance(function.get("name"), str) and function["name"]:
+            state["name"] = function["name"]
+        args_delta = function.get("arguments")
+        if isinstance(args_delta, str) and args_delta:
+            state["arguments"] += args_delta
+
+        parts: List[str] = []
+        if not state["added"] and (state["call_id"] or state["name"]):
+            state["added"] = True
+            if not state["call_id"]:
+                state["call_id"] = f"call_{chat_index}"
+            if not state["name"]:
+                state["name"] = "unknown_tool"
+            state["item_id"] = f"fc_{state['call_id']}"
+            state["output_index"] = self._next_output_index()
+            parts.append(self._sse_event("response.output_item.added", {
+                "type": "response.output_item.added",
+                "output_index": state["output_index"],
+                "item": {
+                    "id": state["item_id"],
+                    "type": "function_call",
+                    "status": "in_progress",
+                    "call_id": state["call_id"],
+                    "name": state["name"],
+                    "arguments": "",
+                },
+            }))
+
+        if state["added"] and isinstance(args_delta, str) and args_delta:
+            parts.append(self._sse_event("response.function_call_arguments.delta", {
+                "type": "response.function_call_arguments.delta",
+                "item_id": state["item_id"],
+                "output_index": state["output_index"],
+                "delta": args_delta,
+            }))
+        return "".join(parts)
 
     def _finalize(self) -> str:
         if self.completed:
@@ -927,6 +1029,14 @@ class ChatSseToResponsesConverter:
         if self.reasoning_item.get("added") and not self.reasoning_item.get("done"):
             self.reasoning_item["done"] = True
             idx = self.reasoning_item.get("output_index", 0)
+            item = {
+                "id": self.reasoning_item["item_id"],
+                "type": "reasoning",
+                "status": "completed",
+                "reasoning_content": self.reasoning_item.get("text", ""),
+                "summary": [{"type": "summary_text", "text": self.reasoning_item.get("text", "")}],
+            }
+            self.output_items.append(item)
             parts.append(self._sse_event("response.reasoning_summary_part.done", {
                 "type": "response.reasoning_summary_part.done",
                 "item_id": self.reasoning_item["item_id"],
@@ -937,11 +1047,20 @@ class ChatSseToResponsesConverter:
                 "type": "response.output_item.done",
                 "item_id": self.reasoning_item["item_id"],
                 "output_index": idx,
+                "item": item,
             }))
         # Finalize text
         if self.text_item.get("added") and not self.text_item.get("done"):
             self.text_item["done"] = True
             idx = self.text_item.get("output_index", 0)
+            item = {
+                "id": self.text_item["item_id"],
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": self.text_item.get("text", ""), "annotations": []}],
+            }
+            self.output_items.append(item)
             parts.append(self._sse_event("response.output_text.done", {
                 "type": "response.output_text.done",
                 "item_id": self.text_item["item_id"],
@@ -959,15 +1078,64 @@ class ChatSseToResponsesConverter:
                 "type": "response.output_item.done",
                 "item_id": self.text_item["item_id"],
                 "output_index": idx,
+                "item": item,
+            }))
+        # Finalize tool calls
+        for chat_index in sorted(self.tools):
+            state = self.tools[chat_index]
+            if state.get("done"):
+                continue
+            if not state.get("added"):
+                state["added"] = True
+                if not state.get("call_id"):
+                    state["call_id"] = f"call_{chat_index}"
+                if not state.get("name"):
+                    state["name"] = "unknown_tool"
+                state["item_id"] = f"fc_{state['call_id']}"
+                state["output_index"] = self._next_output_index()
+                parts.append(self._sse_event("response.output_item.added", {
+                    "type": "response.output_item.added",
+                    "output_index": state["output_index"],
+                    "item": {
+                        "id": state["item_id"],
+                        "type": "function_call",
+                        "status": "in_progress",
+                        "call_id": state["call_id"],
+                        "name": state["name"],
+                        "arguments": "",
+                    },
+                }))
+            state["done"] = True
+            item = {
+                "id": state["item_id"],
+                "type": "function_call",
+                "status": "completed",
+                "call_id": state["call_id"],
+                "name": state["name"],
+                "arguments": state.get("arguments", ""),
+            }
+            self.output_items.append(item)
+            parts.append(self._sse_event("response.function_call_arguments.done", {
+                "type": "response.function_call_arguments.done",
+                "item_id": state["item_id"],
+                "output_index": state["output_index"],
+                "arguments": state.get("arguments", ""),
+            }))
+            parts.append(self._sse_event("response.output_item.done", {
+                "type": "response.output_item.done",
+                "item_id": state["item_id"],
+                "output_index": state["output_index"],
+                "item": item,
             }))
         # Completed
-        base = self._base_response("completed", [])
+        base = self._base_response("completed", self.output_items)
         if self.latest_usage:
             base["usage"] = self.latest_usage
         parts.append(self._sse_event("response.completed", {
             "type": "response.completed",
             "response": base,
         }))
+        parts.append("data: [DONE]\n\n")
         return "".join(parts)
 
     def _failed(self, message: str, error_type: Optional[str] = None) -> str:

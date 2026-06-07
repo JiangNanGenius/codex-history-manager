@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from responses_adapter import (
     responses_to_chat_completions,
@@ -40,6 +41,52 @@ class ResponsesToChatTest(unittest.TestCase):
         self.assertEqual(converted["stream_options"]["include_usage"], True)
         self.assertEqual(converted["tools"][0]["type"], "function")
         self.assertEqual(converted["tools"][0]["function"]["name"], "lookup")
+
+    def test_multimodal_content_preserves_input_image_blocks(self):
+        converted = responses_to_chat_completions({
+            "model": "vision-model",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "look"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+                    {"type": "input_text", "text": "then answer"},
+                ],
+            }],
+        })
+
+        content = converted["messages"][0]["content"]
+        self.assertIsInstance(content, list)
+        self.assertEqual(content[0], {"type": "text", "text": "look"})
+        self.assertEqual(content[1]["type"], "image_url")
+        self.assertEqual(content[1]["image_url"]["url"], "data:image/png;base64,AAAA")
+        self.assertEqual(content[2], {"type": "text", "text": "then answer"})
+
+    def test_tool_outputs_use_compact_json_when_structured(self):
+        converted = responses_to_chat_completions({
+            "model": "gpt-5-mini",
+            "input": [
+                {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{ \"b\": 2, \"a\": 1 }"},
+                {"type": "function_call_output", "call_id": "call_1", "output": {"z": True, "a": [2, 1]}},
+                {"type": "custom_tool_call_output", "call_id": "call_2", "output": ["main.py", "app.py"]},
+            ],
+        })
+
+        self.assertEqual(converted["messages"][0]["tool_calls"][0]["function"]["arguments"], "{ \"b\": 2, \"a\": 1 }")
+        self.assertEqual(converted["messages"][1]["content"], '{"a":[2,1],"z":true}')
+        self.assertEqual(converted["messages"][2]["content"], '["main.py","app.py"]')
+
+    def test_json_string_tool_output_is_canonicalized_when_parseable(self):
+        converted = responses_to_chat_completions({
+            "model": "gpt-5-mini",
+            "input": [
+                {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "{ \"z\": true, \"a\": [2, 1] }"},
+            ],
+        })
+
+        self.assertEqual(converted["messages"][1]["content"], '{"a":[2,1],"z":true}')
 
     def test_developer_role_becomes_system(self):
         converted = responses_to_chat_completions({
@@ -114,6 +161,18 @@ class ResponsesToChatTest(unittest.TestCase):
         self.assertNotIn("tools", converted)
         self.assertNotIn("tool_choice", converted)
         self.assertNotIn("parallel_tool_calls", converted)
+
+    def test_string_tool_choice_is_preserved_when_tools_exist(self):
+        converted = responses_to_chat_completions({
+            "model": "gpt-5-mini",
+            "input": "use tool",
+            "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}],
+            "tool_choice": "required",
+            "parallel_tool_calls": False,
+        })
+
+        self.assertEqual(converted["tool_choice"], "required")
+        self.assertFalse(converted["parallel_tool_calls"])
 
 
 class ChatToResponsesTest(unittest.TestCase):
@@ -237,6 +296,27 @@ class ChatSseConverterTest(unittest.TestCase):
         self.assertIn("hello", out)
         self.assertIn(" world", out)
 
+    def test_stream_tool_call_deltas_finalize_function_call_item(self):
+        converter = ChatSseToResponsesConverter()
+        sse_input = (
+            'data: {"id":"chatcmpl_tool","created":1,"model":"gpt-5","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup"}}]}}]}\n\n'
+            'data: {"id":"chatcmpl_tool","created":1,"model":"gpt-5","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"q\\":"}}]}}]}\n\n'
+            'data: {"id":"chatcmpl_tool","created":1,"model":"gpt-5","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"docs\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+            'data: [DONE]\n\n'
+        )
+        out = converter.push_bytes(sse_input.encode("utf-8"))
+        out += converter.finish()
+
+        self.assertIn("response.function_call_arguments.delta", out)
+        self.assertIn("response.function_call_arguments.done", out)
+        done_items = _response_items_from_sse(out, "response.output_item.done")
+        tool_items = [item for item in done_items if item.get("type") == "function_call"]
+        self.assertEqual(tool_items[-1]["call_id"], "call_1")
+        self.assertEqual(tool_items[-1]["name"], "lookup")
+        self.assertEqual(tool_items[-1]["arguments"], '{"q":"docs"}')
+        completed = _responses_from_sse(out, "response.completed")[-1]
+        self.assertEqual(completed["output"][-1]["type"], "function_call")
+
     def test_error_event(self):
         converter = ChatSseToResponsesConverter()
         sse_input = (
@@ -262,6 +342,34 @@ class ErrorNormalizationTest(unittest.TestCase):
         self.assertEqual(err["error"]["message"], "<html>bad</html>")
         self.assertEqual(err["error"]["type"], "upstream_error")
         self.assertEqual(err["error"]["code"], "502")
+
+
+def _responses_from_sse(text, event_name):
+    responses = []
+    for block in text.split("\n\n"):
+        if f"event: {event_name}" not in block:
+            continue
+        data_line = next((line for line in block.splitlines() if line.startswith("data:")), "")
+        if not data_line or data_line.strip() == "data: [DONE]":
+            continue
+        payload = json.loads(data_line[5:].strip())
+        if "response" in payload:
+            responses.append(payload["response"])
+    return responses
+
+
+def _response_items_from_sse(text, event_name):
+    items = []
+    for block in text.split("\n\n"):
+        if f"event: {event_name}" not in block:
+            continue
+        data_line = next((line for line in block.splitlines() if line.startswith("data:")), "")
+        if not data_line:
+            continue
+        payload = json.loads(data_line[5:].strip())
+        if "item" in payload:
+            items.append(payload["item"])
+    return items
 
 
 class UrlHelperTest(unittest.TestCase):
