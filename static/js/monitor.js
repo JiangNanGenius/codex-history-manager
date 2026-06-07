@@ -76,6 +76,24 @@ function oneHourQuery() {
     return `/api/token/current?${params.toString()}`;
 }
 
+function formatCacheLine(data) {
+    if (!data || !data.cache_supported) {
+        return '缓存读: -- · 写: -- · 总计: -- · 不支持';
+    }
+    const read = formatCompact(data.cache_read_tokens || 0);
+    const write = formatCompact(data.cache_creation_tokens || 0);
+    const total = formatCompact(data.cache_total_tokens || 0);
+    const sources = Array.isArray(data.cache_sources) ? data.cache_sources : [];
+    const labels = sources.map(source => {
+        if (source === 'codex_rollout') return 'Codex rollout';
+        if (source === 'cc_switch_db') return 'CC Switch DB';
+        return source;
+    }).filter(Boolean);
+    const sourceText = labels.length ? ` · 来源: ${labels.join(' + ')}` : '';
+    const riskText = data.cache_overlap_risk ? ' · 来源可能重叠' : '';
+    return `缓存读: ${read} · 写: ${write} · 总计: ${total}${sourceText}${riskText}`;
+}
+
 async function refreshMonitor() {
     const state = getTrackerState();
     const threshold = getThreshold();
@@ -120,11 +138,8 @@ function render(value, threshold, mode, data) {
     thresholdEl.textContent = `${formatCompact(value)} / ${formatCompact(threshold)}`;
     updatedEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    if (data.cache_supported) {
-        cacheEl.textContent = `缓存: ${formatCompact(data.cache_total_tokens || 0)}`;
-    } else {
-        cacheEl.textContent = '缓存: 未配置代理缓存数据库';
-    }
+    cacheEl.textContent = formatCacheLine(data);
+    cacheEl.title = cacheEl.textContent;
     const contextWindow = Number(data.current_context_window || 0);
     contextEl.textContent = contextWindow
         ? `上下文窗口: ${formatCompact(contextWindow)} · ${data.current_model || '-'}`

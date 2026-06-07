@@ -186,6 +186,37 @@ class CodexRolloutUsageTest(unittest.TestCase):
 
             self.assertEqual(paths, [str(rollout.resolve())])
 
+    def test_discovers_rollout_paths_with_updated_at_filter(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            old_rollout = tmp / "old.jsonl"
+            new_rollout = tmp / "new.jsonl"
+            old_rollout.write_text("", encoding="utf-8")
+            new_rollout.write_text("", encoding="utf-8")
+            db_path = tmp / "state.sqlite"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER)")
+                conn.execute(
+                    "INSERT INTO threads (id, rollout_path, updated_at) VALUES (?, ?, ?)",
+                    ("old", str(old_rollout), 1_780_000_000),
+                )
+                conn.execute(
+                    "INSERT INTO threads (id, rollout_path, updated_at) VALUES (?, ?, ?)",
+                    ("new", str(new_rollout), 1_780_086_400),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            paths = discover_rollout_paths(
+                db_path=str(db_path),
+                start=str(1_780_086_400),
+                end=str(1_780_086_400),
+            )
+
+            self.assertEqual(paths, [str(new_rollout.resolve())])
+
     def test_get_codex_rollout_cache_stats_uses_sessions_fallback(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "rollout.jsonl"

@@ -60,6 +60,24 @@ function getOneHourRangeQuery() {
     };
 }
 
+function formatCacheUsage(data) {
+    if (!data || !data.cache_supported) {
+        return `${t('cacheRead')}: -- · ${t('cacheWrite')}: -- · ${t('cacheTotal')}: -- · ${t('cacheNotSupported')}`;
+    }
+    const read = formatTokens(data.cache_read_tokens || 0);
+    const write = formatTokens(data.cache_creation_tokens || 0);
+    const total = formatTokens(data.cache_total_tokens || 0);
+    const sources = Array.isArray(data.cache_sources) ? data.cache_sources : [];
+    const sourceLabels = sources.map(source => {
+        if (source === 'codex_rollout') return t('cacheSourceCodexRollout');
+        if (source === 'cc_switch_db') return t('cacheSourceCcSwitch');
+        return source;
+    }).filter(Boolean);
+    const sourceText = sourceLabels.length ? ` · ${t('cacheSource')}: ${sourceLabels.join(' + ')}` : '';
+    const riskText = data.cache_overlap_risk ? ` · ${t('cacheOverlapRisk')}` : '';
+    return `${t('cacheRead')}: ${read} · ${t('cacheWrite')}: ${write} · ${t('cacheTotal')}: ${total}${sourceText}${riskText}`;
+}
+
 function getTokenAlertThreshold() {
     const input = document.getElementById('token-alert-threshold');
     const raw = input ? Number(input.value) : tokenMonitorState.threshold;
@@ -268,7 +286,7 @@ async function refreshStopwatchTokens() {
 
     setTextById('stopwatch-current-total', formatNumber(totalTokens));
     setTextById('stopwatch-token-diff', formatNumber(tokenDiff));
-    setTextById('stopwatch-cache-hits', data.cache_supported ? formatTokens(data.cache_total_tokens || 0) : t('cacheNotSupported'));
+    setTextById('stopwatch-cache-hits', formatCacheUsage(data));
     setTextById('stopwatch-note', data.cache_note || data.realtime_note || t('noDataYet'));
 }
 
@@ -292,7 +310,7 @@ async function startStopwatch() {
         setTextById('stopwatch-elapsed', '00:00:00');
         setTextById('stopwatch-current-total', formatNumber(totalTokens));
         setTextById('stopwatch-token-diff', '0');
-        setTextById('stopwatch-cache-hits', data.cache_supported ? formatTokens(data.cache_total_tokens || 0) : t('cacheNotSupported'));
+        setTextById('stopwatch-cache-hits', formatCacheUsage(data));
         setTextById('stopwatch-note', data.realtime_note || t('recording'));
 
         realtimeController.start('stopwatch-elapsed', updateStopwatchElapsed, 1000, true);
@@ -346,7 +364,7 @@ function resetStopwatch() {
     setTextById('stopwatch-elapsed', '00:00:00');
     setTextById('stopwatch-token-diff', '0');
     setTextById('stopwatch-current-total', '0');
-    setTextById('stopwatch-cache-hits', t('cacheNotSupported'));
+    setTextById('stopwatch-cache-hits', t('cacheUsageUnavailable'));
     setTextById('stopwatch-note', t('noDataYet'));
     tokenMonitorState.lastAlertBucket = 0;
     saveTrackerState();

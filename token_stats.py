@@ -228,16 +228,25 @@ class TokenStats:
                     table_total = 0
                     table_read = 0
                     table_creation = 0
+                    table_explicit_total = 0
+                    table_other = 0
                     col_values: Dict[str, int] = {}
                     for col in cache_cols:
                         value = int(row[_safe_alias(col)] or 0)
                         col_values[col] = value
-                        table_total += value
                         lower = col.lower()
                         if "read" in lower or "hit" in lower:
                             table_read += value
-                        if "creation" in lower or "create" in lower or "write" in lower:
+                        elif "creation" in lower or "create" in lower or "write" in lower:
                             table_creation += value
+                        elif "total" in lower:
+                            table_explicit_total += value
+                        else:
+                            table_other += value
+
+                    table_total = table_read + table_creation
+                    if table_total <= 0:
+                        table_total = table_explicit_total + table_other
 
                     if table_total <= 0 and not col_values:
                         continue

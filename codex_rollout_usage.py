@@ -141,10 +141,14 @@ def discover_rollout_paths(
     db_path: str = "",
     sessions_dir: str = "",
     limit: int = 5000,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
 ) -> List[str]:
     """Find rollout/jsonl paths from Codex thread metadata and sessions dir."""
     paths: List[str] = []
     seen: set[str] = set()
+    start_ts = _parse_datetime_to_unix(start, end_of_day=False)
+    end_ts = _parse_datetime_to_unix(end, end_of_day=True)
 
     def add_path(value: Any) -> None:
         if len(paths) >= limit:
@@ -155,7 +159,7 @@ def discover_rollout_paths(
         seen.add(normalized)
         paths.append(normalized)
 
-    for path in _rollout_paths_from_db(db_path, limit=limit):
+    for path in _rollout_paths_from_db(db_path, limit=limit, start_ts=start_ts, end_ts=end_ts):
         add_path(path)
 
     sessions_root = Path(sessions_dir).expanduser() if sessions_dir else None
@@ -179,7 +183,13 @@ def get_codex_rollout_cache_stats(
     limit: int = 5000,
 ) -> Dict[str, Any]:
     """Return API-ready cache stats sourced from Codex rollout files."""
-    paths = discover_rollout_paths(db_path=db_path, sessions_dir=sessions_dir, limit=limit)
+    paths = discover_rollout_paths(
+        db_path=db_path,
+        sessions_dir=sessions_dir,
+        limit=limit,
+        start=start,
+        end=end,
+    )
     aggregate = read_rollout_usage_many(paths, start=start, end=end)
     aggregate["rollout_paths_discovered"] = len(paths)
     aggregate["cache_note"] = (
@@ -369,7 +379,12 @@ def _parse_datetime_to_unix(value: Optional[str], end_of_day: bool = False) -> O
         return None
 
 
-def _rollout_paths_from_db(db_path: str, limit: int = 5000) -> List[str]:
+def _rollout_paths_from_db(
+    db_path: str,
+    limit: int = 5000,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None,
+) -> List[str]:
     if not db_path or not os.path.exists(db_path):
         return []
 
@@ -379,11 +394,26 @@ def _rollout_paths_from_db(db_path: str, limit: int = 5000) -> List[str]:
             columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(threads)").fetchall()}
             if "rollout_path" not in columns:
                 return []
-            order_sql = " ORDER BY updated_at DESC" if "updated_at" in columns else ""
+            where_parts = ["rollout_path IS NOT NULL", "rollout_path != ''"]
+            params: List[Any] = []
+            time_col = ""
+            multiplier = 1
+            if "updated_at" in columns:
+                time_col = "updated_at"
+            elif "updated_at_ms" in columns:
+                time_col = "updated_at_ms"
+                multiplier = 1000
+            if time_col and start_ts is not None:
+                where_parts.append(f"{time_col} >= ?")
+                params.append(start_ts * multiplier)
+            if time_col and end_ts is not None:
+                where_parts.append(f"{time_col} <= ?")
+                params.append(end_ts * multiplier)
+            order_sql = f" ORDER BY {time_col} DESC" if time_col else ""
+            params.append(limit)
             rows = conn.execute(
-                f"SELECT rollout_path FROM threads WHERE rollout_path IS NOT NULL "
-                f"AND rollout_path != ''{order_sql} LIMIT ?",
-                (limit,),
+                f"SELECT rollout_path FROM threads WHERE {' AND '.join(where_parts)}{order_sql} LIMIT ?",
+                params,
             ).fetchall()
             return [str(row[0]) for row in rows if row and row[0]]
         finally:

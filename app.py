@@ -273,6 +273,8 @@ def create_app() -> Flask:
             start = request.args.get("start", "")
             end = request.args.get("end", "")
             granularity = request.args.get("granularity", "total")
+            rollout_scan_fallback = str(request.args.get("rollout_scan_fallback", "")).lower() in {"1", "true", "yes"}
+            rollout_limit = _clamp_int(request.args.get("rollout_limit", 200), 200, 1, 1000)
             data = token_stats.get_current_stats(
                 start=start,
                 end=end,
@@ -280,10 +282,13 @@ def create_app() -> Flask:
             )
             rollout_cache_data = get_codex_rollout_cache_stats(
                 db_path=config.get("db_path", ""),
-                sessions_dir=config.get("sessions_dir", ""),
+                sessions_dir=config.get("sessions_dir", "") if rollout_scan_fallback else "",
                 start=start,
                 end=end,
+                limit=rollout_limit,
             )
+            data["codex_rollout_scan_fallback"] = rollout_scan_fallback
+            data["codex_rollout_scan_limit"] = rollout_limit
             cc_switch_db_path = config.get("cc_switch_db_path", "")
             data["cc_switch_db_configured"] = bool(cc_switch_db_path)
             data["cc_switch_db_path"] = cc_switch_db_path

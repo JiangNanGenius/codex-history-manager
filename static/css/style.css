@@ -987,6 +987,12 @@ tbody tr:hover::before {
   font-size: 11px;
 }
 
+#stopwatch-cache-hits {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 @keyframes monitor-alert {
   0%, 100% { box-shadow: 0 20px 46px rgba(2, 6, 23, 0.42), 0 0 0 rgba(245, 158, 11, 0); }
   50% { box-shadow: 0 20px 46px rgba(2, 6, 23, 0.42), 0 0 28px rgba(245, 158, 11, 0.28); }
