@@ -48,7 +48,7 @@ The project is intentionally local-first: provider settings, backups, request-lo
 | Local proxy | Run an independent localhost proxy with automatic occupied-port backoff, route diagnostics, metadata-only request logs, and OpenAI-compatible route scaffolding. |
 | Protocol adapters | Convert verified Responses, Chat, Anthropic Messages, tools, images, SSE events, and domestic Responses profiles only where behavior is sourced. |
 | Cost and currency | Estimate input/output/cache/reasoning/media cost, preserve per-request FX snapshots, support manual FX overrides, and keep online FX blocked until verified. |
-| Config recovery | Preview Codex config diffs, create backups, restore config/auth, preserve official login state, and repair moved session/project metadata. |
+| Config recovery | Preview Codex config diffs, audit approval/sandbox settings, create backups, restore config/auth, preserve official login state, and repair moved session/project metadata. |
 | Settings polish | Use richer built-in themes, full custom theme colors, theme import/export, settings import/export, cleanup preview/execute, and uninstall cleanup write-lock. |
 
 ## The Desktop Surface
@@ -61,7 +61,7 @@ The app is organized as an operational console rather than a marketing dashboard
 - **Unified Model Catalog**: preview before writing anything into Codex.
 - **Local Proxy**: start/stop/status, actual bound port, route explanations, and log retention.
 - **Settings**: storage paths, theme editor, import/export, safe cleanup, uninstall cleanup, currency settings, and monitor field customization.
-- **Diagnostics and Recovery**: redacted diagnostics, backup/restore, rollback, and move repair.
+- **Diagnostics and Recovery**: redacted diagnostics, approval/sandbox audit, backup/restore, rollback, and move repair.
 
 ## Safety Model
 
@@ -188,6 +188,7 @@ After sync, sessions remain visible across account/provider switches.
 | `domestic_responses.py` | Alibaba Bailian and Volcengine Ark Responses profiles and guardrails. |
 | `media_proxy.py` | OpenAI-compatible image/video route helpers. |
 | `codex_config.py` | Codex config/auth backup, diff preview, write, and restore. |
+| `codex_permissions.py` | Source-verified Codex approval/sandbox config audit and diff preview. |
 | `codex_rollout_usage.py`, `token_stats.py` | Token/cache usage readers. |
 | `currency.py`, `costing.py`, `quota.py` | FX snapshots, local cost estimates, and generic quota probes. |
 | `diagnostics.py`, `move_repair.py` | Safe diagnostics and project/thread move repair. |
@@ -198,7 +199,7 @@ After sync, sessions remain visible across account/provider switches.
 | --- | --- |
 | Protocol verification | Continue source/doc comparison for official Codex, domestic Responses, Anthropic, tools, SSE, compacting, and media item behavior. |
 | Media adapters | Add real Alibaba Bailian and Volcengine Ark image/video adapters after payload, polling, cancel, and response formats are verified. |
-| Approval and sandbox repair | Audit official Codex approval paths and sandbox config behavior before implementing repairs. |
+| Approval and sandbox repair | Expand the source-verified approval/sandbox audit into corruption repair presets once user-manual write testing is complete. |
 | Cost dashboard | Add deeper native/display currency comparison, stale FX warnings, provider-reported-vs-estimated cost, and media pricing tiers. |
 | Quota integrations | Layer provider-specific balance/quota endpoints on top of the generic probe scaffold. |
 | UI polish | Continue cleaning legacy copy, icons, i18n coverage, screenshots, and narrow-window layout checks. |

@@ -94,6 +94,37 @@ class CodexConfigManagerTest(unittest.TestCase):
             self.assertTrue(preview["restart_required"])
             self.assertEqual(preview["auth_mode"], "none")
 
+    def test_inspect_permissions_reads_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=str(tmpdir))
+            save_config_toml(str(mgr.config_path), {
+                "approval_policy": "never",
+                "sandbox_mode": "danger-full-access",
+            })
+
+            result = mgr.inspect_permissions()
+
+            self.assertTrue(result["effective_full_access"])
+            self.assertGreater(result["issue_count"], 0)
+
+    def test_preview_permissions_update_does_not_write(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=str(tmpdir))
+            save_config_toml(str(mgr.config_path), {
+                "approval_policy": "on-request",
+                "sandbox_mode": "read-only",
+            })
+
+            preview = mgr.preview_permissions_update(
+                approval_policy="never",
+                sandbox_mode="workspace-write",
+                sandbox_workspace_write={"network_access": True},
+            )
+            current = load_config_toml(str(mgr.config_path))
+
+            self.assertTrue(preview["will_write_config"])
+            self.assertEqual(current["sandbox_mode"], "read-only")
+
     def test_write_provider_config_creates_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             mgr = CodexConfigManager(codex_home=str(tmpdir))

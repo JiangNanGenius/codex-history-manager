@@ -82,6 +82,13 @@ class TestDiagnosticsCollector(unittest.TestCase):
         mock_mgr.auth_path.exists.return_value = True
         mock_mgr.read_config.return_value = config_data or {}
         mock_mgr.read_auth.return_value = auth_data or {}
+        mock_mgr.inspect_permissions.return_value = {
+            "approval_policy": "",
+            "sandbox_mode": "",
+            "issue_count": 0,
+            "issues": [],
+            "warnings": [],
+        }
         MockMgr.return_value = mock_mgr
         return mock_mgr
 
@@ -103,6 +110,7 @@ class TestDiagnosticsCollector(unittest.TestCase):
 
         required_keys = {
             "codex_config",
+            "codex_permissions",
             "auth_mode",
             "local_proxy",
             "providers",
@@ -121,6 +129,7 @@ class TestDiagnosticsCollector(unittest.TestCase):
         self.assertTrue(cc["exists"])
         self.assertEqual(cc["model_provider"], "openai")
         self.assertEqual(cc["model"], "gpt-4")
+        self.assertEqual(result["codex_permissions"]["issue_count"], 0)
 
         # 验证 auth_mode 子字段
         auth = result["auth_mode"]

@@ -1282,6 +1282,7 @@ async function testProxyRoute() {
 let codexIntegrationState = {
     status: null,
     preview: null,
+    permissionsPreview: null,
     backups: [],
     loading: false,
 };
@@ -1336,6 +1337,28 @@ async function previewCodexIntegration() {
         showToast('Diff preview generated', 'success');
     } catch (err) {
         showToast('Preview failed: ' + err.message, 'error');
+    }
+}
+
+async function previewCodexPermissions() {
+    try {
+        codexIntegrationState.permissionsPreview = await api('/api/codex-integration/permissions-preview', {
+            method: 'POST',
+            body: JSON.stringify({
+                approval_policy: document.getElementById('ci-approval-policy')?.value || '',
+                sandbox_mode: document.getElementById('ci-sandbox-mode')?.value || '',
+                windows_sandbox: document.getElementById('ci-windows-sandbox')?.value || '',
+                default_permissions: document.getElementById('ci-default-permissions')?.value || '',
+                writable_roots: document.getElementById('ci-writable-roots')?.value || '',
+                network_access: document.getElementById('ci-network-access')?.checked || false,
+                exclude_tmpdir_env_var: document.getElementById('ci-exclude-tmpdir-env')?.checked || false,
+                exclude_slash_tmp: document.getElementById('ci-exclude-slash-tmp')?.checked || false,
+            }),
+        });
+        renderCodexIntegrationPage();
+        showToast('Sandbox preview generated', 'success');
+    } catch (err) {
+        showToast('Sandbox preview failed: ' + err.message, 'error');
     }
 }
 
@@ -1485,6 +1508,8 @@ function renderCodexIntegrationPage() {
                         <button onclick="applyCodexIntegration()" class="btn btn-warning">Manual Apply to Codex Config</button>
                     </div>
                 </div>
+
+                ${renderPermissionsAudit(status.permissions || {}, codexIntegrationState.permissionsPreview)}
             </div>
 
             <div class="space-y-4">
@@ -1538,6 +1563,136 @@ function renderDiffPreview(preview) {
                 preserve_official_oauth: ${preview.preserve_official_oauth ? 'true' : 'false'}
                 &middot; restart_required: ${preview.restart_required ? 'true' : 'false'}
             </div>
+        </div>
+    `;
+}
+
+function renderPermissionsAudit(current, preview) {
+    const issues = current.issues || [];
+    const warnings = current.warnings || [];
+    const recommendations = current.recommendations || [];
+    const desired = preview && preview.desired ? preview.desired : null;
+    const previewDiff = preview ? (preview.config_diff || {}) : {};
+    const previewHasChanges = preview
+        ? Object.keys(previewDiff.added || {}).length || Object.keys(previewDiff.changed || {}).length || Object.keys(previewDiff.removed || {}).length
+        : false;
+    const issueColor = current.issue_count ? 'amber' : 'emerald';
+    return `
+        <div class="card">
+            <div class="flex items-center justify-between gap-3">
+                <h3 class="card-title">Approval & Sandbox Audit</h3>
+                ${renderStatusPill('sandbox', current.issue_count ? `${current.issue_count} issues` : 'clean', issueColor)}
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 text-sm">
+                ${renderReadonlyKV('approval_policy', current.approval_policy || '(default)')}
+                ${renderReadonlyKV('sandbox_mode', current.sandbox_mode || '(derived/default)')}
+                ${renderReadonlyKV('default_permissions', current.default_permissions || '(none)')}
+                ${renderReadonlyKV('windows.sandbox', current.windows_sandbox || '(default)')}
+                ${renderReadonlyKV('network_access', String((current.sandbox_workspace_write || {}).network_access || false))}
+                ${renderReadonlyKV('full_access_detected', String(Boolean(current.effective_full_access)))}
+            </div>
+            ${issues.length ? `<div class="mt-3 space-y-1">${issues.map(issue => `
+                <div class="text-xs ${issue.severity === 'error' || issue.severity === 'high' ? 'text-red-300' : 'text-amber-300'}">
+                    ${escapeHtml(issue.field || 'config')}: ${escapeHtml(issue.message || '')}
+                </div>
+            `).join('')}</div>` : '<div class="mt-3 text-xs text-emerald-300">No known approval/sandbox corruption detected.</div>'}
+            ${warnings.length ? `<div class="mt-2 space-y-1">${warnings.map(w => `<div class="text-xs text-amber-300">${escapeHtml(w)}</div>`).join('')}</div>` : ''}
+            ${recommendations.length ? `<div class="mt-2 space-y-1">${recommendations.map(r => `<div class="text-xs text-dark-400">${escapeHtml(r)}</div>`).join('')}</div>` : ''}
+
+            <details class="advanced-box mt-4">
+                <summary>Sandbox Preview</summary>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                    <div>
+                        <label class="text-xs text-dark-400">Approval Policy</label>
+                        <select id="ci-approval-policy" class="input mt-1 w-full">
+                            ${renderOption('', 'Keep current', true)}
+                            ${renderOption('untrusted', 'untrusted', false)}
+                            ${renderOption('on-request', 'on-request', false)}
+                            ${renderOption('never', 'never', false)}
+                            ${renderOption('on-failure', 'on-failure (deprecated)', false)}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Sandbox Mode</label>
+                        <select id="ci-sandbox-mode" class="input mt-1 w-full">
+                            ${renderOption('', 'Keep current', true)}
+                            ${renderOption('read-only', 'read-only', false)}
+                            ${renderOption('workspace-write', 'workspace-write', false)}
+                            ${renderOption('danger-full-access', 'danger-full-access', false)}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Windows Sandbox</label>
+                        <select id="ci-windows-sandbox" class="input mt-1 w-full">
+                            ${renderOption('', 'Keep current', true)}
+                            ${renderOption('disabled', 'disabled', false)}
+                            ${renderOption('restricted-token', 'restricted-token', false)}
+                            ${renderOption('elevated', 'elevated', false)}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Default Permissions</label>
+                        <input id="ci-default-permissions" class="input mt-1 w-full" placeholder="Keep current or :workspace">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="text-xs text-dark-400">Writable Roots</label>
+                        <textarea id="ci-writable-roots" class="input mt-1 w-full min-h-[72px]" placeholder="One path per line or comma-separated"></textarea>
+                    </div>
+                    <label class="flex items-center gap-2 text-sm">
+                        <input id="ci-network-access" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <span>workspace network_access</span>
+                    </label>
+                    <label class="flex items-center gap-2 text-sm">
+                        <input id="ci-exclude-tmpdir-env" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <span>exclude_tmpdir_env_var</span>
+                    </label>
+                    <label class="flex items-center gap-2 text-sm">
+                        <input id="ci-exclude-slash-tmp" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <span>exclude_slash_tmp</span>
+                    </label>
+                </div>
+                <button onclick="previewCodexPermissions()" class="btn btn-secondary mt-3">Preview Sandbox Diff</button>
+                ${preview ? renderPermissionsPreviewResult(preview, desired, previewHasChanges) : '<div class="text-xs text-dark-500 mt-3">Preview only. This does not write config.toml.</div>'}
+            </details>
+            <details class="advanced-box mt-3">
+                <summary>Verified Source Notes</summary>
+                <div class="mt-2 space-y-1">
+                    ${(current.source_notes || []).map(note => `<div class="text-xs text-dark-400">${escapeHtml(note)}</div>`).join('')}
+                </div>
+            </details>
+        </div>
+    `;
+}
+
+function renderReadonlyKV(label, value) {
+    return `
+        <div class="rounded-md border border-dark-800 bg-dark-900/50 px-3 py-2">
+            <div class="text-xs text-dark-500">${escapeHtml(label)}</div>
+            <div class="font-mono text-xs text-dark-200 break-all mt-1">${escapeHtml(value)}</div>
+        </div>
+    `;
+}
+
+function renderOption(value, label, selected) {
+    return `<option value="${escapeHtml(value)}"${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+}
+
+function renderPermissionsPreviewResult(preview, desired, hasChanges) {
+    const diff = preview.config_diff || {};
+    const desiredIssues = desired ? (desired.issues || []) : [];
+    return `
+        <div class="mt-3 rounded-md border border-dark-800 bg-dark-900/50 p-3">
+            <div class="flex items-center justify-between gap-3">
+                <span class="text-sm font-medium text-dark-200">Sandbox Diff Preview</span>
+                ${hasChanges ? renderStatusPill('pending', 'changes pending', 'amber') : renderStatusPill('clean', 'no changes', 'emerald')}
+            </div>
+            <div class="mt-2 space-y-1 text-xs">
+                ${Object.entries(diff.added || {}).map(([k, v]) => `<div class="diff-added">+ ${escapeHtml(k)} = ${escapeHtml(JSON.stringify(v))}</div>`).join('')}
+                ${Object.entries(diff.changed || {}).map(([k, v]) => `<div class="diff-changed">~ ${escapeHtml(k)}: ${escapeHtml(JSON.stringify(v.old))} -> ${escapeHtml(JSON.stringify(v.new))}</div>`).join('')}
+                ${Object.entries(diff.removed || {}).map(([k, v]) => `<div class="diff-removed">- ${escapeHtml(k)} = ${escapeHtml(JSON.stringify(v))}</div>`).join('')}
+                ${!hasChanges ? '<div class="text-dark-500">No differences from current config.</div>' : ''}
+            </div>
+            ${desiredIssues.length ? `<div class="mt-2 space-y-1">${desiredIssues.map(issue => `<div class="text-xs text-amber-300">${escapeHtml(issue.field || 'config')}: ${escapeHtml(issue.message || '')}</div>`).join('')}</div>` : ''}
         </div>
     `;
 }

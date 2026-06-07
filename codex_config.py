@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app_paths import app_data_path
+from codex_permissions import inspect_codex_permissions, preview_codex_permissions_update
 
 CODEX_CONFIG_BACKUP_DIR = app_data_path("codex_backups")
 REDACTED = "********"
@@ -352,6 +353,28 @@ class CodexConfigManager:
 
     def get_auth_mode(self) -> str:
         return detect_auth_mode(self.read_auth())
+
+    def inspect_permissions(self) -> Dict[str, Any]:
+        """Inspect Codex approval/sandbox config without writing."""
+        return inspect_codex_permissions(self.read_config())
+
+    def preview_permissions_update(
+        self,
+        approval_policy: Optional[str] = None,
+        sandbox_mode: Optional[str] = None,
+        sandbox_workspace_write: Optional[Dict[str, Any]] = None,
+        default_permissions: Optional[str] = None,
+        windows_sandbox: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Preview approval/sandbox changes without writing config.toml."""
+        return preview_codex_permissions_update(
+            self.read_config(),
+            approval_policy=approval_policy,
+            sandbox_mode=sandbox_mode,
+            sandbox_workspace_write=sandbox_workspace_write,
+            default_permissions=default_permissions,
+            windows_sandbox=windows_sandbox,
+        )
 
     def preview_write_provider(
         self,

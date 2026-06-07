@@ -1248,6 +1248,7 @@ def create_app() -> Flask:
             mgr = CodexConfigManager()
             config_data = mgr.read_config()
             auth_data = mgr.read_auth()
+            permissions = mgr.inspect_permissions()
             return jsonify({
                 "config": config_data,
                 "auth_redacted": redact_auth_for_preview(auth_data),
@@ -1255,6 +1256,7 @@ def create_app() -> Flask:
                 "codex_home": str(mgr.codex_home),
                 "config_path": str(mgr.config_path),
                 "auth_path": str(mgr.auth_path),
+                "permissions": permissions,
                 "proxy_status": proxy_server.status(),
                 "default_proxy_base_url": _current_proxy_base_url(),
             })
@@ -1272,6 +1274,38 @@ def create_app() -> Flask:
                 proxy_model=body.get("proxy_model", "auto"),
             )
             preview["auth_redacted"] = redact_auth_for_preview(mgr.read_auth())
+            return jsonify(preview)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/permissions-preview", methods=["POST"])
+    def codex_integration_permissions_preview():
+        """Preview approval/sandbox config changes without writing Codex files."""
+        try:
+            body = request.get_json(silent=True) or {}
+            workspace_roots = body.get("writable_roots", [])
+            if isinstance(workspace_roots, str):
+                workspace_roots = [
+                    item.strip()
+                    for item in workspace_roots.replace("\n", ",").split(",")
+                    if item.strip()
+                ]
+            workspace_update = None
+            if body.get("sandbox_mode") == "workspace-write" or workspace_roots:
+                workspace_update = {
+                    "writable_roots": workspace_roots,
+                    "network_access": bool(body.get("network_access", False)),
+                    "exclude_tmpdir_env_var": bool(body.get("exclude_tmpdir_env_var", False)),
+                    "exclude_slash_tmp": bool(body.get("exclude_slash_tmp", False)),
+                }
+            mgr = CodexConfigManager()
+            preview = mgr.preview_permissions_update(
+                approval_policy=body.get("approval_policy") or None,
+                sandbox_mode=body.get("sandbox_mode") or None,
+                default_permissions=body.get("default_permissions") or None,
+                windows_sandbox=body.get("windows_sandbox") or None,
+                sandbox_workspace_write=workspace_update,
+            )
             return jsonify(preview)
         except Exception as e:
             return jsonify({"error": str(e)}), 500

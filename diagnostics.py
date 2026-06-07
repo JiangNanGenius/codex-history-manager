@@ -114,6 +114,7 @@ class DiagnosticsCollector:
         config_data = mgr.read_config()
         auth_data = mgr.read_auth()
         auth_mode = detect_auth_mode(auth_data)
+        permissions_audit = mgr.inspect_permissions()
 
         # ── a) Codex 配置状态 ──
         known_top_keys = {"model_provider", "model", "provider", "defaults"}
@@ -234,6 +235,7 @@ class DiagnosticsCollector:
 
         return {
             "codex_config": codex_config_section,
+            "codex_permissions": permissions_audit,
             "auth_mode": auth_section,
             "local_proxy": proxy_status,
             "providers": {
