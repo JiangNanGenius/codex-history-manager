@@ -65,6 +65,7 @@ from currency import (
     redact_currency_settings,
     update_currency_config,
 )
+from costing import estimate_request_cost, pricing_preview_payload
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -668,6 +669,39 @@ def create_app() -> Flask:
                 body.get("amount", 0),
                 body.get("from_currency") or body.get("from") or "",
                 body.get("to_currency") or body.get("to") or config.get("display_currency", "USD"),
+            ))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/cost/estimate", methods=["POST"])
+    def cost_estimate():
+        """估算单次请求成本；不写日志，不调用供应商。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+            pricing = body.get("pricing") if isinstance(body.get("pricing"), dict) else {}
+            provider_id = str(body.get("provider_id") or "")
+            model_id = str(body.get("model_id") or "")
+            native_currency = str(body.get("native_currency") or "")
+
+            if provider_id:
+                _refresh_provider_registry_path()
+                provider = provider_registry.get_provider(provider_id, include_secrets=False)
+                if not provider:
+                    return jsonify({"error": "Provider not found"}), 404
+                preview = pricing_preview_payload(provider, model_id=model_id)
+                provider_pricing = preview.get("pricing") if isinstance(preview.get("pricing"), dict) else {}
+                merged_pricing = dict(provider_pricing)
+                merged_pricing.update(pricing)
+                pricing = merged_pricing
+                native_currency = native_currency or str(preview.get("native_currency") or "")
+
+            return jsonify(estimate_request_cost(
+                usage=usage,
+                pricing=pricing,
+                currency_settings=config.get_all(),
+                native_currency=native_currency,
+                display_currency=str(body.get("display_currency") or ""),
             ))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
