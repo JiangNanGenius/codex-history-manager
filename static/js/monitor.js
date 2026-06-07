@@ -1,9 +1,10 @@
 const TOKEN_ALERT_DEFAULT = 100000;
 const REFRESH_MS = 5000;
+const PROVIDER_REFRESH_MS = 15000;
 const MONITOR_WINDOW_WIDTH = 300;
 const MONITOR_COMPACT_MIN_HEIGHT = 92;
 const MONITOR_EXPANDED_MIN_HEIGHT = 176;
-const MONITOR_MAX_HEIGHT = 320;
+const MONITOR_MAX_HEIGHT = 360;
 const monitorLang = localStorage.getItem('codex_gui_lang') === 'en' ? 'en' : 'zh';
 const monitorCopy = {
     zh: {
@@ -27,6 +28,13 @@ const monitorCopy = {
         refresh: '立即刷新',
         hide: '隐藏悬浮窗',
         main: '显示主窗口',
+        start: '启动 Codex',
+        exit: '退出程序',
+        quickSwitchProvider: '快速切换供应商',
+        noProviders: '暂无可切换供应商',
+        loadingProviders: '正在加载...',
+        providerSwitched: '已切换供应商',
+        providerSwitchFailed: '切换失败',
     },
     en: {
         title: 'Token Monitor',
@@ -49,11 +57,19 @@ const monitorCopy = {
         refresh: 'Refresh now',
         hide: 'Hide monitor',
         main: 'Show main window',
+        start: 'Start Codex',
+        exit: 'Exit app',
+        quickSwitchProvider: 'Quick switch provider',
+        noProviders: 'No switchable providers',
+        loadingProviders: 'Loading...',
+        providerSwitched: 'Provider switched',
+        providerSwitchFailed: 'Switch failed',
     },
 };
 
 let lastAlertBucket = 0;
 let monitorSettings = null;
+let providerFocus = { providers: [], focus_provider_id: '' };
 
 function mt(key) {
     return (monitorCopy[monitorLang] && monitorCopy[monitorLang][key]) || monitorCopy.zh[key] || key;
@@ -70,7 +86,7 @@ function formatCompact(value) {
         ]
         : [
             { value: 100000000, suffix: '亿' },
-            { value: 1000000, suffix: '百万' },
+            { value: 10000, suffix: '万' },
             { value: 1000, suffix: '千' },
         ];
     for (const unit of units) {
@@ -100,10 +116,16 @@ function getThreshold() {
     return Number.isFinite(stored) && stored > 0 ? stored : TOKEN_ALERT_DEFAULT;
 }
 
-async function api(url) {
-    const response = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+async function api(url, options = {}) {
+    const response = await fetch(url, {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...(options.headers || {}),
+        },
+    });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`);
     return data;
 }
 
@@ -113,6 +135,15 @@ async function loadMonitorSettings() {
     } catch {
         monitorSettings = {};
     }
+}
+
+async function loadQuickProviders() {
+    if (window.pywebview?.api?.list_quick_providers) {
+        providerFocus = await window.pywebview.api.list_quick_providers();
+    } else {
+        providerFocus = await api('/api/providers/focus');
+    }
+    renderProviderMenu();
 }
 
 function monitorFields() {
@@ -247,9 +278,11 @@ function toggleCompact() {
 
 function showContextMenu(event) {
     event.preventDefault();
+    loadQuickProviders().catch(() => renderProviderMenu(true));
     const menu = document.getElementById('context-menu');
-    menu.style.left = `${Math.min(event.clientX, window.innerWidth - 150)}px`;
-    menu.style.top = `${Math.min(event.clientY, window.innerHeight - 150)}px`;
+    const rectWidth = Math.min(230, window.innerWidth - 12);
+    menu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - rectWidth - 6))}px`;
+    menu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - 260))}px`;
     menu.classList.add('open');
 }
 
@@ -273,6 +306,45 @@ function scheduleMonitorResize() {
     });
 }
 
+function renderProviderMenu(failed = false) {
+    const root = document.getElementById('provider-menu-items');
+    if (!root) return;
+    const providers = Array.isArray(providerFocus.providers) ? providerFocus.providers : [];
+    if (failed) {
+        root.innerHTML = `<button class="muted" disabled>${mt('providerSwitchFailed')}</button>`;
+        return;
+    }
+    if (!providers.length) {
+        root.innerHTML = `<button class="muted" disabled>${mt('noProviders')}</button>`;
+        return;
+    }
+    root.innerHTML = providers.map(provider => {
+        const id = String(provider.id || '');
+        const label = provider.display_name || id;
+        const alias = provider.short_alias ? ` (${provider.short_alias})` : '';
+        const active = provider.focused || id === providerFocus.focus_provider_id;
+        return `
+            <button data-provider-id="${escapeAttr(id)}" class="${active ? 'active' : ''}">
+                <span>${active ? '✓ ' : ''}${escapeHtml(label + alias)}</span>
+            </button>
+        `;
+    }).join('');
+}
+
+async function switchProvider(providerId) {
+    if (!providerId) return;
+    if (window.pywebview?.api?.switch_provider) {
+        const result = await window.pywebview.api.switch_provider(providerId);
+        if (!result || result.success === false) throw new Error((result && result.error) || mt('providerSwitchFailed'));
+    } else {
+        await api('/api/providers/focus', {
+            method: 'POST',
+            body: JSON.stringify({ provider_id: providerId }),
+        });
+    }
+    await loadQuickProviders();
+}
+
 async function runMenuAction(action) {
     hideContextMenu();
     if (action === 'compact') toggleCompact();
@@ -282,6 +354,12 @@ async function runMenuAction(action) {
     }
     if (action === 'main' && window.pywebview?.api?.show_main) {
         await window.pywebview.api.show_main();
+    }
+    if (action === 'start' && window.pywebview?.api?.start_codex) {
+        await window.pywebview.api.start_codex();
+    }
+    if (action === 'exit' && window.pywebview?.api?.exit_app) {
+        await window.pywebview.api.exit_app();
     }
 }
 
@@ -297,6 +375,22 @@ function applyMonitorCopy() {
         const text = mt(action);
         if (text !== action) btn.textContent = text;
     });
+    document.querySelectorAll('#context-menu [data-copy]').forEach(el => {
+        el.textContent = mt(el.getAttribute('data-copy'));
+    });
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function escapeAttr(value) {
+    return escapeHtml(value).replace(/`/g, '&#096;');
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -306,10 +400,18 @@ window.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('contextmenu', showContextMenu);
     document.addEventListener('click', hideContextMenu);
     document.getElementById('context-menu').addEventListener('click', (event) => {
+        const providerButton = event.target.closest('button[data-provider-id]');
+        if (providerButton) {
+            event.stopPropagation();
+            switchProvider(providerButton.dataset.providerId).catch(console.error);
+            return;
+        }
         const button = event.target.closest('button[data-action]');
-        if (button) runMenuAction(button.dataset.action);
+        if (button) runMenuAction(button.dataset.action).catch(console.error);
     });
     loadMonitorSettings().finally(() => refreshMonitor().catch(console.error));
+    loadQuickProviders().catch(() => renderProviderMenu(true));
     setInterval(() => refreshMonitor().catch(console.error), REFRESH_MS);
+    setInterval(() => loadQuickProviders().catch(() => {}), PROVIDER_REFRESH_MS);
     window.addEventListener('resize', scheduleMonitorResize);
 });

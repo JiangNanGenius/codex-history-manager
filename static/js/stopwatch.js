@@ -153,11 +153,18 @@ function saveTrackerState() {
 
 async function showDesktopTokenMonitor() {
     saveTokenMonitorSettings();
-    if (window.pywebview && window.pywebview.api && window.pywebview.api.show_monitor) {
-        const result = await window.pywebview.api.show_monitor();
-        if (result && result.success === false) {
-            showToast(result.error || t('desktopMonitorOnly'), 'error');
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.show_monitor) {
+            const result = await window.pywebview.api.show_monitor();
+            if (result && result.success === false) {
+                showToast(result.error || t('desktopMonitorOnly'), 'error');
+            } else {
+                showToast(t('desktopMonitorRequested'), 'success');
+            }
+            return;
         }
+    } catch (err) {
+        showToast(t('desktopMonitorFailed') + err.message, 'error');
         return;
     }
     showToast(t('desktopMonitorOnly'), 'info');

@@ -30,6 +30,8 @@ const THEME_FIELDS = [
 const SETTINGS_WIZARD_STEP_COUNT = 8;
 let settingsWizardStep = 0;
 let defaultAutoApprovalSystemPrompt = '';
+let settingsDefaults = {};
+let latestSettings = {};
 
 function showSettingsWizardStep(step, options = {}) {
     const nextStep = Math.min(Math.max(Number(step) || 0, 0), SETTINGS_WIZARD_STEP_COUNT - 1);
@@ -45,6 +47,7 @@ function showSettingsWizardStep(step, options = {}) {
     const next = document.getElementById('settings-wizard-next');
     if (prev) prev.disabled = nextStep === 0;
     if (next) next.textContent = nextStep === SETTINGS_WIZARD_STEP_COUNT - 1 ? t('settingsWizardFinish') : t('settingsWizardNext');
+    updateSettingsWizardProgress();
 
     if (options.scroll !== false) {
         window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
@@ -64,9 +67,134 @@ function showPreviousSettingsWizardStep() {
     showSettingsWizardStep(settingsWizardStep - 1);
 }
 
+function updateSettingsWizardProgress() {
+    const progress = document.getElementById('settings-wizard-progress');
+    if (progress) {
+        progress.textContent = t('settingsWizardProgress', {
+            current: settingsWizardStep + 1,
+            total: SETTINGS_WIZARD_STEP_COUNT,
+        });
+    }
+    document.querySelectorAll('[data-settings-step-button]').forEach(button => {
+        const index = Number(button.dataset.settingsStepButton);
+        button.classList.toggle('complete', Number.isFinite(index) && index < settingsWizardStep);
+    });
+}
+
+function readSettingsWizardDraft() {
+    return {
+        ...latestSettings,
+        db_path: document.getElementById('setting-db-path')?.value || latestSettings.db_path || '',
+        sessions_dir: document.getElementById('setting-sessions-dir')?.value || latestSettings.sessions_dir || '',
+        backup_dir: document.getElementById('setting-backup-dir')?.value || latestSettings.backup_dir || '',
+        provider_store_path: document.getElementById('setting-provider-store-path')?.value || latestSettings.provider_store_path || '',
+        request_log_path: document.getElementById('setting-request-log-path')?.value || latestSettings.request_log_path || '',
+        close_button_action: document.getElementById('setting-close-button-action')?.value || latestSettings.close_button_action || 'ask',
+        desktop_monitor_enabled: document.getElementById('setting-desktop-monitor-enabled')?.checked ?? latestSettings.desktop_monitor_enabled ?? true,
+    };
+}
+
+function wizardCheckItem(state, label, detail) {
+    const classes = {
+        ready: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100',
+        warn: 'border-amber-500/30 bg-amber-500/10 text-amber-100',
+        idle: 'border-dark-800 bg-dark-950/45 text-dark-300',
+    };
+    const badge = state === 'ready' ? t('wizardReady') : state === 'warn' ? t('wizardNeedsInput') : t('wizardOptional');
+    return `
+        <div class="wizard-check-item ${classes[state] || classes.idle}">
+            <div class="flex items-center justify-between gap-3">
+                <span class="font-semibold">${escapeHtml(label)}</span>
+                <span class="text-xs">${escapeHtml(badge)}</span>
+            </div>
+            <p class="mt-1 text-xs opacity-80">${escapeHtml(detail)}</p>
+        </div>
+    `;
+}
+
+function updateSettingsWizardChecklist(draft = readSettingsWizardDraft()) {
+    const root = document.getElementById('settings-wizard-checklist');
+    if (!root) return;
+    const providers = (typeof providerState !== 'undefined' && Array.isArray(providerState.providers))
+        ? providerState.providers
+        : [];
+    const enabledProviders = providers.filter(provider => provider && provider.enabled !== false);
+    const selectedModels = providers.reduce((sum, provider) => (
+        sum + (provider.models || []).filter(model => model && model.selected && model.enabled !== false).length
+    ), 0);
+    const mediaFallbacks = providers.filter(provider => {
+        const profile = provider.media_profile || {};
+        return profile.default_image_provider || profile.default_video_provider;
+    }).length;
+    const pathReady = Boolean(draft.db_path && draft.sessions_dir);
+    const providerReady = enabledProviders.length > 0 && selectedModels > 0;
+    const storageReady = Boolean(draft.backup_dir && draft.provider_store_path && draft.request_log_path);
+    const closeAction = draft.close_button_action || 'ask';
+
+    root.innerHTML = [
+        wizardCheckItem(
+            pathReady ? 'ready' : 'warn',
+            t('wizardCheckPaths'),
+            pathReady ? t('wizardCheckPathsReady') : t('wizardCheckPathsMissing')
+        ),
+        wizardCheckItem(
+            providerReady ? 'ready' : 'warn',
+            t('wizardCheckProviders'),
+            providerReady
+                ? t('wizardCheckProvidersReady', { providers: enabledProviders.length, models: selectedModels })
+                : t('wizardCheckProvidersMissing')
+        ),
+        wizardCheckItem(
+            mediaFallbacks > 0 ? 'ready' : 'idle',
+            t('wizardCheckMedia'),
+            mediaFallbacks > 0 ? t('wizardCheckMediaReady', { count: mediaFallbacks }) : t('wizardCheckMediaOptional')
+        ),
+        wizardCheckItem(
+            storageReady ? 'ready' : 'warn',
+            t('wizardCheckDefaults'),
+            storageReady ? t('wizardCheckDefaultsReady') : t('wizardCheckDefaultsMissing')
+        ),
+        wizardCheckItem(
+            'ready',
+            t('closeButtonAction'),
+            t('closeButtonActionCurrent', { action: t(`closeAction_${closeAction}`) })
+        ),
+    ].join('');
+}
+
+function fillSettingsWizardDefaults() {
+    const defaults = settingsDefaults || {};
+    const mappings = {
+        'setting-backup-dir': 'backup_dir',
+        'setting-provider-store-path': 'provider_store_path',
+        'setting-temp-dir': 'temp_dir',
+        'setting-diagnostics-dir': 'diagnostics_dir',
+        'setting-exports-dir': 'exports_dir',
+        'setting-request-log-path': 'request_log_path',
+        'setting-request-log-retention-days': 'request_log_retention_days',
+        'setting-request-log-max-mb': 'request_log_max_mb',
+        'setting-proxy-upstream-timeout': 'proxy_upstream_timeout_seconds',
+        'setting-proxy-retry-attempts': 'proxy_retry_attempts',
+        'setting-proxy-retry-backoff-ms': 'proxy_retry_backoff_ms',
+        'setting-close-button-action': 'close_button_action',
+    };
+    let filled = 0;
+    Object.entries(mappings).forEach(([elId, key]) => {
+        const el = document.getElementById(elId);
+        if (!el || el.value) return;
+        if (defaults[key] === undefined || defaults[key] === null) return;
+        el.value = defaults[key];
+        filled += 1;
+    });
+    updateSettingsWizardChecklist(readSettingsWizardDraft());
+    showToast(filled ? t('wizardDefaultsFilled', { count: filled }) : t('wizardDefaultsAlreadyFilled'), 'success');
+}
+
 async function loadSettings() {
     try {
         const data = await api('/api/settings');
+        latestSettings = data || {};
+        settingsDefaults = data.defaults || {};
         populateSettingsForm(data);
         applyThemeSettings(data);
         showSettingsWizardStep(settingsWizardStep, { scroll: false });
@@ -78,7 +206,9 @@ async function loadSettings() {
             loadUninstallPreview(),
             loadCurrencySettings(),
             loadStartupStatus(),
+            typeof ensureProviderData === 'function' ? ensureProviderData() : Promise.resolve(),
         ]);
+        updateSettingsWizardChecklist(readSettingsWizardDraft());
 
         const hasDbPath = data.db_path && String(data.db_path).trim().length > 0;
         const hasSessionsDir = data.sessions_dir && String(data.sessions_dir).trim().length > 0;
@@ -106,6 +236,7 @@ function populateSettingsForm(data) {
         'setting-request-log-path': 'request_log_path',
         'setting-request-log-retention-days': 'request_log_retention_days',
         'setting-request-log-max-mb': 'request_log_max_mb',
+        'setting-close-button-action': 'close_button_action',
         'setting-proxy-upstream-timeout': 'proxy_upstream_timeout_seconds',
         'setting-proxy-retry-attempts': 'proxy_retry_attempts',
         'setting-proxy-retry-backoff-ms': 'proxy_retry_backoff_ms',
@@ -139,6 +270,7 @@ function populateSettingsForm(data) {
         'setting-dark-mode': 'dark_mode',
         'setting-startup-enabled': 'startup_enabled',
         'setting-startup-auto-elevate': 'startup_auto_elevate',
+        'setting-desktop-monitor-enabled': 'desktop_monitor_enabled',
     };
     for (const [elId, key] of Object.entries(checkboxFields)) {
         const el = document.getElementById(elId);
@@ -468,6 +600,8 @@ async function saveSettings() {
         request_log_path: document.getElementById('setting-request-log-path')?.value || '',
         request_log_retention_days: parseInt(document.getElementById('setting-request-log-retention-days')?.value, 10) || 30,
         request_log_max_mb: parseFloat(document.getElementById('setting-request-log-max-mb')?.value) || 50,
+        close_button_action: document.getElementById('setting-close-button-action')?.value || 'ask',
+        desktop_monitor_enabled: document.getElementById('setting-desktop-monitor-enabled')?.checked ?? true,
         proxy_upstream_timeout_seconds: parseInt(document.getElementById('setting-proxy-upstream-timeout')?.value, 10) || 120,
         proxy_retry_attempts: parseInt(document.getElementById('setting-proxy-retry-attempts')?.value, 10) || 0,
         proxy_retry_backoff_ms: parseInt(document.getElementById('setting-proxy-retry-backoff-ms')?.value, 10) || 250,
@@ -496,8 +630,10 @@ async function saveSettings() {
     try {
         const result = await api('/api/settings', { method: 'POST', body: JSON.stringify(data) });
         if (result.success) {
+            latestSettings = { ...latestSettings, ...data };
             applyThemeSettings(data);
             await loadStorageInfo();
+            updateSettingsWizardChecklist(readSettingsWizardDraft());
             showToast(t('settingsSaved') + (result.warning ? ' ' + t('warning') + ': ' + result.warning : ''), 'success');
         } else {
             showToast(t('saveFailed') + (result.error || t('unknownError')), 'error');
@@ -803,6 +939,7 @@ async function runAutoDetect() {
         if (data.codex_config && data.codex_config.codex_cli_path) {
             document.getElementById('setting-codex-cli').value = data.codex_config.codex_cli_path;
         }
+        updateSettingsWizardChecklist(readSettingsWizardDraft());
     } catch (err) {
         showToast(t('autoDetectFailed') + err.message, 'error');
     }
@@ -861,6 +998,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!el) return;
             el.addEventListener('change', () => syncStartupControls(id));
         });
+    const settingsPage = document.getElementById('page-settings');
+    if (settingsPage) {
+        settingsPage.addEventListener('input', () => updateSettingsWizardChecklist(readSettingsWizardDraft()));
+        settingsPage.addEventListener('change', () => updateSettingsWizardChecklist(readSettingsWizardDraft()));
+    }
 });
 
 function previewThemeFromForm() {

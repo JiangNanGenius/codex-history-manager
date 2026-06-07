@@ -27,8 +27,11 @@ Windows 平台特殊性：
 """
 import sys
 import os
+import json
 import threading
 import traceback
+import urllib.error
+import urllib.request
 import webview
 
 try:
@@ -53,12 +56,58 @@ MONITOR_WINDOW_COMPACT_HEIGHT = 92
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 IDYES = 6
 IDNO = 7
+LOCAL_API_TIMEOUT = 10
 
 tray_icon = None
 allow_exit = False
 main_window = None
 monitor_window = None
 desktop_api = None
+
+
+def _start_pyinstaller_parent_watchdog() -> bool:
+    """
+    Exit the onefile child process if the PyInstaller launcher parent dies.
+
+    PyInstaller onefile apps run through a small parent launcher that extracts
+    files and starts the real Python child process. If the launcher is killed
+    externally, Windows does not automatically kill the child; this watchdog
+    prevents a ghost Flask/WebView process from staying behind.
+    """
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return False
+    if not os.environ.get("_PYI_APPLICATION_HOME_DIR"):
+        return False
+    try:
+        parent_pid = os.getppid()
+    except Exception:
+        return False
+    if not parent_pid or parent_pid <= 0:
+        return False
+
+    def watch_parent():
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            synchronize = 0x00100000
+            infinite = 0xFFFFFFFF
+            wait_object_0 = 0x00000000
+            handle = kernel32.OpenProcess(synchronize, False, int(parent_pid))
+            if not handle:
+                return
+            try:
+                result = kernel32.WaitForSingleObject(handle, infinite)
+                if result == wait_object_0:
+                    os._exit(0)
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            pass
+
+    watcher = threading.Thread(target=watch_parent, name="pyinstaller-parent-watchdog", daemon=True)
+    watcher.start()
+    return True
 
 
 class DesktopApi:
@@ -71,6 +120,18 @@ class DesktopApi:
     def show_main(self):
         if main_window is not None:
             _show_window(main_window)
+
+    def start_codex(self):
+        return _start_codex_from_desktop()
+
+    def exit_app(self):
+        return _exit_app(main_window)
+
+    def list_quick_providers(self):
+        return _quick_switch_payload()
+
+    def switch_provider(self, provider_id: str):
+        return _set_focus_provider(provider_id)
 
     def resize_monitor(self, width: int = MONITOR_WINDOW_WIDTH, height: int = MONITOR_WINDOW_EXPANDED_HEIGHT):
         return _resize_monitor(width, height)
@@ -122,27 +183,161 @@ def _show_window(window):
         pass
 
 
-def _hide_to_tray(window):
+def _hide_to_tray(window) -> bool:
     if tray_icon is None:
-        return
+        try:
+            window.minimize()
+            return True
+        except Exception:
+            return False
     try:
         window.hide()
         tray_icon.notify("已最小化到系统托盘", APP_TITLE)
+        return True
+    except Exception:
+        return False
+
+
+def _configured_close_action() -> str:
+    try:
+        from config import Config
+        action = Config().get("close_button_action", "ask")
+        if action in {"ask", "exit", "tray"}:
+            return action
+    except Exception:
+        pass
+    return "ask"
+
+
+def _monitor_auto_show_enabled() -> bool:
+    try:
+        from config import Config
+        return bool(Config().get("desktop_monitor_enabled", True))
+    except Exception:
+        return True
+
+
+def _local_post_json(path: str, payload: dict | None = None) -> dict:
+    try:
+        body = json.dumps(payload or {}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{URL}{path}",
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=LOCAL_API_TIMEOUT) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            return json.loads(raw) if raw else {"success": True}
+    except urllib.error.HTTPError as exc:
+        try:
+            data = json.loads(exc.read().decode("utf-8", errors="replace"))
+        except Exception:
+            data = {"error": str(exc)}
+        data.setdefault("success", False)
+        return data
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def _provider_registry_for_desktop():
+    from config import Config
+    from providers import ProviderRegistry
+
+    config = Config()
+    return ProviderRegistry(config.get("provider_store_path", ""))
+
+
+def _quick_switch_payload() -> dict:
+    try:
+        registry = _provider_registry_for_desktop()
+        payload = registry.list_providers(include_secrets=False)
+        focus_provider_id = str(payload.get("focus_provider_id") or "")
+        providers = []
+        for provider in payload.get("providers", []):
+            if not isinstance(provider, dict) or provider.get("enabled") is False:
+                continue
+            providers.append({
+                "id": provider.get("id", ""),
+                "display_name": provider.get("display_name") or provider.get("id", ""),
+                "short_alias": provider.get("short_alias", ""),
+                "catalog_visibility": provider.get("catalog_visibility", "focused_only"),
+                "focused": provider.get("id") == focus_provider_id,
+            })
+        return {"success": True, "focus_provider_id": focus_provider_id, "providers": providers}
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "providers": []}
+
+
+def _set_focus_provider(provider_id: str = "") -> dict:
+    try:
+        registry = _provider_registry_for_desktop()
+        result = registry.set_focus_provider(provider_id)
+        if tray_icon is not None:
+            try:
+                tray_icon.update_menu()
+            except Exception:
+                pass
+        return result
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def _start_codex_from_desktop() -> dict:
+    result = _local_post_json("/api/codex/start", {})
+    try:
+        if tray_icon is not None:
+            if result.get("success"):
+                tray_icon.notify(result.get("message") or "Codex 已启动", APP_TITLE)
+            else:
+                tray_icon.notify(result.get("error") or result.get("message") or "Codex 启动失败", APP_TITLE)
+    except Exception:
+        pass
+    return result
+
+
+def _place_monitor_window():
+    if monitor_window is None:
+        return
+    try:
+        x, y = _default_monitor_position()
+        monitor_window.move(x, y)
     except Exception:
         pass
 
 
+def _ensure_monitor_window():
+    global monitor_window
+    if monitor_window is not None:
+        return monitor_window
+    if desktop_api is None:
+        return None
+    try:
+        monitor_window = _create_monitor_window(desktop_api)
+    except Exception:
+        traceback.print_exc()
+        monitor_window = None
+    return monitor_window
+
+
 def _show_monitor(api=None):
     try:
-        if monitor_window is None:
+        window = _ensure_monitor_window()
+        if window is None:
             return {
                 "success": False,
                 "error": "Monitor window is not ready. Please restart the desktop app.",
             }
-        monitor_window.show()
-        monitor_window.restore()
+        _place_monitor_window()
+        try:
+            window.on_top = True
+        except Exception:
+            pass
+        window.show()
+        window.restore()
+        _place_monitor_window()
         _resize_monitor(MONITOR_WINDOW_WIDTH, MONITOR_WINDOW_EXPANDED_HEIGHT)
-        return {"success": True}
+        return {"success": True, "message": "Monitor window requested."}
     except Exception as exc:
         traceback.print_exc()
         return {"success": False, "error": str(exc)}
@@ -253,28 +448,32 @@ def _exit_app(window):
 
 def _ask_close_action(window) -> str:
     """Return tray, exit, or cancel for the close button."""
+    configured = _configured_close_action()
+    if configured in {"exit", "tray"}:
+        return configured
+
     if os.name == "nt":
         try:
             import ctypes
             result = ctypes.windll.user32.MessageBoxW(
                 0,
-                "选择“是”最小化到系统托盘。\n选择“否”直接退出程序。\n选择“取消”返回窗口。",
+                "选择“是”退出程序。\n选择“否”缩小到系统托盘。\n选择“取消”返回窗口。",
                 APP_TITLE,
                 0x00000003 | 0x00000040,
             )
             if result == IDYES:
-                return "tray"
-            if result == IDNO:
                 return "exit"
+            if result == IDNO:
+                return "tray"
             return "cancel"
         except Exception:
             pass
 
     choice = window.create_confirmation_dialog(
         "关闭 Codex 历史记录管理器",
-        "选择“确定”最小化到系统托盘。\n选择“取消”返回窗口。"
+        "选择“确定”退出程序。\n选择“取消”缩小到系统托盘。"
     )
-    return "tray" if choice else "cancel"
+    return "exit" if choice else "tray"
 
 
 def _setup_tray(window):
@@ -293,18 +492,48 @@ def _setup_tray(window):
     def show_monitor_from_menu(icon=None, item=None):
         _show_monitor()
 
+    def start_codex_from_menu(icon=None, item=None):
+        _start_codex_from_desktop()
+
     def exit_from_menu(icon=None, item=None):
         _exit_app(window)
+
+    def provider_menu_items():
+        payload = _quick_switch_payload()
+        providers = payload.get("providers") or []
+        if not providers:
+            yield pystray.MenuItem("暂无可切换供应商", None, enabled=False)
+            return
+        for provider in providers:
+            provider_id = str(provider.get("id") or "")
+            label = provider.get("display_name") or provider_id
+            alias = provider.get("short_alias")
+            if alias:
+                label = f"{label} ({alias})"
+            focused = bool(provider.get("focused"))
+            yield pystray.MenuItem(
+                label,
+                lambda icon=None, item=None, pid=provider_id: _set_focus_provider(pid),
+                checked=lambda item, pid=provider_id: _quick_switch_payload().get("focus_provider_id") == pid,
+                radio=True,
+                enabled=not focused,
+            )
+
+    def build_menu():
+        return pystray.Menu(
+            pystray.MenuItem("显示主窗口", show_from_menu, default=True),
+            pystray.MenuItem("显示悬浮窗", show_monitor_from_menu),
+            pystray.MenuItem("启动 Codex", start_codex_from_menu),
+            pystray.MenuItem("快速切换供应商", pystray.Menu(provider_menu_items)),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("退出程序", exit_from_menu),
+        )
 
     tray_icon = pystray.Icon(
         "CodexHistoryManager",
         image,
         APP_TITLE,
-        menu=pystray.Menu(
-            pystray.MenuItem("显示窗口", show_from_menu, default=True),
-            pystray.MenuItem("显示 Token 监控", show_monitor_from_menu),
-            pystray.MenuItem("退出", exit_from_menu),
-        ),
+        menu=build_menu(),
     )
     tray_icon.run_detached()
 
@@ -391,7 +620,7 @@ def _create_monitor_window(api):
         on_top=True,
         transparent=False,
         background_color=WEBVIEW_MONITOR_BACKGROUND,
-        hidden=True,
+        hidden=not _monitor_auto_show_enabled(),
         focus=False,
         text_select=False,
     )
@@ -481,6 +710,7 @@ def main():
         避免用户看到空白窗口。
     """
     global main_window, monitor_window, desktop_api
+    _start_pyinstaller_parent_watchdog()
     # 启动 Flask 后台线程
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()

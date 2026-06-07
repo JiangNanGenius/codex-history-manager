@@ -500,6 +500,14 @@
                         <span data-i18n="settingsWizardFinishStep">保存检查</span>
                     </button>
                 </div>
+                <div class="settings-wizard-toolbar mt-5">
+                    <div>
+                        <div id="settings-wizard-progress" class="text-sm font-semibold text-dark-100">1 / 8</div>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="settingsWizardChecklistDesc">按顺序完成，也可以直接跳到需要修改的步骤。</p>
+                    </div>
+                    <button type="button" onclick="fillSettingsWizardDefaults()" class="btn btn-secondary text-xs" data-i18n="wizardFillDefaults">填入推荐默认值</button>
+                </div>
+                <div id="settings-wizard-checklist" class="settings-wizard-checklist mt-4"></div>
             </div>
 
             <div class="card settings-step-panel active" data-settings-step-panel="0">
@@ -674,7 +682,12 @@
                     <input id="theme-import-file" type="file" accept="application/json,.json" class="hidden" onchange="importThemeFromFile(this)">
                 </div>
                 <div class="mt-4">
-                    <div class="text-xs text-dark-400 mb-2" data-i18n="floatingMonitorFields">Floating Monitor Fields</div>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input id="setting-desktop-monitor-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <span data-i18n="desktopMonitorEnabled">启动时显示桌面悬浮窗</span>
+                    </label>
+                    <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorEnabledDesc">桌面版启动后自动显示 Token 悬浮窗；仍可通过托盘或右键菜单隐藏。</p>
+                    <div class="text-xs text-dark-400 mt-4 mb-2" data-i18n="floatingMonitorFields">Floating Monitor Fields</div>
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-tokens" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorTokens">Tokens</span></label>
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-progress" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorProgress">Progress</span></label>
@@ -797,6 +810,15 @@
                             <option value="startup_folder" data-i18n="startupModeFolder">Startup Folder</option>
                             <option value="scheduled_task_highest" data-i18n="startupModeScheduled">Task Scheduler: Highest</option>
                         </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400" data-i18n="closeButtonAction">关闭窗口时</label>
+                        <select id="setting-close-button-action" class="input mt-1 w-full">
+                            <option value="ask" data-i18n="closeAction_ask">每次询问</option>
+                            <option value="exit" data-i18n="closeAction_exit">直接退出程序</option>
+                            <option value="tray" data-i18n="closeAction_tray">缩小到托盘</option>
+                        </select>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="closeButtonActionDesc">默认询问时：是退出程序，否缩小到托盘。</p>
                     </div>
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="taskName">Task Name</label>

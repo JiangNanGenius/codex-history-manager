@@ -47,6 +47,9 @@ let providerState = {
     healthPreview: null,
 };
 
+const QUICK_SETUP_STEP_COUNT = 5;
+let quickSetupStep = 0;
+
 const PROVIDER_API_FORMATS = new Set([
     'openai_responses',
     'openai_chat',
@@ -206,8 +209,8 @@ function renderEnhanceOverview() {
             ${renderMetricCard(t('mediaProfilesMetric'), mediaProviders, t('imageVideoDefaults'))}
         </div>
 
-        <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mt-6">
-            <div class="card xl:col-span-2">
+        <div class="grid grid-cols-1 gap-4 mt-6">
+            <div class="card">
                 <div class="flex items-center justify-between gap-3">
                     <h3 class="card-title">${escapeHtml(t('implementationShell'))}</h3>
                     <button onclick="navigateTo('quick-setup')" class="btn btn-secondary text-xs">${escapeHtml(t('quickSetup'))}</button>
@@ -217,15 +220,6 @@ function renderEnhanceOverview() {
                     ${renderStepRow(t('catalogPreviewTitle'), t('catalogPreviewDesc'), true)}
                     ${renderStepRow(t('codexConfigPreviewTitle'), t('codexConfigPreviewDesc'), false)}
                     ${renderStepRow(t('routeSimulator'), t('routeSimulatorDesc'), true)}
-                </div>
-            </div>
-            <div class="card">
-                <h3 class="card-title">${escapeHtml(t('guardrails'))}</h3>
-                <div class="space-y-3 mt-3 text-sm text-dark-300">
-                    <div class="guardrail-line stagger-item">${escapeHtml(t('guardrailReadOnly'))}</div>
-                    <div class="guardrail-line stagger-item">${escapeHtml(t('guardrailManualMutation'))}</div>
-                    <div class="guardrail-line stagger-item">${escapeHtml(t('guardrailNoGuess'))}</div>
-                    <div class="guardrail-line stagger-item">${escapeHtml(t('guardrailSecretsLocal'))}</div>
                 </div>
             </div>
         </div>
@@ -242,51 +236,259 @@ function renderEnhanceOverview() {
  */
 function renderQuickSetup() {
     /**
-     * 渲染 Quick Setup 页面。
-     * Preset card 与 Next Steps tile 均带 .stagger-item，配合交错延迟
-     * 让导入流程显得有节奏感，而非一次性轰击视觉。
+     * Render Quick Setup as a guided flow. The page intentionally stays inside
+     * the Quick Setup tab so first-time users do not bounce between pages.
      */
     const root = document.getElementById('quick-setup-root');
     if (!root) return;
-    const presets = providerState.presets || [];
-    const domestic = presets.filter(p => p.category === 'domestic');
-    const generic = presets.filter(p => p.category !== 'domestic');
+    const summary = quickSetupSummary();
 
     root.innerHTML = `
         <div class="animate-in">
-        <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
-            <div>
-                <h2 class="text-2xl font-semibold text-white">${escapeHtml(t('quickSetup'))}</h2>
-                <p class="text-sm text-dark-400 mt-1">${escapeHtml(t('quickSetupDesc'))}</p>
+            <div class="card quick-setup-wizard-shell">
+                <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-[0.18em] text-accent-300">${escapeHtml(t('quickSetupKicker'))}</p>
+                        <h2 class="text-2xl font-semibold text-white mt-1">${escapeHtml(t('quickSetup'))}</h2>
+                        <p class="text-sm text-dark-400 mt-2 max-w-3xl">${escapeHtml(t('quickSetupDesc'))}</p>
+                    </div>
+                    <div class="enhance-status-strip">
+                        ${renderStatusPill('providers', t('quickSetupProviderCount', { count: summary.enabledProviders }), summary.enabledProviders ? 'emerald' : 'amber')}
+                        ${renderStatusPill('models', t('quickSetupModelCount', { count: summary.selectedModels }), summary.selectedModels ? 'emerald' : 'amber')}
+                        ${renderStatusPill('step', t('quickSetupProgress', { current: quickSetupStep + 1, total: QUICK_SETUP_STEP_COUNT }), 'accent')}
+                    </div>
+                </div>
+                <div class="quick-setup-steps mt-5">
+                    ${renderQuickSetupStepButton(0, t('quickSetupStepPreset'))}
+                    ${renderQuickSetupStepButton(1, t('quickSetupStepConnection'))}
+                    ${renderQuickSetupStepButton(2, t('quickSetupStepModels'))}
+                    ${renderQuickSetupStepButton(3, t('quickSetupStepRouting'))}
+                    ${renderQuickSetupStepButton(4, t('quickSetupStepFinish'))}
+                </div>
+                <div class="quick-setup-checklist mt-5">
+                    ${renderQuickSetupCheck(summary.providerReady, t('quickSetupCheckProvider'), summary.providerReady ? t('quickSetupCheckProviderReady') : t('quickSetupCheckProviderMissing'))}
+                    ${renderQuickSetupCheck(summary.connectionReady, t('quickSetupCheckConnection'), summary.connectionReady ? t('quickSetupCheckConnectionReady') : t('quickSetupCheckConnectionMissing'))}
+                    ${renderQuickSetupCheck(summary.modelsReady, t('quickSetupCheckModels'), summary.modelsReady ? t('quickSetupCheckModelsReady', { count: summary.selectedModels }) : t('quickSetupCheckModelsMissing'))}
+                    ${renderQuickSetupCheck(summary.mediaReady, t('quickSetupCheckMedia'), summary.mediaReady ? t('quickSetupCheckMediaReady', { count: summary.mediaFallbacks }) : t('quickSetupCheckMediaOptional'), true)}
+                </div>
             </div>
-            <div class="enhance-status-strip">
-                ${renderStatusPill('preview', t('noCodexFilesWritten'), 'amber')}
-                ${renderStatusPill('test', t('testsCurrentSectionOnly'), 'emerald')}
-            </div>
-        </div>
 
-        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-6">
-            <div class="card">
-                <h3 class="card-title">${escapeHtml(t('genericPresets'))}</h3>
-                <div class="preset-list mt-3">${generic.map(renderPresetCard).join('') || renderEmptyState(t('noGenericPresets'))}</div>
+            <div class="card quick-setup-panel mt-4">
+                ${renderQuickSetupPanel(summary)}
             </div>
-            <div class="card">
-                <h3 class="card-title">${escapeHtml(t('domesticPresets'))}</h3>
-                <div class="preset-list mt-3">${domestic.map(renderPresetCard).join('') || renderEmptyState(t('noDomesticPresets'))}</div>
-            </div>
-        </div>
 
-        <div class="card mt-4">
-            <h3 class="card-title">${escapeHtml(t('nextSteps'))}</h3>
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
-                ${renderPreviewTile('1', t('importPreset'), t('importPresetDesc'))}
-                ${renderPreviewTile('2', t('editProviderStep'), t('editProviderDesc'))}
-                ${renderPreviewTile('3', t('previewCatalogStep'), t('previewCatalogDesc'))}
+            <div class="card quick-setup-actions mt-4">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <p class="text-sm text-dark-400">${escapeHtml(t('quickSetupActionHint'))}</p>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="showPreviousQuickSetupStep()" class="btn btn-secondary" ${quickSetupStep === 0 ? 'disabled' : ''}>${escapeHtml(t('settingsWizardPrevious'))}</button>
+                        <button onclick="showNextQuickSetupStep()" class="btn btn-primary">${escapeHtml(quickSetupStep === QUICK_SETUP_STEP_COUNT - 1 ? t('quickSetupFinishAction') : t('settingsWizardNext'))}</button>
+                    </div>
+                </div>
             </div>
         </div>
     `;
     if (typeof triggerStaggerAnimations === 'function') triggerStaggerAnimations(root);
     if (typeof attachRippleToButtons === 'function') attachRippleToButtons(root);
+}
+
+function quickSetupSummary() {
+    const providers = providerState.providers || [];
+    const selected = providers.find(provider => provider.id === providerState.selectedProviderId) || providers[0] || null;
+    const enabledProviders = providers.filter(provider => provider && provider.enabled !== false);
+    const selectedModels = providers.reduce((sum, provider) => (
+        sum + (provider.models || []).filter(model => model && model.selected && model.enabled !== false).length
+    ), 0);
+    const mediaFallbacks = providers.filter(provider => {
+        const profile = provider.media_profile || {};
+        return profile.default_image_provider || profile.default_video_provider;
+    }).length;
+    const connectionReady = Boolean(selected && selected.base_url && ((selected.auth_mode === 'no_auth') || selected.api_key || Object.keys(selected.headers || {}).length));
+    return {
+        providers,
+        selected,
+        enabledProviders: enabledProviders.length,
+        selectedModels,
+        mediaFallbacks,
+        providerReady: enabledProviders.length > 0,
+        connectionReady,
+        modelsReady: selectedModels > 0,
+        mediaReady: mediaFallbacks > 0,
+    };
+}
+
+function renderQuickSetupStepButton(index, label) {
+    const active = index === quickSetupStep;
+    const complete = index < quickSetupStep;
+    return `
+        <button type="button" class="quick-setup-step ${active ? 'active' : ''} ${complete ? 'complete' : ''}" onclick="showQuickSetupStep(${index})">
+            <span class="quick-setup-step-index">${index + 1}</span>
+            <span>${escapeHtml(label)}</span>
+        </button>
+    `;
+}
+
+function renderQuickSetupCheck(ready, label, detail, optional = false) {
+    const state = ready ? 'ready' : optional ? 'optional' : 'warn';
+    const badge = ready ? t('wizardReady') : optional ? t('wizardOptional') : t('wizardNeedsInput');
+    return `
+        <div class="quick-setup-check ${state}">
+            <div class="flex items-center justify-between gap-3">
+                <span class="font-semibold">${escapeHtml(label)}</span>
+                <span class="text-xs">${escapeHtml(badge)}</span>
+            </div>
+            <p class="mt-1 text-xs opacity-80">${escapeHtml(detail)}</p>
+        </div>
+    `;
+}
+
+function renderQuickSetupPanel(summary) {
+    if (quickSetupStep === 0) return renderQuickSetupPresetStep();
+    if (quickSetupStep === 1) return renderQuickSetupConnectionStep(summary);
+    if (quickSetupStep === 2) return renderQuickSetupModelsStep(summary);
+    if (quickSetupStep === 3) return renderQuickSetupRoutingStep(summary);
+    return renderQuickSetupFinishStep(summary);
+}
+
+function renderQuickSetupPresetStep() {
+    const presets = providerState.presets || [];
+    const domestic = presets.filter(p => p.category === 'domestic');
+    const generic = presets.filter(p => p.category !== 'domestic');
+    return `
+        <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+            <div>
+                <h3 class="card-title">${escapeHtml(t('quickSetupPresetTitle'))}</h3>
+                <p class="text-sm text-dark-400 mt-2">${escapeHtml(t('quickSetupPresetDesc'))}</p>
+            </div>
+            <button onclick="createBlankProvider()" class="btn btn-secondary text-xs">${escapeHtml(t('newProvider'))}</button>
+        </div>
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-5">
+            <div>
+                <h4 class="text-sm font-semibold text-dark-200">${escapeHtml(t('genericPresets'))}</h4>
+                <div class="preset-list mt-3">${generic.map(renderPresetCard).join('') || renderEmptyState(t('noGenericPresets'))}</div>
+            </div>
+            <div>
+                <h4 class="text-sm font-semibold text-dark-200">${escapeHtml(t('domesticPresets'))}</h4>
+                <div class="preset-list mt-3">${domestic.map(renderPresetCard).join('') || renderEmptyState(t('noDomesticPresets'))}</div>
+            </div>
+        </div>
+    `;
+}
+
+function renderQuickSetupConnectionStep(summary) {
+    const selected = summary.selected;
+    return `
+        <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+            <div>
+                <h3 class="card-title">${escapeHtml(t('quickSetupConnectionTitle'))}</h3>
+                <p class="text-sm text-dark-400 mt-2">${escapeHtml(t('quickSetupConnectionDesc'))}</p>
+            </div>
+            <button onclick="navigateTo('providers')" class="btn btn-primary text-xs">${escapeHtml(t('wizardProviderGuideSecondary'))}</button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
+            ${renderQuickSetupInfoTile(t('displayName'), selected ? selected.display_name : t('emptyValue'))}
+            ${renderQuickSetupInfoTile(t('baseUrl'), selected && selected.base_url ? selected.base_url : t('quickSetupMissingBaseUrl'))}
+            ${renderQuickSetupInfoTile(t('authMode'), selected ? providerOptionLabel(selected.auth_mode || 'provider_api_key') : t('emptyValue'))}
+        </div>
+        <div class="mt-4 rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300">
+            ${escapeHtml(summary.connectionReady ? t('quickSetupConnectionReady') : t('quickSetupConnectionTodo'))}
+        </div>
+    `;
+}
+
+function renderQuickSetupModelsStep(summary) {
+    const selected = summary.selected;
+    const models = selected ? (selected.models || []) : [];
+    const selectedRows = models.filter(model => model && model.selected && model.enabled !== false);
+    return `
+        <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+            <div>
+                <h3 class="card-title">${escapeHtml(t('quickSetupModelsTitle'))}</h3>
+                <p class="text-sm text-dark-400 mt-2">${escapeHtml(t('quickSetupModelsDesc'))}</p>
+            </div>
+            <button onclick="navigateTo('providers')" class="btn btn-primary text-xs">${escapeHtml(t('wizardProviderGuideSecondary'))}</button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
+            ${renderQuickSetupInfoTile(t('selectedModelsMetric'), String(summary.selectedModels))}
+            ${renderQuickSetupInfoTile(t('apiFormat'), selected ? providerOptionLabel(selected.api_format || '') : t('emptyValue'))}
+            ${renderQuickSetupInfoTile(t('catalogVisibility'), selected ? providerOptionLabel(selected.catalog_visibility || '') : t('emptyValue'))}
+        </div>
+        <div class="mt-4 space-y-2">
+            ${selectedRows.slice(0, 6).map(model => `
+                <div class="rounded-lg border border-dark-800 bg-dark-950/45 px-3 py-2 text-sm text-dark-200">
+                    <span class="font-medium">${escapeHtml(model.display_name || model.id)}</span>
+                    <span class="text-xs text-dark-500 ml-2">${escapeHtml(model.id || '')}</span>
+                </div>
+            `).join('') || renderEmptyState(t('quickSetupModelsMissing'))}
+        </div>
+    `;
+}
+
+function renderQuickSetupRoutingStep(summary) {
+    return `
+        <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+            <div>
+                <h3 class="card-title">${escapeHtml(t('quickSetupRoutingTitle'))}</h3>
+                <p class="text-sm text-dark-400 mt-2">${escapeHtml(t('quickSetupRoutingDesc'))}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button onclick="navigateTo('providers')" class="btn btn-primary text-xs">${escapeHtml(t('wizardProviderGuideSecondary'))}</button>
+                <button onclick="navigateTo('diagnostics')" class="btn btn-secondary text-xs">${escapeHtml(t('navDiagnostics'))}</button>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
+            ${renderPreviewTile('1', t('quickSetupRouteOrder'), t('quickSetupRouteOrderDesc'))}
+            ${renderPreviewTile('2', t('quickSetupRouteMedia'), summary.mediaReady ? t('quickSetupCheckMediaReady', { count: summary.mediaFallbacks }) : t('quickSetupCheckMediaOptional'))}
+            ${renderPreviewTile('3', t('quickSetupRouteTest'), t('routeSimulatorDesc'))}
+        </div>
+    `;
+}
+
+function renderQuickSetupFinishStep(summary) {
+    const ready = summary.providerReady && summary.connectionReady && summary.modelsReady;
+    return `
+        <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+            <div>
+                <h3 class="card-title">${escapeHtml(t('quickSetupFinishTitle'))}</h3>
+                <p class="text-sm text-dark-400 mt-2">${escapeHtml(ready ? t('quickSetupFinishReadyDesc') : t('quickSetupFinishTodoDesc'))}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button onclick="navigateTo('providers')" class="btn btn-primary text-xs">${escapeHtml(t('wizardProviderGuideSecondary'))}</button>
+                <button onclick="navigateTo('codex-integration')" class="btn btn-secondary text-xs">${escapeHtml(t('navCodexIntegration'))}</button>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
+            ${renderQuickSetupCheck(summary.providerReady, t('quickSetupCheckProvider'), summary.providerReady ? t('quickSetupCheckProviderReady') : t('quickSetupCheckProviderMissing'))}
+            ${renderQuickSetupCheck(summary.connectionReady, t('quickSetupCheckConnection'), summary.connectionReady ? t('quickSetupCheckConnectionReady') : t('quickSetupCheckConnectionMissing'))}
+            ${renderQuickSetupCheck(summary.modelsReady, t('quickSetupCheckModels'), summary.modelsReady ? t('quickSetupCheckModelsReady', { count: summary.selectedModels }) : t('quickSetupCheckModelsMissing'))}
+        </div>
+    `;
+}
+
+function renderQuickSetupInfoTile(label, value) {
+    return `
+        <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4">
+            <div class="text-xs text-dark-500">${escapeHtml(label)}</div>
+            <div class="text-sm text-dark-100 mt-1 break-all">${escapeHtml(value || '-')}</div>
+        </div>
+    `;
+}
+
+function showQuickSetupStep(step) {
+    quickSetupStep = Math.min(Math.max(Number(step) || 0, 0), QUICK_SETUP_STEP_COUNT - 1);
+    renderQuickSetup();
+}
+
+function showNextQuickSetupStep() {
+    if (quickSetupStep >= QUICK_SETUP_STEP_COUNT - 1) {
+        navigateTo('providers');
+        return;
+    }
+    showQuickSetupStep(quickSetupStep + 1);
+}
+
+function showPreviousQuickSetupStep() {
+    showQuickSetupStep(quickSetupStep - 1);
 }
 
 /**
@@ -1186,7 +1388,10 @@ async function importPreset(presetId) {
         await ensureProviderData();
         await refreshCatalogPreview();
         showToast(t('providerPresetImported'), 'success');
-        if (currentPage === 'quick-setup') renderQuickSetup();
+        if (currentPage === 'quick-setup') {
+            quickSetupStep = Math.max(quickSetupStep, 1);
+            renderQuickSetup();
+        }
         if (currentPage === 'providers') renderProvidersPage();
     } catch (err) {
         showToast(t('providerPresetImportFailed') + err.message, 'error');
@@ -1213,7 +1418,12 @@ async function createBlankProvider() {
         providerState.healthPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
-        renderProvidersPage();
+        if (currentPage === 'quick-setup') {
+            quickSetupStep = Math.max(quickSetupStep, 1);
+            renderQuickSetup();
+        } else {
+            renderProvidersPage();
+        }
         showToast(t('providerCreated'), 'success');
     } catch (err) {
         showToast(t('providerCreateFailed') + err.message, 'error');

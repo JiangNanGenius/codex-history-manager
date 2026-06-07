@@ -808,6 +808,33 @@ class ProviderRegistryTest(unittest.TestCase):
             updated = registry.get_provider(pid, include_secrets=True)
             self.assertEqual(updated["catalog_visibility"], "always_visible")
 
+    def test_set_focus_provider_persists_and_catalog_uses_it(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.create_provider({
+                "display_name": "Focused Test",
+                "short_alias": "focus",
+                "catalog_visibility": "focused_only",
+                "models": [{"id": "focus-model", "selected": False}],
+            })
+
+            result = registry.set_focus_provider(provider["id"])
+            self.assertTrue(result["success"])
+            self.assertTrue(result["changed"])
+
+            listed = registry.list_providers()
+            self.assertEqual(listed["focus_provider_id"], provider["id"])
+            preview = registry.preview_catalog()
+            self.assertEqual(preview["focus_provider_id"], provider["id"])
+            self.assertEqual(preview["entry_count"], 1)
+
+    def test_set_focus_provider_rejects_unknown_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            result = registry.set_focus_provider("missing")
+            self.assertFalse(result["success"])
+            self.assertEqual(result["error"], "Provider not found")
+
     def test_invalid_bulk_action_raises(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))

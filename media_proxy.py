@@ -141,6 +141,14 @@ def resolve_media_route(
                 "route_explanation": [f"Matched enabled provider model '{upstream_model}'."],
             }
 
+    focused = next((p for p in enabled if p.get("focused") and provider_supports_media(p, media_kind)), None)
+    if focused:
+        return {
+            "provider": focused,
+            "upstream_model_id": upstream_model,
+            "route_explanation": [f"Using focused {media_kind} provider '{focused.get('id')}'."],
+        }
+
     default_match = _default_media_provider(enabled, media_kind)
     if default_match:
         return {

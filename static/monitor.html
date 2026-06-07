@@ -33,10 +33,18 @@
     </main>
 
     <nav id="context-menu" class="context-menu">
+        <button data-action="start">启动 Codex</button>
+        <button data-action="main">显示主窗口</button>
+        <div class="menu-separator"></div>
+        <div class="menu-label" data-copy="quickSwitchProvider">快速切换供应商</div>
+        <div id="provider-menu-items" class="provider-menu-items">
+            <button class="muted" disabled>正在加载...</button>
+        </div>
+        <div class="menu-separator"></div>
         <button data-action="compact">折叠 / 展开</button>
         <button data-action="refresh">立即刷新</button>
         <button data-action="hide">隐藏悬浮窗</button>
-        <button data-action="main">显示主窗口</button>
+        <button data-action="exit">退出程序</button>
     </nav>
 
     <script src="js/monitor.js"></script>

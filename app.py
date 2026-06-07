@@ -609,6 +609,7 @@ def create_app() -> Flask:
         try:
             settings = redact_currency_settings(config.get_all())
             settings["auto_approval_system_prompt_default"] = DEFAULT_CONFIG["auto_approval_system_prompt"]
+            settings["defaults"] = redact_currency_settings(DEFAULT_CONFIG)
             return jsonify(settings)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1192,6 +1193,39 @@ def create_app() -> Flask:
             _refresh_provider_registry_path()
             focus_provider_id = request.args.get("focus_provider_id", "")
             return jsonify(provider_registry.preview_catalog(focus_provider_id=focus_provider_id))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/focus", methods=["GET", "POST"])
+    def provider_focus_api():
+        """Read or update the current quick-switch provider focus."""
+        try:
+            _refresh_provider_registry_path()
+            if request.method == "GET":
+                payload = provider_registry.list_providers(include_secrets=False)
+                focus_provider_id = str(payload.get("focus_provider_id") or "")
+                providers = [
+                    {
+                        "id": p.get("id", ""),
+                        "display_name": p.get("display_name") or p.get("id", ""),
+                        "short_alias": p.get("short_alias", ""),
+                        "enabled": p.get("enabled", True),
+                        "catalog_visibility": p.get("catalog_visibility", "focused_only"),
+                        "focused": p.get("id") == focus_provider_id,
+                    }
+                    for p in payload.get("providers", [])
+                    if isinstance(p, dict)
+                ]
+                return jsonify({
+                    "success": True,
+                    "focus_provider_id": focus_provider_id,
+                    "providers": providers,
+                })
+            body = request.get_json(silent=True) or {}
+            result = provider_registry.set_focus_provider(body.get("provider_id", ""))
+            if not result.get("success"):
+                return jsonify(result), 404
+            return jsonify(result)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

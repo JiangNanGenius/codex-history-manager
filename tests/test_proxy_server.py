@@ -60,6 +60,7 @@ class ProviderRoutingTest(unittest.TestCase):
                         "aliases": {"coder-pro": "qwen3-coder-plus"},
                         "models": [
                             {"id": "qwen3-coder-plus", "enabled": True},
+                            {"id": "gpt-5", "enabled": True},
                             {"id": "qwen-vl", "enabled": False},
                         ],
                     },
@@ -100,6 +101,16 @@ class ProviderRoutingTest(unittest.TestCase):
         provider = _resolve_provider_for_model("gpt-5")
         self.assertIsNotNone(provider)
         self.assertEqual(provider["id"], "openai-main")
+
+    def test_focus_provider_wins_ambiguous_exact_model_match(self):
+        payload = json.loads(self.store_path.read_text(encoding="utf-8"))
+        payload["focus_provider_id"] = "qwen-cn"
+        self.store_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        provider = _resolve_provider_for_model("gpt-5")
+
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider["id"], "qwen-cn")
 
     def test_disabled_provider_not_matched(self):
         provider = _resolve_provider_for_model("some-model")

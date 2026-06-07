@@ -52,6 +52,24 @@ class ConfigThemeTest(unittest.TestCase):
             DEFAULT_CONFIG["auto_approval_system_prompt"],
         )
 
+    def test_close_button_action_defaults_to_ask_when_invalid(self):
+        cfg = Config.__new__(Config)
+        cfg._data = {"close_button_action": "unexpected"}
+
+        cfg._normalize_storage_defaults()
+
+        self.assertEqual(cfg._data["close_button_action"], "ask")
+
+    def test_desktop_monitor_enabled_defaults_and_string_normalization(self):
+        cfg = Config.__new__(Config)
+        cfg._data = {}
+        cfg._normalize_storage_defaults()
+        self.assertTrue(cfg._data["desktop_monitor_enabled"])
+
+        cfg._data["desktop_monitor_enabled"] = "false"
+        cfg._normalize_storage_defaults()
+        self.assertFalse(cfg._data["desktop_monitor_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -48,6 +48,8 @@ DEFAULT_CONFIG = {
     "request_log_path": str(app_data_path("logs", "proxy_requests.jsonl")),
     "request_log_retention_days": 30,
     "request_log_max_mb": 50,
+    "close_button_action": "ask",
+    "desktop_monitor_enabled": True,
     "proxy_upstream_timeout_seconds": 120,
     "proxy_retry_attempts": 0,
     "proxy_retry_backoff_ms": 250,
@@ -214,6 +216,13 @@ class Config:
             self._data["display_currency"] = DEFAULT_CONFIG["display_currency"]
         if not self._data.get("exchange_rate_source"):
             self._data["exchange_rate_source"] = DEFAULT_CONFIG["exchange_rate_source"]
+        if self._data.get("close_button_action") not in {"ask", "exit", "tray"}:
+            self._data["close_button_action"] = DEFAULT_CONFIG["close_button_action"]
+        monitor_enabled = self._data.get("desktop_monitor_enabled")
+        if isinstance(monitor_enabled, str):
+            self._data["desktop_monitor_enabled"] = monitor_enabled.strip().lower() not in {"0", "false", "no", "off"}
+        elif not isinstance(monitor_enabled, bool):
+            self._data["desktop_monitor_enabled"] = DEFAULT_CONFIG["desktop_monitor_enabled"]
         for key in (
             "startup_enabled",
             "startup_mode",

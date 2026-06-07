@@ -446,6 +446,24 @@ class ProviderRegistry:
         self.update_provider(provider_id, provider)
         return {"success": True, "previous": previous, "current": visibility, "changed": True}
 
+    def set_focus_provider(self, provider_id: str = "") -> Dict[str, Any]:
+        """
+        Persist the provider used for quick switching and focused routing.
+
+        An empty provider_id clears the focus. Disabled providers can still be
+        stored but will not be used by routing until re-enabled.
+        """
+        store = self._load_store()
+        provider_id = str(provider_id or "").strip()
+        previous = str(store.get("focus_provider_id") or "")
+        if provider_id and not self._find_provider(store, provider_id):
+            return {"success": False, "error": "Provider not found", "focus_provider_id": previous}
+        if previous == provider_id:
+            return {"success": True, "focus_provider_id": provider_id, "previous": previous, "changed": False}
+        store["focus_provider_id"] = provider_id
+        self._save_store(store)
+        return {"success": True, "focus_provider_id": provider_id, "previous": previous, "changed": True}
+
     def preview_catalog(self, focus_provider_id: str = "") -> Dict[str, Any]:
         """
         生成 Unified Model Catalog（UMC）预览。
@@ -465,6 +483,8 @@ class ProviderRegistry:
             包含 entries、entry_count、route_explanation 的字典。
         """
         store = self._load_store()
+        if not focus_provider_id:
+            focus_provider_id = str(store.get("focus_provider_id") or "")
         return build_catalog_preview_from_providers(
             store.get("providers", []),
             focus_provider_id=focus_provider_id,

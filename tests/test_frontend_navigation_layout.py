@@ -28,6 +28,23 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert html.count("data-settings-step-button=") == 8
     assert html.count("data-settings-step-panel=") == 8
     assert "setting-auto-approval-system-prompt" in html
+    assert "settings-wizard-checklist" in html
+    assert "fillSettingsWizardDefaults" in html
+    assert "setting-close-button-action" in html
+    assert "setting-desktop-monitor-enabled" in html
     assert "https://github.com/JiangNanGenius/Codex-Enhance-Manager" in html
     assert "restoreAutoApprovalPromptDefault" in js
+    assert "updateSettingsWizardChecklist" in js
     assert "const SETTINGS_WIZARD_STEP_COUNT = 8;" in js
+
+
+def test_monitor_context_menu_exposes_desktop_actions():
+    html = (ROOT / "static" / "monitor.html").read_text(encoding="utf-8")
+    js = (ROOT / "static" / "js" / "monitor.js").read_text(encoding="utf-8")
+
+    assert 'data-action="start"' in html
+    assert 'data-action="exit"' in html
+    assert 'id="provider-menu-items"' in html
+    assert "list_quick_providers" in js
+    assert "switch_provider" in js
+    assert "/api/providers/focus" in js

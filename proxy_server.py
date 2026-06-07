@@ -173,7 +173,7 @@ def _get_amr_store_path() -> Path:
     return DEFAULT_AMR_STORE_PATH
 
 
-def _load_providers_with_secrets() -> List[Dict[str, Any]]:
+def _load_provider_store_with_secrets() -> Dict[str, Any]:
     """
     独立读取 providers.json，包含 secrets。
 
@@ -188,14 +188,37 @@ def _load_providers_with_secrets() -> List[Dict[str, Any]]:
     """
     store_path = _get_provider_store_path()
     if not store_path.exists():
-        return []
+        return {"providers": [], "focus_provider_id": ""}
     try:
         with open(store_path, "r", encoding="utf-8") as f:
             store = json.load(f)
     except Exception:
-        return []
-    providers = store.get("providers", []) if isinstance(store, dict) else []
-    return [p for p in providers if isinstance(p, dict)]
+        return {"providers": [], "focus_provider_id": ""}
+    if not isinstance(store, dict):
+        return {"providers": [], "focus_provider_id": ""}
+    providers = store.get("providers", [])
+    return {
+        "providers": [p for p in providers if isinstance(p, dict)],
+        "focus_provider_id": str(store.get("focus_provider_id") or ""),
+    }
+
+
+def _load_providers_with_secrets() -> List[Dict[str, Any]]:
+    return _load_provider_store_with_secrets().get("providers", [])
+
+
+def _prioritize_focus_provider(providers: List[Dict[str, Any]], focus_provider_id: str = "") -> List[Dict[str, Any]]:
+    if not focus_provider_id:
+        return providers
+    focused = []
+    others = []
+    for provider in providers:
+        provider["focused"] = str(provider.get("id") or "") == focus_provider_id
+        if str(provider.get("id") or "") == focus_provider_id:
+            focused.append(provider)
+        else:
+            others.append(provider)
+    return focused + others
 
 
 def _resolve_provider_for_model(model_id: str) -> Optional[Dict[str, Any]]:
@@ -219,7 +242,8 @@ def _resolve_provider_for_model(model_id: str) -> Optional[Dict[str, Any]]:
     Returns:
         匹配的 provider 字典，或 None。
     """
-    providers = _load_providers_with_secrets()
+    store = _load_provider_store_with_secrets()
+    providers = _prioritize_focus_provider(store.get("providers", []), store.get("focus_provider_id", ""))
     if not model_id:
         return None
 
@@ -1208,7 +1232,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
         media_operation = media_operation_for_request(method, canonical_path)
         content_type = self.headers.get("Content-Type", "")
         model_id = extract_json_model(body, content_type)
-        route = resolve_media_route(_load_providers_with_secrets(), media_kind, model_id=model_id)
+        store = _load_provider_store_with_secrets()
+        route = resolve_media_route(
+            _prioritize_focus_provider(store.get("providers", []), store.get("focus_provider_id", "")),
+            media_kind,
+            model_id=model_id,
+        )
         provider = route.get("provider")
         if not provider:
             _send_error(
