@@ -1,120 +1,86 @@
 # Codex Enhance Manager
 
-> 面向 Windows 桌面的 Codex 本地控制中心。目前已支持历史会话管理、账户/供应商同步、Token 用量监控和安全备份，并正在扩展为 Codex 的本地供应商、路由、媒体、额度和成本管理层。
+> 面向 Windows 桌面的 Codex 本地控制中心：历史会话、Token/缓存用量、供应商预设、统一模型可见性、自适应路由、安全的 Codex 配置预览，以及带脱敏诊断的本地代理。
 
 [English](README.md)
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows-informational.svg)](#快速开始)
 
-## 当前功能
+Codex Enhance Manager 最初是 Codex 历史会话和 Token 管理器。现在它正在扩展为 Codex 的本地运维层：多供应商配置、模型目录可见性、请求路由、缓存/成本统计、诊断和恢复工具。
 
-### Token 监控
-- 常驻自动刷新的 Token 仪表盘：总览卡片、模型分布、供应商分布、小时分布、用量排行。
-- 桌面置顶半透明悬浮监控窗：支持右键菜单、拖动、折叠、动画更新和报警状态。
-- Token 用量追踪：记录一段工作时间内的 Token 增量，并支持自定义报警阈值。
-- 未开启追踪时，悬浮窗自动显示最近 1 小时 Token 用量。
-- 大数字自动进位显示，中文界面使用“千 / 百万 / 亿”，英文界面使用 `K / M / B`。
+项目坚持 local-first：供应商密钥、应用设置、request log metadata、备份、导出和诊断文件默认都保存在本机。
 
-### 会话浏览
-- 按状态、来源、模型、供应商搜索、筛选、排序 Codex 会话。
-- 会话详情按流式方式读取 JSONL，不会一次性加载超大文件。
-- 在详情弹窗里直接导出 Markdown、Text 或 JSON。
-- 支持归档和取消归档会话。
+## 当前状态
 
-### 账户同步
-- 修复切换 Codex 账户或 API 供应商后，历史会话“消失”的问题。
-- 三层同步：SQLite `threads` 表、JSONL `session_meta`、`session_index.jsonl`。
-- Dry Run 预览会先显示将要修改的数量。
-- “一键同步 + 重启”会关闭 Codex，自动识别当前 `config.toml` 的供应商和模型，同步历史记录后再启动 Codex。
-- 从软件内启动 Codex 前，也会自动执行一次安全同步。
+| 模块 | 状态 | 说明 |
+| --- | --- | --- |
+| 会话历史 | 可用 | 浏览、筛选、查看、导出、归档，以及修复移动后的会话元数据。 |
+| Token/缓存用量 | 可用 | 读取 Codex DB 总量、Codex rollout 缓存事件、本地代理日志和兼容代理数据库。 |
+| 供应商注册表 | 可用 | 16 个内置预设，支持别名、地区、币种、headers、User-Agent、媒体 profile 和可见性策略。 |
+| 统一模型目录（UMC） | 可用 | 多供应商模型同时可见，支持 provider-prefixed model IDs。 |
+| 自适应模型轮转（AMR） | 脚手架可用 | 优先级/能力路由、冷却、上下文限制、路由解释和 JSON 持久化。 |
+| 本地代理 | 脚手架可用 | Chat、Responses、Models、媒体 pass-through 脚手架、端口退避、路由诊断、metadata-only 日志。 |
+| 协议适配 | 脚手架可用 | Responses <-> Chat、Anthropic Messages foundation、国产 Responses guardrails；未知 shape 保持阻断。 |
+| 成本与币种 | 脚手架可用 | 原生/展示币种、手动汇率覆盖、本地成本拆分、request FX snapshot。 |
+| 余额/额度 | 脚手架可用 | 通用 JSON endpoint 探测、TTL cache、脱敏失败快照。 |
+| Codex 配置安全 | 可用 | Diff Preview、备份、回滚、登录态保留和显式修改确认。 |
 
-### 备份与还原
-- 手动完整备份 SQLite 数据库。
-- 增量备份变化过的 threads。
-- 还原完整备份前自动创建安全备份。
-- 可配置最大备份保留数量，自动清理旧备份。
+## 功能亮点
 
-### 供应商注册
-- JSON 本地供应商注册表，内置 16 个预设（OpenAI、Azure、OpenRouter、DeepSeek、Moonshot、智谱、SiliconFlow、MiniMax、阿里百炼、火山方舟、魔搭、阶跃星辰、NVIDIA 及自定义端点）。
-- 供应商 Schema：短简称、国家/地区、原生币种、目录可见性、自定义 Headers、User-Agent。
-- Secret 脱敏：诊断导出时自动隐藏 api_key。
-- 批量模型选择：全选、全不选、只选 Vision、只选高上下文、只选低成本。
-- 快捷可见性切换：隐藏、仅焦点、常驻显示、只选中的模型。
+### 统一供应商配置
 
-### 统一模型目录（UMC）
-- 从多个供应商生成合并模型目录，模型 ID 带供应商前缀（如 `qwen/qwen3-coder-plus`）。
-- 可见性策略：常驻供应商、只选中的模型、焦点供应商覆盖。
-- 注入 Codex 前的目录预览。
+- 本地 provider registry，内置 OpenAI、Azure、OpenRouter、DeepSeek、Moonshot、智谱、SiliconFlow、MiniMax、阿里百炼、火山方舟、魔搭、阶跃星辰、NVIDIA 和自定义 endpoint 预设。
+- Provider 字段包含 `short_alias`、原生币种、国家/地区、自定义 headers、User-Agent、media profile、quota template 和 model pricing hints。
+- 可见性支持 hidden、focused-only、always-visible、selected-models。
 
-### 自适应模型轮转（AMR）
-- 内存路由引擎：轮转组 + 候选优先级。
-- 能力感知路由：文本、视觉、工具、推理、图片、视频。
-- 故障冷却：上游失败后自动 fallback 到下一个可用候选。
-- 组上下文窗口 = 所有启用候选的最小上下文窗口。
-- AMR 注册表：JSON 持久化、CRUD、从供应商动态构建候选。
+### 统一模型目录（Unified Model Catalog）
+
+- 从多个供应商生成一个 Codex 可见模型目录。
+- 使用 `qwen/qwen3-coder-plus` 这样的 provider-prefixed ID。
+- 保留 Provider Focus Switch，同时保留常驻模型和选中模型。
+- 写入 Codex 前先预览目录输出。
 
 ### 本地代理
-- 独立 HTTP 服务器（不绑定 Flask），本地运行。
-- `/v1/chat/completions` 直接转发 + SSE 流式转发。
-- `/v1/responses` 含 Responses↔Chat Completions 双向转换。
-- `/v1/models` 返回 UMC 可见模型列表（含供应商前缀）。
-- 供应商路由：`provider/model` 硬前缀或精确模型 ID 匹配。
-- Windows 专项修复：IPv4 绑定、系统代理绕过、端口冲突预检。
 
-### Codex 配置安全
-- 安全读写 `~/.codex/config.toml` 和 `auth.json`，自动备份。
-- 自动检测官方 OAuth / 传统 API Key 登录模式。
-- 默认保留官方登录态；仅在用户显式允许时才写入第三方配置。
-- 写入失败时自动 rollback。
-- 写入前 diff 预览。
+- 独立 localhost HTTP server，不绑定 Flask。
+- 支持 `/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/responses/compact`，并预留 OpenAI-compatible media route。
+- 按 `provider/model` 硬前缀、精确模型匹配、UMC 条目、media profile 或 AMR group 路由。
+- Windows 下尽量使用严格端口绑定；配置端口被占用时自动退避到后续可用端口。
+- 非流式请求写入 metadata-only JSONL：endpoint、provider、model、status、duration、normalized usage、cache read/write、本地成本估算和汇率快照。
+- 代理日志不会保存 prompt、请求体、原始请求 headers 或原始上游响应。
 
-### 诊断
-- 结构化诊断收集器：覆盖 Codex 配置、登录态、代理状态、供应商、模型目录、AMR 组、系统环境。
-- 脱敏诊断导出：安全分享。
-- 供应商连通性探测：HEAD 请求检测 base_url 可达性。
-- 错误环形缓冲区：保留最近 50 条代理和系统错误。
+### 用量、成本与币种
 
-### 移动修复
-- 从 SQLite 和 JSONL 读取会话/工作区元数据。
-- 移动预演（dry-run）：验证目标 Git 仓库和 tracked files。
-- 原子移动 + 回滚：同步更新 SQLite `threads.cwd`、JSONL `session_meta.cwd`、`session_index.jsonl`。
-- 移动后一致性验证。
+- 从 Codex `threads.tokens_used` 读取折叠总量。
+- 从 Codex rollout `token_count`、本地代理日志和兼容代理数据库补充 cache read/write。
+- 估算 input、output、cache read、cache write、reasoning、image、video 成本。
+- 支持 provider/model 原生币种、展示币种、手动汇率覆盖、缓存汇率和每条请求的 FX snapshot。
+- 在线汇率 adapter 在官方 API shape 可访问并复核前保持阻断。
 
-### 桌面体验
-- 使用 PyWebView 桌面窗口，后端为本地 Flask 服务。
-- 支持系统托盘：最小化到托盘、从托盘恢复、关闭时询问“最小化到托盘 / 退出 / 取消”。
-- 运行时调用 `tasklist`、`wmic`、`taskkill`、`where` 等命令时隐藏控制台窗口，尽量避免 CMD 黑窗闪烁。
-- 自动识别 Codex 数据库、会话目录、归档目录、Codex CLI、Codex++、当前供应商和模型。
-- 中英文界面切换。
+### 诊断与恢复
 
-## 增强路线
+- 脱敏诊断覆盖 Codex 配置、登录态、本地代理状态、providers、UMC、AMR、quota snapshot、request log summary 和系统环境。
+- Config/auth 写入前创建备份，并支持回滚。
+- 项目/会话移动修复会 dry-run 校验，再同步 SQLite、JSONL metadata 和 `session_index.jsonl`。
+- 清理 API 使用 allowlist 和确认短语。
 
-项目正在从历史记录管理器扩展为 Codex Enhance Manager。
+## 安全边界
 
-**已实现：**
-- ✅ Unified Model Catalog (UMC) / 统一模型目录
-- ✅ Adaptive Model Rotation (AMR) / 自适应模型轮转
-- ✅ Codex 本地代理（Responses/Chat 转换、登录态保留、路由诊断）
-- ✅ 供应商注册表（16 个预设、批量操作、可见性控制）
-- ✅ Codex 配置安全层（备份、回滚、登录态保留）
-- ✅ 诊断与安全导出
-- ✅ 项目/会话移动修复（dry-run + 回滚）
-
-**进行中 / 计划：**
-- 独立图片/视频供应商：支持完全兼容 OpenAI 标准的媒体代理，也支持阿里百炼、火山方舟等适配器。
-- 缓存读写 Token 统计：从 Codex rollout、local proxy log、兼容代理数据库读取 cache read/write。
-- 供应商余额/额度查询、细粒度成本估算、多币种显示和手动汇率覆盖。
-- Codex 页面增强：会话删除、导出、时间线、对话宽度、滚动恢复。
-- 分层设置交互：快速设置、预设优先、写入前预览、路由模拟器、启用前测试、Codex 配置回滚。
-
-本地开发计划位于 `_local_notes/`，该目录已被 Git 忽略，不会推送。
+| 边界 | 规则 |
+| --- | --- |
+| Codex auth/config/model catalog/process 写入 | 本窗口只做读取、dry-run 和 preview；真实修改测试由用户手动执行。 |
+| 协议转换 | 不猜协议。Responses、Chat、Anthropic、SSE、tools、media、国产供应商差异必须来自官方文档/源码或明确源码分析。 |
+| Secrets | API key、Bearer token 和敏感 headers 在诊断和 request log 中脱敏。 |
+| 本地-only 文件 | `_local_notes/`、`research/`、含敏感信息的 diagnostics 和临时研究输出不会推送。 |
+| Codex++ 内容边界 | 可以参考有用实现思路，但不迁移 sponsor/recommendation/ad 内容。 |
 
 ## 快速开始
 
-### 使用 Windows EXE
+### Windows EXE
 
-从 [Releases](https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases) 下载最新版 EXE，双击运行。
+从 [Releases](https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases) 下载最新构建并运行 EXE。
 
 ### 从源码运行
 
@@ -123,75 +89,81 @@ pip install -r requirements.txt
 python main.py
 ```
 
-应用会打开桌面窗口，底层服务地址为 `http://127.0.0.1:51234`。
+桌面窗口背后是本地 Flask 服务：`http://127.0.0.1:51234`。
 
-## 打包 EXE
+### 打包 EXE
 
 ```bash
 python build_exe.py
 ```
 
-打包脚本会生成单文件 EXE，并包含静态资源、应用图标、PyWebView、Flask、Pillow 和系统托盘支持。
+打包脚本会生成单文件 Windows EXE，并包含静态资源、图标、PyWebView、Flask、Pillow 和托盘支持。
 
-## 账户同步原理
+## 本地存储
 
-Codex 会按 `model_provider` 过滤会话列表。你在官方 OpenAI 账户和自定义/API 中转账户之间切换时，另一个供应商下的历史会话可能看起来像“丢了”。
+用户数据默认放在：
 
-同步流程会：
+```text
+Documents/Codex Enhance Manager/
+```
+
+如果存在旧版 `~/.codex_gui_config.json`，应用会按兼容逻辑导入。
+
+| 路径或设置 | 用途 |
+| --- | --- |
+| `config.json` | 应用主配置。 |
+| `providers/providers.json` | 本地供应商注册表。 |
+| `logs/proxy_requests.jsonl` | metadata-only 本地代理 request log。 |
+| `backups/` 和 `codex_backups/` | 应用备份与 Codex 配置备份。 |
+| `diagnostics/` | 脱敏诊断包。 |
+| `exports/` | 用户导出文件。 |
+| `temp/` | 临时文件。 |
+
+## 账户同步
+
+Codex 会按 `model_provider` 过滤会话列表。在官方 OpenAI 登录态和自定义/API provider 之间切换时，另一个 provider 下的历史会话可能看起来像“消失了”。
+
+同步流程：
 
 1. 读取当前 `~/.codex/config.toml` 中的 provider/model。
-2. 更新 Codex SQLite 数据库 `threads` 表里的 `model_provider` 和 `model`。
-3. 流式更新 JSONL rollout 文件第一行里的 `session_meta`。
+2. 更新 Codex SQLite `threads` 表中的 `model_provider` 和 `model`。
+3. 用流式首行重写更新 JSONL `session_meta`。
 4. 重建 `session_index.jsonl`，统一 provider/model 字段。
 
 同步完成后，不同账户/供应商之间切换时历史会话仍然可见。
 
-## 数据来源
+## 核心模块
 
-Token 统计来自 Codex 数据库 `threads.tokens_used` 字段。缓存命中不会伪造；未配置兼容代理数据库时，缓存指标会显示为不支持。
-
-JSONL 会话读取采用逐行流式读取，即使归档目录里有数 GB 的会话文件，也不会一次性读入内存。
-
-## 隐私与本地状态
-
-这是一个本地桌面应用。设置保存在你的机器上，诊断信息应默认脱敏 API Key、Bearer Token 和敏感 Header。后续供应商、代理、额度和成本功能会按 local-first 方式设计，并为 Codex 配置文件写入提供写入前预览、备份和回滚保护。
-
-## 配置文件
-
-设置保存在 `~/.codex_gui_config.json`。
-
-| 配置项 | 说明 |
+| 模块 | 作用 |
 | --- | --- |
-| `db_path` | Codex SQLite 数据库路径 |
-| `sessions_dir` | 当前会话目录 |
-| `archived_dir` | 归档会话目录 |
-| `backup_dir` | 备份输出目录 |
-| `codex_cli_path` | Codex CLI 可执行文件路径 |
-| `codex_plus_plus_path` | Codex++ 启动器路径 |
-| 代理缓存数据库 | 可选路径，用于统计代理层缓存 Token |
-| `page_size` | 会话列表每页数量 |
-| `backup_interval_hours` | 自动备份间隔 |
-| `max_backups` | 最大备份保留数量 |
-| `large_file_threshold_mb` | 大文件读取限制阈值 |
+| `app.py` | Flask API 和桌面后端编排。 |
+| `main.py` | PyWebView 桌面入口。 |
+| `app_paths.py`, `config.py` | Documents-based 本地存储与设置迁移。 |
+| `providers.py` | Provider registry、预设、schema normalize、redaction。 |
+| `model_catalog.py` | Unified Model Catalog 生成。 |
+| `model_rotation.py`, `amr_registry.py` | Adaptive Model Rotation 引擎和持久化。 |
+| `proxy_server.py` | 本地 OpenAI-compatible proxy server。 |
+| `request_logs.py` | metadata-only request log、保留策略、汇总、成本快照。 |
+| `responses_adapter.py` | Responses <-> Chat 转换和 SSE normalization。 |
+| `anthropic_adapter.py` | Anthropic Messages adapter foundation。 |
+| `domestic_responses.py` | 阿里百炼/火山方舟 Responses 兼容性 profile 和 guardrails。 |
+| `media_proxy.py` | OpenAI-compatible image/video 路由 helper。 |
+| `codex_config.py` | Codex config/auth 备份、diff preview、写入、还原。 |
+| `codex_rollout_usage.py`, `token_stats.py` | Token/cache usage reader。 |
+| `currency.py`, `costing.py`, `quota.py` | FX snapshot、本地成本估算、通用 quota probe。 |
+| `diagnostics.py`, `move_repair.py` | 安全诊断和项目/会话移动修复。 |
 
-## 项目结构
+## 路线图
 
-```text
-Codex-Enhance-Manager/
-├── main.py              # PyWebView 启动入口
-├── app.py               # Flask 应用和 REST API
-├── config.py            # 设置管理
-├── db.py                # SQLite 操作层
-├── reader.py            # 流式 JSONL 读取和导出
-├── backup.py            # 完整/增量备份与还原
-├── sync.py              # 多账户 provider 同步引擎
-├── auto_detect.py       # 路径与 provider 自动检测
-├── token_stats.py       # Token 统计查询
-├── build_exe.py         # PyInstaller 打包脚本
-├── icon.png             # 应用图标源图
-├── icon.ico             # Windows 应用/托盘图标
-└── static/              # 前端 SPA 资源
-```
+| 下一阶段 | 方向 |
+| --- | --- |
+| 媒体适配器 | 在 payload、polling、response 格式复核后接入阿里百炼和火山方舟图片/视频真实适配。 |
+| 流式日志 | 确认 stream lifecycle、最终 usage 和半关闭 stream 语义后，再记录流式代理请求。 |
+| 成本仪表盘 | 增加原生/展示币种、cache read/write、reasoning、image、video、provider reported vs estimated 成本列。 |
+| 额度集成 | 在通用 probe scaffold 上逐步叠加 provider-specific balance/quota endpoint。 |
+| 主题系统 | 增加更多主题预设、自定义主题编辑和主题导入。 |
+| Codex 审批/沙箱修复 | 先调研官方 Codex approval path 和 sandbox config，再实现稳定修复。 |
+| 打包发布 | 等 proxy/protocol 层达到更稳定里程碑后，构建并发布新的 EXE。 |
 
 ## 许可证
 

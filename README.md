@@ -1,120 +1,86 @@
 # Codex Enhance Manager
 
-> A Windows desktop control center for Codex. It currently manages chat history, account/provider sync, token usage, and backups, and is being expanded into a local provider, routing, media, quota, and cost-management layer for Codex.
+> A local-first Windows desktop control center for Codex: history, token/cache usage, provider presets, unified model visibility, adaptive routing, safe Codex config previews, and a localhost proxy with redacted diagnostics.
 
 [中文说明](README.zh-CN.md)
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows-informational.svg)](#quick-start)
 
-## Current Features
+Codex Enhance Manager started as a Codex history and token manager. It is now evolving into a local operations layer for Codex: multi-provider setup, model catalog visibility, request routing, cache/cost accounting, diagnostics, and recovery tools.
 
-### Token Monitoring
-- Always-on token dashboard with overview cards, model/provider charts, hourly distribution, and top sessions.
-- Desktop always-on-top semi-transparent token monitor with right-click menu, drag, collapse, animation, and alert state.
-- Token usage tracker for a work interval, with configurable alert threshold.
-- When tracking is not active, the floating monitor shows the last 1 hour of token usage.
-- Large numbers automatically compact into K/M/B or localized Chinese units.
+The project is intentionally local-first. Provider secrets, app settings, request-log metadata, backups, exports, and diagnostics stay on your machine by default.
 
-### Session Browser
-- Browse, search, sort, and filter Codex sessions by status, source, model, and provider.
-- View conversation details without loading entire huge JSONL files into memory.
-- Export a session as Markdown, text, or JSON from the detail dialog.
-- Archive and unarchive sessions.
+## Current Build
 
-### Account Sync
-- Fixes the common provider-switch problem where sessions disappear after changing Codex accounts.
-- Syncs three layers: `threads` in SQLite, JSONL `session_meta`, and `session_index.jsonl`.
-- Dry-run preview shows the exact change count before writing.
-- One-click sync + restart closes Codex, auto-detects the current `config.toml` provider/model, syncs, then starts Codex.
-- Starting Codex from the app also performs an automatic safety sync first.
+| Area | Status | Notes |
+| --- | --- | --- |
+| Session history | Working | Browse, filter, inspect, export, archive, and repair moved sessions. |
+| Token/cache usage | Working | Reads Codex DB totals, Codex rollout cache events, local proxy logs, and compatible proxy DBs. |
+| Provider registry | Working | 16 built-in presets with aliases, regions, currencies, headers, User-Agent, media profile, and visibility policy. |
+| Unified Model Catalog | Working | Shows selected models from multiple providers at once with provider-prefixed model IDs. |
+| Adaptive Model Rotation | Working scaffold | Priority/capability routing, cooldown, context limiter, explanations, and JSON persistence. |
+| Local proxy | Working scaffold | Chat, Responses, Models, media pass-through scaffolding, port backoff, route diagnostics, metadata-only logs. |
+| Protocol adapters | Working scaffold | Responses <-> Chat, Anthropic Messages foundation, domestic Responses guardrails. Unknown shapes stay blocked. |
+| Cost and currency | Working scaffold | Native/display currency, manual FX overrides, local estimate breakdowns, request FX snapshots. |
+| Quota/balance | Working scaffold | Generic JSON endpoint probe with TTL cache and redacted failure snapshots. |
+| Codex config safety | Working | Diff preview, backups, rollback, auth preservation, and explicit mutation confirmation. |
 
-### Backup And Restore
-- Full SQLite backups before destructive actions.
-- Incremental backups for changed threads.
-- Restore full backups with a pre-restore safety backup.
-- Old backup pruning by configurable retention count.
+## Highlights
 
-### Provider Registry
-- JSON-backed local provider registry with 16 built-in presets (OpenAI, Azure, OpenRouter, DeepSeek, Moonshot, Zhipu, SiliconFlow, MiniMax, Alibaba Bailian, Volcengine Ark, ModelScope, StepFun, NVIDIA, and custom endpoints).
-- Provider schema with short alias, country/region, native currency, catalog visibility, custom headers, and User-Agent.
-- Secret redaction for safe diagnostics export.
-- Bulk model selection actions: select all, deselect all, select vision-capable, select high-context, select low-cost.
-- Provider visibility quick toggle: hidden, focused only, always visible, selected models.
+### Unified Provider Setup
 
-### Unified Model Catalog (UMC)
-- Generates a combined model catalog from multiple providers with provider-prefixed model IDs (`qwen/qwen3-coder-plus`).
-- Visibility policies: always-visible providers, selected models only, focus provider override.
-- Catalog preview before injecting into Codex.
+- Local provider registry with OpenAI, Azure, OpenRouter, DeepSeek, Moonshot, Zhipu, SiliconFlow, MiniMax, Alibaba Bailian, Volcengine Ark, ModelScope, StepFun, NVIDIA, and custom endpoint presets.
+- Provider fields include `short_alias`, native currency, country/region, custom headers, User-Agent, media profile, quota template, and model pricing hints.
+- Provider visibility supports hidden, focused-only, always-visible, and selected-models modes.
 
-### Adaptive Model Rotation (AMR)
-- In-memory routing engine with rotation groups and candidate priorities.
-- Capability-aware routing: text, vision, tools, reasoning, images, videos.
-- Failure cooldown with automatic fallback to the next capable candidate.
-- Group context window = minimum enabled candidate context.
-- AMR registry with JSON persistence, CRUD, and dynamic candidate building from providers.
+### Unified Model Catalog
+
+- Builds one visible catalog from multiple providers.
+- Uses provider-prefixed IDs such as `qwen/qwen3-coder-plus`.
+- Keeps a manual Provider Focus Switch while still preserving always-visible and selected models.
+- Previews catalog output before writing anything into Codex.
 
 ### Local Proxy
-- Independent HTTP server (not Flask-bound) running on localhost.
-- `/v1/chat/completions` direct pass-through and SSE streaming.
-- `/v1/responses` with Responses-to-Chat Completions conversion and back.
-- `/v1/models` returning UMC visible models with provider prefixes.
-- Provider routing by `provider/model` hard prefix or exact model ID match.
-- Windows-specific fixes: IPv4 binding, system proxy bypass, port conflict pre-check.
 
-### Codex Config Safety
-- Safe read/write for `~/.codex/config.toml` and `auth.json` with backups.
-- Automatic detection of official OAuth vs legacy API key auth mode.
-- Preserves official login state by default; writes third-party config only when explicitly allowed.
-- Rollback on write failure.
-- Diff preview before writing.
+- Runs as an independent localhost HTTP server, separate from Flask.
+- Supports `/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/responses/compact`, and OpenAI-compatible media route scaffolding.
+- Routes by `provider/model` hard prefix, exact model match, UMC entries, media profile, or AMR group.
+- Uses strict Windows port binding where available and automatically backs off when the configured port is occupied.
+- Writes metadata-only JSONL logs for non-streaming requests: endpoint, provider, model, status, duration, normalized usage, cache read/write, local cost estimate, and FX snapshot.
+- Does not store prompts, request bodies, raw request headers, or raw upstream responses in proxy logs.
 
-### Diagnostics
-- Structured diagnostics collector covering Codex config, auth mode, proxy status, providers, model catalog, AMR groups, and system environment.
-- Redacted diagnostics export for safe sharing.
-- Provider connectivity probe (HEAD request to base URL).
-- Error ring buffer tracking the last 50 proxy and system errors.
+### Usage, Cost, And Currency
 
-### Move Repair
-- Thread/workspace metadata reader from SQLite and JSONL.
-- Move dry-run with Git repo and tracked-file verification.
-- Atomic move with rollback: updates SQLite `threads.cwd`, JSONL `session_meta.cwd`, and `session_index.jsonl`.
-- Post-move consistency verification.
+- Reads collapsed Codex totals from `threads.tokens_used`.
+- Adds cache read/write details from Codex rollout `token_count` events, local proxy logs, and compatible proxy databases.
+- Estimates input, output, cache read, cache write, reasoning, image, and video costs.
+- Supports provider/model native currency, display currency, manual FX overrides, cached rates, and per-request FX snapshots.
+- Online exchange-rate adapters are intentionally blocked until the official API shape is reachable and verified.
 
-### Desktop Experience
-- PyWebView desktop window with local Flask backend.
-- System tray support: minimize to tray, restore from tray, and close prompt with tray/exit/cancel choices.
-- Runtime subprocess calls use hidden Windows flags to avoid flashing CMD windows.
-- Auto-detects Codex DB, sessions directory, archived sessions, Codex CLI, Codex++, and current provider/model.
-- Bilingual UI: Chinese and English.
+### Diagnostics And Recovery
 
-## Enhancement Roadmap
+- Redacted diagnostics cover Codex config, auth mode, local proxy status, providers, UMC, AMR, quota snapshots, request-log summaries, and system environment.
+- Config/auth writes create backups and support rollback.
+- Thread/project move repair updates SQLite, JSONL metadata, and `session_index.jsonl` with dry-run and rollback.
+- Cleanup APIs use allowlists and confirmation phrases.
 
-The project is being expanded beyond history management.
+## Safety Model
 
-**Implemented:**
-- ✅ Unified Model Catalog (UMC): show selected models from multiple providers at the same time, with provider aliases and always-visible models.
-- ✅ Adaptive Model Rotation (AMR): route each request by priority, capability, context window, health, quota, and fallback policy.
-- ✅ Local proxy for Codex with Responses/Chat conversion, auth preservation, and route diagnostics.
-- ✅ Provider registry with 16 presets, bulk actions, and visibility controls.
-- ✅ Codex config safety layer with backup, rollback, and auth preservation.
-- ✅ Diagnostics and safe export.
-- ✅ Project/conversation move repair with dry-run and rollback.
-
-**In Progress / Planned:**
-- Independent image/video providers, including OpenAI-compatible pass-through and adapters for Alibaba Bailian and Volcengine Ark.
-- Cache read/write token accounting from Codex rollout logs, local proxy logs, and compatible proxy databases.
-- Provider balance/quota checks, detailed cost estimates, multi-currency display, and manual exchange-rate overrides.
-- Codex page enhancements: session delete, export, timeline, conversation width, scroll restore.
-- Carefully layered settings UX: quick setup, presets, preview-before-write, route simulator, tests before enabling, and rollback for Codex config changes.
-
-Local development plans live under `_local_notes/` and are intentionally ignored by Git.
+| Boundary | Rule |
+| --- | --- |
+| Codex auth/config/model catalog/process writes | Preview and dry-run are allowed here; real mutation testing must be performed manually by the user. |
+| Protocol conversion | No guessed adapters. Responses, Chat, Anthropic, SSE, tools, media, and domestic provider differences must be verified from official docs/source or explicit source analysis. |
+| Secrets | API keys, bearer tokens, and sensitive headers are redacted in diagnostics and request logs. |
+| Local-only materials | `_local_notes/`, `research/`, diagnostics with secrets, and temporary research output are ignored and must not be pushed. |
+| Codex++ content | Useful implementation ideas may be studied, but sponsor/recommendation/ad content is not migrated. |
 
 ## Quick Start
 
 ### Windows EXE
 
-Download the latest release from [Releases](https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases) and run the bundled EXE.
+Download the latest build from [Releases](https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases) and run the EXE.
 
 ### From Source
 
@@ -123,75 +89,81 @@ pip install -r requirements.txt
 python main.py
 ```
 
-The app opens a desktop window backed by `http://127.0.0.1:51234`.
+The desktop window is backed by a local Flask service at `http://127.0.0.1:51234`.
 
-## Build EXE
+### Build EXE
 
 ```bash
 python build_exe.py
 ```
 
-The build script creates a single-file EXE with bundled static assets, app icon, PyWebView, Flask, Pillow, and tray support.
+The build script creates a single-file Windows EXE with bundled static assets, icons, PyWebView, Flask, Pillow, and tray support.
 
-## How Account Sync Works
+## Storage
 
-Codex filters the session list by `model_provider`. If you switch between the official OpenAI account and a custom/API-provider account, sessions from the other provider can appear to vanish.
-
-Sync solves this by:
-
-1. Reading the current `~/.codex/config.toml` provider/model.
-2. Updating `model_provider` and `model` in the Codex SQLite `threads` table.
-3. Updating `session_meta` in JSONL rollout files using a streaming first-line rewrite.
-4. Rebuilding `session_index.jsonl` with unified provider/model fields.
-
-After sync, sessions stay visible across account/provider switches.
-
-## Data Sources
-
-Token statistics come from the `tokens_used` column in Codex's `threads` table. Cache-hit metrics are not fabricated; they are shown as unsupported unless a compatible proxy database is configured.
-
-Huge JSONL files are read line by line, so multi-GB archived sessions can be inspected without loading the full file into memory.
-
-## Privacy And Local State
-
-This is a local desktop application. Settings are stored on your machine, and diagnostics should redact API keys, bearer tokens, and sensitive headers. Future provider, proxy, quota, and cost features are planned with local-first storage, preview-before-write, and backup/rollback safeguards for Codex configuration files.
-
-## Configuration
-
-Settings are stored in `~/.codex_gui_config.json`.
-
-| Setting | Description |
-| --- | --- |
-| `db_path` | Codex SQLite database path |
-| `sessions_dir` | Active Codex sessions directory |
-| `archived_dir` | Archived Codex sessions directory |
-| `backup_dir` | Backup output directory |
-| `codex_cli_path` | Codex CLI executable path |
-| `codex_plus_plus_path` | Codex++ launcher path |
-| Proxy cache database | Optional path for proxy cache-token statistics |
-| `page_size` | Session list page size |
-| `backup_interval_hours` | Auto-backup interval |
-| `max_backups` | Backup retention count |
-| `large_file_threshold_mb` | Threshold for large-file reading limits |
-
-## Project Structure
+User data defaults to:
 
 ```text
-Codex-Enhance-Manager/
-├── main.py              # PyWebView entry point
-├── app.py               # Flask app and REST API
-├── config.py            # Settings management
-├── db.py                # SQLite operations
-├── reader.py            # Streaming JSONL reader/exporter
-├── backup.py            # Full/incremental backup and restore
-├── sync.py              # Multi-account provider sync engine
-├── auto_detect.py       # Path and provider auto-detection
-├── token_stats.py       # Token statistics queries
-├── build_exe.py         # PyInstaller packaging script
-├── icon.png             # Source app icon
-├── icon.ico             # Windows app/tray icon
-└── static/              # Frontend SPA assets
+Documents/Codex Enhance Manager/
 ```
+
+Legacy settings from `~/.codex_gui_config.json` are imported when present.
+
+| Path or setting | Purpose |
+| --- | --- |
+| `config.json` | Main app settings. |
+| `providers/providers.json` | Local provider registry. |
+| `logs/proxy_requests.jsonl` | Metadata-only local proxy request log. |
+| `backups/` and `codex_backups/` | App and Codex config backups. |
+| `diagnostics/` | Redacted diagnostics bundles. |
+| `exports/` | User-requested exports. |
+| `temp/` | Temporary app files. |
+
+## Account Sync
+
+Codex filters sessions by `model_provider`. Switching between official OpenAI login and custom/API-provider accounts can make sessions from the other provider appear to vanish.
+
+The sync flow:
+
+1. Reads the current `~/.codex/config.toml` provider/model.
+2. Updates `model_provider` and `model` in the Codex SQLite `threads` table.
+3. Updates JSONL `session_meta` with a streaming first-line rewrite.
+4. Rebuilds `session_index.jsonl` with unified provider/model fields.
+
+After sync, sessions remain visible across account/provider switches.
+
+## Core Modules
+
+| Module | Role |
+| --- | --- |
+| `app.py` | Flask API surface and desktop backend orchestration. |
+| `main.py` | PyWebView desktop entry point. |
+| `app_paths.py`, `config.py` | Documents-based storage and settings migration. |
+| `providers.py` | Provider registry, presets, schema normalization, redaction. |
+| `model_catalog.py` | Unified Model Catalog generation. |
+| `model_rotation.py`, `amr_registry.py` | Adaptive Model Rotation engine and persistence. |
+| `proxy_server.py` | Local OpenAI-compatible proxy server. |
+| `request_logs.py` | Metadata-only proxy request logs, retention, summaries, cost snapshots. |
+| `responses_adapter.py` | Responses <-> Chat conversion and SSE normalization. |
+| `anthropic_adapter.py` | Anthropic Messages adapter foundation. |
+| `domestic_responses.py` | Alibaba Bailian and Volcengine Ark Responses compatibility profiles and guardrails. |
+| `media_proxy.py` | OpenAI-compatible image/video route helpers. |
+| `codex_config.py` | Codex config/auth backup, diff preview, write, restore. |
+| `codex_rollout_usage.py`, `token_stats.py` | Token/cache usage readers. |
+| `currency.py`, `costing.py`, `quota.py` | FX snapshots, local cost estimates, generic quota probes. |
+| `diagnostics.py`, `move_repair.py` | Safe diagnostics and project/thread move repair. |
+
+## Roadmap
+
+| Next area | Direction |
+| --- | --- |
+| Media adapters | Add real Alibaba Bailian and Volcengine Ark image/video adapters after payload, polling, and response formats are verified. |
+| Streaming logs | Record streaming proxy requests only after lifecycle, final usage, and half-closed stream semantics are confirmed. |
+| Cost dashboard | Add UI columns for native/display currency, cache read/write, reasoning, image, video, and provider-reported-vs-estimated costs. |
+| Quota integrations | Layer provider-specific balance/quota endpoints on top of the generic probe scaffold. |
+| Theme system | Add richer theme presets, custom theme editing, and theme import. |
+| Codex approval/sandbox repair | Audit official Codex approval paths and sandbox config handling before implementing fixes. |
+| Packaging | Build and publish a fresh EXE once the proxy/protocol layer reaches a stable milestone. |
 
 ## License
 
