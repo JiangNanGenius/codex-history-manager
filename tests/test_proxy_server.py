@@ -615,8 +615,16 @@ class ProxyIntegrationTest(unittest.TestCase):
 
     @patch("proxy_server._upstream_request")
     def test_chat_completions_streaming(self, mock_upstream):
+        log_path = Path(self.tmpdir.name) / "stream_proxy_requests.jsonl"
+        _set_request_log_config(
+            str(log_path),
+            retention_days=30,
+            max_mb=1,
+            currency_settings={"display_currency": "USD"},
+        )
         sse_data = (
             b'data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"Hello"}}]}\n\n'
+            b'data: {"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":8,"completion_tokens":4,"total_tokens":12}}\n\n'
             b'data: [DONE]\n\n'
         )
         mock_resp = MagicMock()
@@ -636,6 +644,60 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("Content-Type"), "text/event-stream; charset=utf-8")
         self.assertIn(b"data:", body)
+        entries = RequestLogStore(log_path).read_entries(limit=10)["entries"]
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["endpoint"], "chat_completions")
+        self.assertTrue(entry["stream"])
+        self.assertTrue(entry["success"])
+        self.assertEqual(entry["usage"]["input_tokens"], 8)
+        self.assertEqual(entry["usage"]["output_tokens"], 4)
+        log_text = log_path.read_text(encoding="utf-8")
+        self.assertNotIn("Hi", log_text)
+        self.assertNotIn("sk-openai", log_text)
+
+    @patch("proxy_server._upstream_request")
+    def test_responses_streaming_writes_metadata_log(self, mock_upstream):
+        log_path = Path(self.tmpdir.name) / "responses_stream_proxy_requests.jsonl"
+        _set_request_log_config(
+            str(log_path),
+            retention_days=30,
+            max_mb=1,
+            currency_settings={"display_currency": "USD"},
+        )
+        sse_data = (
+            b'data: {"id":"chatcmpl-2","created":1234567890,"model":"gpt-5","choices":[{"delta":{"content":"OK"}}]}\n\n'
+            b'data: {"id":"chatcmpl-2","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":6,"total_tokens":17}}\n\n'
+            b'data: [DONE]\n\n'
+        )
+        mock_resp = MagicMock()
+        mock_resp.read.side_effect = [sse_data, b""]
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "text/event-stream"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/responses",
+            body={"model": "gpt-5", "input": "private response prompt", "stream": True},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Content-Type"), "text/event-stream; charset=utf-8")
+        self.assertIn(b"event: response.completed", body)
+        entries = RequestLogStore(log_path).read_entries(limit=10)["entries"]
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["endpoint"], "responses")
+        self.assertTrue(entry["stream"])
+        self.assertTrue(entry["success"])
+        self.assertEqual(entry["usage"]["input_tokens"], 11)
+        self.assertEqual(entry["usage"]["output_tokens"], 6)
+        log_text = log_path.read_text(encoding="utf-8")
+        self.assertNotIn("private response prompt", log_text)
+        self.assertNotIn("sk-openai", log_text)
 
     @patch("proxy_server._upstream_request")
     def test_image_generation_uses_default_media_provider(self, mock_upstream):

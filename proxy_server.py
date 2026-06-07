@@ -93,8 +93,6 @@ class LocalProxyHTTPServer(HTTPServer):
         super().server_bind()
 
 
-# 全局配置（由 LocalProxyServer 在启动时设置）
-_provider_store_path: Optional[Path] = None
 # Global config set by LocalProxyServer at startup.
 _provider_store_path: Optional[Path] = None
 _amr_store_path: Optional[Path] = None
@@ -688,6 +686,167 @@ def _record_request_log(
         pass
 
 
+class _SseStreamLogState:
+    """Metadata-only SSE stream observer for request logging."""
+
+    def __init__(self, mode: str = "chat"):
+        self.mode = mode
+        self.buffer = b""
+        self.usage: Dict[str, Any] = {}
+        self.completed = False
+        self.failed = False
+        self.error_type = ""
+        self.error_message = ""
+        self.seen_event = False
+
+    def push_bytes(self, data: bytes) -> None:
+        if not data:
+            return
+        self.buffer += data
+        if len(self.buffer) > 1024 * 1024:
+            self.buffer = self.buffer[-4096:]
+        while True:
+            item = self._pop_block()
+            if item is None:
+                break
+            self._handle_block(item)
+
+    def push_text(self, text: str) -> None:
+        if text:
+            self.push_bytes(text.encode("utf-8", errors="replace"))
+
+    def close(self) -> None:
+        if self.buffer.strip():
+            self._handle_block(self.buffer)
+        self.buffer = b""
+
+    def _pop_block(self) -> Optional[bytes]:
+        candidates = []
+        for sep in (b"\n\n", b"\r\n\r\n"):
+            idx = self.buffer.find(sep)
+            if idx != -1:
+                candidates.append((idx, sep))
+        if not candidates:
+            return None
+        idx, sep = min(candidates, key=lambda item: item[0])
+        block = self.buffer[:idx]
+        self.buffer = self.buffer[idx + len(sep):]
+        return block
+
+    def _handle_block(self, block: bytes) -> None:
+        text = block.decode("utf-8", errors="replace")
+        event_name = ""
+        data_parts: List[str] = []
+        for line in text.splitlines():
+            if line.startswith("event:"):
+                event_name = line[6:].strip()
+            elif line.startswith("data:"):
+                data_parts.append(line[5:].strip())
+        if not data_parts:
+            return
+        data_text = "\n".join(data_parts).strip()
+        if not data_text:
+            return
+        self.seen_event = True
+        if data_text == "[DONE]":
+            if self.mode == "chat":
+                self.completed = True
+            return
+        try:
+            payload = json.loads(data_text)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(payload, dict):
+            return
+
+        usage = self._extract_usage(payload)
+        if usage:
+            self.usage = normalize_usage(usage)
+
+        event_type = event_name or str(payload.get("type") or "")
+        if event_type == "response.completed":
+            self.completed = True
+        elif event_type == "response.failed":
+            self.failed = True
+            self._capture_error(payload, default_type="stream_failed")
+        elif "error" in payload:
+            self.failed = True
+            self._capture_error(payload, default_type="upstream_error")
+
+    def _extract_usage(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        usage = payload.get("usage")
+        if isinstance(usage, dict) and usage:
+            return usage
+        response = payload.get("response")
+        if isinstance(response, dict):
+            usage = response.get("usage")
+            if isinstance(usage, dict) and usage:
+                return usage
+        return {}
+
+    def _capture_error(self, payload: Dict[str, Any], default_type: str) -> None:
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            response = payload.get("response")
+            if isinstance(response, dict) and isinstance(response.get("error"), dict):
+                error = response["error"]
+        if isinstance(error, dict):
+            self.error_type = str(error.get("type") or default_type)
+            self.error_message = str(error.get("message") or self.error_type)
+        else:
+            self.error_type = default_type
+            self.error_message = str(error or default_type)
+
+
+def _record_stream_request_log(
+    context: Optional[Dict[str, Any]],
+    state: _SseStreamLogState,
+    client_disconnected: bool = False,
+    stream_error_type: str = "",
+    stream_error_message: str = "",
+) -> None:
+    if not context:
+        return
+    state.close()
+    if stream_error_type:
+        _record_request_log(
+            context,
+            200,
+            usage=state.usage,
+            error_type=stream_error_type,
+            error_message=stream_error_message,
+        )
+        return
+    if state.failed:
+        _record_request_log(
+            context,
+            200,
+            usage=state.usage,
+            error_type=state.error_type or "stream_failed",
+            error_message=state.error_message or "Streaming response failed.",
+        )
+        return
+    if state.completed:
+        _record_request_log(context, 200, usage=state.usage)
+        return
+    if client_disconnected:
+        _record_request_log(
+            context,
+            499,
+            usage=state.usage,
+            error_type="client_disconnected",
+            error_message="Client disconnected before streaming response completed.",
+        )
+        return
+    _record_request_log(
+        context,
+        200,
+        usage=state.usage,
+        error_type="stream_incomplete",
+        error_message="Streaming response ended before a terminal event.",
+    )
+
+
 def _media_usage_hint(body: bytes, content_type: str, media_kind: str) -> Dict[str, Any]:
     if "json" not in str(content_type or "").lower() or not body:
         return {}
@@ -931,7 +1090,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if is_stream:
-            self._forward_stream(upstream_resp)
+            self._forward_stream(upstream_resp, log_context=log_context, log_mode="chat")
         else:
             self._forward_non_streaming(upstream_resp, log_context=log_context)
 
@@ -1141,7 +1300,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if is_stream:
-            self._forward_responses_stream(upstream_resp, request_json)
+            self._forward_responses_stream(upstream_resp, request_json, log_context=log_context)
         else:
             self._forward_responses_non_streaming(upstream_resp, request_json, log_context=log_context)
 
@@ -1203,7 +1362,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if is_stream:
-            self._forward_stream(upstream_resp)
+            self._forward_stream(upstream_resp, log_context=log_context, log_mode="responses")
         else:
             self._forward_non_streaming(upstream_resp, log_context=log_context)
 
@@ -1262,7 +1421,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         if is_stream:
-            self._forward_anthropic_responses_stream(upstream_resp, request_json)
+            self._forward_anthropic_responses_stream(upstream_resp, request_json, log_context=log_context)
         else:
             self._forward_anthropic_responses_non_streaming(upstream_resp, request_json, log_context=log_context)
 
@@ -1292,7 +1451,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(resp_body)
 
-    def _forward_stream(self, upstream_resp: urllib.request.addinfourl) -> None:
+    def _forward_stream(
+        self,
+        upstream_resp: urllib.request.addinfourl,
+        log_context: Optional[Dict[str, Any]] = None,
+        log_mode: str = "chat",
+    ) -> None:
         """
         流式转发上游 SSE 响应（Chat Completions 格式）。
 
@@ -1312,20 +1476,40 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.end_headers()
 
+        log_state = _SseStreamLogState(log_mode)
+        client_disconnected = False
+        stream_error_type = ""
+        stream_error_message = ""
+
         try:
             while True:
-                chunk = upstream_resp.read(4096)
+                try:
+                    chunk = upstream_resp.read(4096)
+                except (socket.timeout, OSError) as e:
+                    stream_error_type = "upstream_stream_error"
+                    stream_error_message = str(e)
+                    break
                 if not chunk:
                     break
+                log_state.push_bytes(chunk)
                 self.wfile.write(chunk)
                 # 每写完一个 chunk 尝试 flush，减少客户端感知延迟
                 try:
                     self.wfile.flush()
-                except Exception:
+                except (ConnectionResetError, BrokenPipeError, OSError):
+                    client_disconnected = True
                     break
-        except (ConnectionResetError, BrokenPipeError, OSError):
-            pass
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            client_disconnected = True
+            stream_error_message = str(e)
         finally:
+            _record_stream_request_log(
+                log_context,
+                log_state,
+                client_disconnected=client_disconnected,
+                stream_error_type=stream_error_type,
+                stream_error_message=stream_error_message,
+            )
             try:
                 upstream_resp.close()
             except Exception:
@@ -1363,6 +1547,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self,
         upstream_resp: urllib.request.addinfourl,
         original_request: Dict[str, Any],
+        log_context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Convert Anthropic Messages SSE into Responses SSE."""
         self.send_response(200)
@@ -1372,10 +1557,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         converter = AnthropicSseToResponsesConverter(original_request)
+        log_state = _SseStreamLogState("responses")
+        client_disconnected = False
+        stream_error_type = ""
+        stream_error_message = ""
 
         try:
             while True:
-                chunk = upstream_resp.read(4096)
+                try:
+                    chunk = upstream_resp.read(4096)
+                except (socket.timeout, OSError) as e:
+                    stream_error_type = "upstream_stream_error"
+                    stream_error_message = str(e)
+                    break
                 if not chunk:
                     break
                 event_text = converter.push_bytes(chunk)
@@ -1383,7 +1577,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     try:
                         self.wfile.write(event_text.encode("utf-8"))
                         self.wfile.flush()
+                        log_state.push_text(event_text)
                     except (ConnectionResetError, BrokenPipeError, OSError):
+                        client_disconnected = True
                         return
 
             terminal = converter.finish()
@@ -1391,14 +1587,29 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 try:
                     self.wfile.write(terminal.encode("utf-8"))
                     self.wfile.flush()
+                    log_state.push_text(terminal)
                 except (ConnectionResetError, BrokenPipeError, OSError):
+                    client_disconnected = True
                     pass
-        except Exception:
+        except Exception as e:
+            stream_error_type = "proxy_stream_error"
+            stream_error_message = str(e)
             try:
-                self.wfile.write(converter.fail("Anthropic stream processing error", "proxy_error").encode("utf-8"))
+                failed_event = converter.fail("Anthropic stream processing error", "proxy_error")
+                self.wfile.write(failed_event.encode("utf-8"))
+                log_state.push_text(failed_event)
+                stream_error_type = ""
+                stream_error_message = ""
             except Exception:
                 pass
         finally:
+            _record_stream_request_log(
+                log_context,
+                log_state,
+                client_disconnected=client_disconnected,
+                stream_error_type=stream_error_type,
+                stream_error_message=stream_error_message,
+            )
             try:
                 upstream_resp.close()
             except Exception:
@@ -1443,6 +1654,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self,
         upstream_resp: urllib.request.addinfourl,
         original_request: Dict[str, Any],
+        log_context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         流式 Responses：将 Chat Completions SSE 转换为 Responses SSE。
@@ -1468,11 +1680,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         converter = ChatSseToResponsesConverter(original_request)
+        log_state = _SseStreamLogState("responses")
+        client_disconnected = False
+        stream_error_type = ""
+        stream_error_message = ""
 
         try:
             buffer = b""
             while True:
-                chunk = upstream_resp.read(4096)
+                try:
+                    chunk = upstream_resp.read(4096)
+                except (socket.timeout, OSError) as e:
+                    stream_error_type = "upstream_stream_error"
+                    stream_error_message = str(e)
+                    break
                 if not chunk:
                     break
                 buffer += chunk
@@ -1484,7 +1705,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         try:
                             self.wfile.write(event_text.encode("utf-8"))
                             self.wfile.flush()
+                            log_state.push_text(event_text)
                         except (ConnectionResetError, BrokenPipeError, OSError):
+                            client_disconnected = True
                             return
 
             # 处理剩余数据
@@ -1494,7 +1717,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     try:
                         self.wfile.write(event_text.encode("utf-8"))
                         self.wfile.flush()
+                        log_state.push_text(event_text)
                     except (ConnectionResetError, BrokenPipeError, OSError):
+                        client_disconnected = True
                         return
 
             # 发送 terminal event
@@ -1503,19 +1728,33 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 try:
                     self.wfile.write(terminal.encode("utf-8"))
                     self.wfile.flush()
+                    log_state.push_text(terminal)
                 except (ConnectionResetError, BrokenPipeError, OSError):
+                    client_disconnected = True
                     pass
-        except Exception:
+        except Exception as e:
+            stream_error_type = "proxy_stream_error"
+            stream_error_message = str(e)
             # 任何未预料异常都发送 response.failed 并结束
             try:
-                failed_event = converter.finish() or (
+                failed_event = converter.fail("Stream processing error", "proxy_error") or (
                     "event: response.failed\n"
                     'data: {"error":{"type":"proxy_error","message":"Stream processing error"}}\n\n'
                 )
                 self.wfile.write(failed_event.encode("utf-8"))
+                log_state.push_text(failed_event)
+                stream_error_type = ""
+                stream_error_message = ""
             except Exception:
                 pass
         finally:
+            _record_stream_request_log(
+                log_context,
+                log_state,
+                client_disconnected=client_disconnected,
+                stream_error_type=stream_error_type,
+                stream_error_message=stream_error_message,
+            )
             try:
                 upstream_resp.close()
             except Exception:

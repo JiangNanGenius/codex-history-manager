@@ -145,7 +145,8 @@ Codex Enhance Manager 把“模型可见性”和“路由”分开处理。
 
 ## 本地代理日志
 
-本地代理把非流式请求元数据写到 `logs/proxy_requests.jsonl`。
+本地代理把非流式和流式请求元数据写到 `logs/proxy_requests.jsonl`。
+流式日志会根据 terminal SSE event 和 usage trailer 结束记录。
 
 会记录：
 

@@ -145,7 +145,8 @@ always-visible models
 
 ## Local Proxy Logging
 
-The local proxy writes non-streaming request metadata into `logs/proxy_requests.jsonl`.
+The local proxy writes non-streaming and streaming request metadata into `logs/proxy_requests.jsonl`.
+Streaming logs are finalized from terminal SSE events and usage trailers when present.
 
 Recorded:
 
