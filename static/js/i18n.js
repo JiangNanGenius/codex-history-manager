@@ -53,6 +53,7 @@ const translations = {
     navSessions: '会话浏览',
     navSync: '账户同步',
     navBackup: '备份管理',
+    navDiagnostics: '诊断恢复',
     navSettings: '设置',
 
     // 统计面板
@@ -338,10 +339,12 @@ const translations = {
     navOverview: 'Overview',
     navQuickSetup: 'Quick Setup',
     navProviders: 'Providers',
+    navCodexIntegration: 'Codex Integration',
     navStats: 'Statistics',
     navSessions: 'Sessions',
     navSync: 'Sync',
     navBackup: 'Backup',
+    navDiagnostics: 'Diagnostics',
     navSettings: 'Settings',
 
     // Stats

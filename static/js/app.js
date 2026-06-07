@@ -93,6 +93,7 @@ function navigateTo(page) {
         case 'sessions': loadSessions(); break;
         case 'sync': loadSyncStatus(); break;
         case 'backup': loadBackups(); break;
+        case 'diagnostics': loadDiagnosticsPage(); break;
         case 'settings': loadSettings(); break;
     }
 }
