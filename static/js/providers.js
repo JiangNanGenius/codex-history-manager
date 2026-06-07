@@ -31,6 +31,13 @@ let providerState = {
     presets: [],
     selectedProviderId: '',
     catalogPreview: null,
+    catalogFilters: {
+        provider: '',
+        capability: '',
+        minContext: '',
+        maxInputPrice: '',
+        currency: '',
+    },
     draftError: '',
     proxyStatus: null,
     responsesProbePreview: null,
@@ -579,6 +586,7 @@ function renderCatalogPreviewPanel() {
      */
     const preview = providerState.catalogPreview || { entries: [], route_explanation: [] };
     const entries = preview.entries || [];
+    const filteredEntries = getFilteredCatalogEntries(entries);
     return `
         <div class="card">
             <div class="flex items-center justify-between gap-3">
@@ -586,8 +594,9 @@ function renderCatalogPreviewPanel() {
                 <button onclick="previewWithSelectedFocus()" class="btn btn-secondary text-xs">Focus Selected</button>
             </div>
             <div class="text-xs text-dark-500 mt-1">Preview only. No Codex model catalog file is written.</div>
+            ${renderCatalogFilters(entries, filteredEntries)}
             <div class="space-y-2 mt-3 max-h-[360px] overflow-y-auto">
-                ${entries.map(renderCatalogEntry).join('') || renderEmptyState('No catalog entries visible.')}
+                ${filteredEntries.map(renderCatalogEntry).join('') || renderEmptyState('No catalog entries match the filters.')}
             </div>
             <div class="mt-3">
                 <div class="text-xs text-dark-400 mb-1">Route explanation</div>
@@ -598,8 +607,145 @@ function renderCatalogPreviewPanel() {
 }
 
 /**
- * UMC Catalog 条目。hover 时 translateY(-2px) scale(1.01)，
- * 在密集列表中制造轻微“浮起”以便用户聚焦当前行。
+ * Render UMC preview filters. Filters affect only the local preview panel.
+ */
+function renderCatalogFilters(entries, filteredEntries) {
+    const filters = getCatalogFilters();
+    const providerOptions = uniqueCatalogOptions(entries, entry => entry.provider_id, entry => {
+        const alias = entry.provider_alias || entry.provider_id || '';
+        const name = entry.provider_display_name || entry.provider_id || alias;
+        return alias && name && alias !== name ? `${alias} / ${name}` : (name || alias);
+    });
+    const currencyOptions = uniqueCatalogOptions(entries, entry => entry.native_currency, entry => entry.native_currency);
+    const capabilityOptions = ['text', 'vision', 'tools', 'reasoning', 'images', 'videos']
+        .filter(capability => entries.some(entry => catalogHasCapability(entry, capability)))
+        .map(capability => ({ value: capability, label: capability }));
+    const countLabel = `${filteredEntries.length}/${entries.length} visible`;
+
+    return `
+        <div class="mt-3 rounded-lg border border-dark-700/70 bg-dark-950/40 p-3">
+            <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-medium text-dark-300">Filters</span>
+                <span class="text-xs text-dark-500">${escapeHtml(countLabel)}</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                <select class="input text-xs py-2" onchange="updateCatalogFilter('provider', this.value)">
+                    <option value="">All providers</option>
+                    ${providerOptions.map(option => `<option value="${escapeAttr(option.value)}" ${filters.provider === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
+                </select>
+                <select class="input text-xs py-2" onchange="updateCatalogFilter('capability', this.value)">
+                    <option value="">Any capability</option>
+                    ${capabilityOptions.map(option => `<option value="${escapeAttr(option.value)}" ${filters.capability === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
+                </select>
+                <input class="input text-xs py-2" type="number" min="0" step="1000" value="${escapeAttr(filters.minContext)}"
+                    onchange="updateCatalogFilter('minContext', this.value)" placeholder="Min context">
+                <input class="input text-xs py-2" type="number" min="0" step="0.0001" value="${escapeAttr(filters.maxInputPrice)}"
+                    onchange="updateCatalogFilter('maxInputPrice', this.value)" placeholder="Max input / 1M">
+                <select class="input text-xs py-2" onchange="updateCatalogFilter('currency', this.value)">
+                    <option value="">Any currency</option>
+                    ${currencyOptions.map(option => `<option value="${escapeAttr(option.value)}" ${filters.currency === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
+                </select>
+                <button onclick="resetCatalogFilters()" class="btn btn-secondary text-xs">Reset Filters</button>
+            </div>
+        </div>
+    `;
+}
+
+function getCatalogFilters() {
+    return {
+        provider: '',
+        capability: '',
+        minContext: '',
+        maxInputPrice: '',
+        currency: '',
+        ...(providerState.catalogFilters || {}),
+    };
+}
+
+function getFilteredCatalogEntries(entries) {
+    const filters = getCatalogFilters();
+    const minContext = parseCatalogNumber(filters.minContext);
+    const maxInputPrice = parseCatalogNumber(filters.maxInputPrice);
+    const currency = String(filters.currency || '').trim().toUpperCase();
+    return (entries || []).filter(entry => {
+        if (filters.provider && entry.provider_id !== filters.provider) return false;
+        if (filters.capability && !catalogHasCapability(entry, filters.capability)) return false;
+        if (minContext !== null && Number(entry.context_window || 0) < minContext) return false;
+        if (currency && String(entry.native_currency || '').toUpperCase() !== currency) return false;
+        if (maxInputPrice !== null) {
+            const inputPrice = catalogInputPrice(entry);
+            if (inputPrice === null || inputPrice > maxInputPrice) return false;
+        }
+        return true;
+    });
+}
+
+function updateCatalogFilter(key, value) {
+    providerState.catalogFilters = {
+        ...getCatalogFilters(),
+        [key]: value,
+    };
+    renderProvidersPage();
+}
+
+function resetCatalogFilters() {
+    providerState.catalogFilters = {
+        provider: '',
+        capability: '',
+        minContext: '',
+        maxInputPrice: '',
+        currency: '',
+    };
+    renderProvidersPage();
+}
+
+function uniqueCatalogOptions(entries, valueFn, labelFn) {
+    const seen = new Set();
+    return (entries || []).reduce((options, entry) => {
+        const value = String(valueFn(entry) || '').trim();
+        if (!value || seen.has(value)) return options;
+        seen.add(value);
+        options.push({ value, label: String(labelFn(entry) || value) });
+        return options;
+    }, []);
+}
+
+function catalogHasCapability(entry, capability) {
+    const capabilities = entry && entry.capabilities ? entry.capabilities : {};
+    return Boolean(capabilities[capability]);
+}
+
+function catalogInputPrice(entry) {
+    const pricing = entry && entry.pricing && typeof entry.pricing === 'object' ? entry.pricing : {};
+    const aliases = [
+        'input_per_million',
+        'input_tokens_per_million',
+        'prompt_per_million',
+        'input_per_1m',
+        'input_price_per_million',
+        'prompt',
+        'input',
+    ];
+    for (const key of aliases) {
+        const value = parseCatalogNumber(pricing[key]);
+        if (value !== null) return value;
+    }
+    return null;
+}
+
+function parseCatalogNumber(value) {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number(String(value).replace(/,/g, '').trim());
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatCatalogPrice(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
+    return Number(value).toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
+
+/**
+ * Render one UMC catalog entry with model metadata badges.
  */
 function renderCatalogEntry(entry) {
     /**
@@ -607,19 +753,27 @@ function renderCatalogEntry(entry) {
      * hover 时 translateY(-2px) scale(1.01)，在密集列表中制造轻微“浮起”
      * 以便用户聚焦当前行。
      */
+    const inputPrice = catalogInputPrice(entry);
+    const providerLabel = entry.provider_display_name || entry.provider_id || 'provider';
+    const badges = [
+        renderMiniBadge(entry.provider_alias || entry.provider_id),
+        entry.focused ? renderMiniBadge('focused') : '',
+        entry.catalog_visibility ? renderMiniBadge(entry.catalog_visibility) : '',
+        entry.api_format ? renderMiniBadge(entry.api_format) : '',
+        entry.responses_profile && entry.responses_profile.domestic_responses ? renderMiniBadge('domestic responses') : '',
+        entry.context_window ? renderMiniBadge(formatNumber(entry.context_window, { compact: false }) + ' ctx') : '',
+        inputPrice !== null ? renderMiniBadge('input ' + formatCatalogPrice(inputPrice) + '/1M') : '',
+        ...capabilityBadges(entry.capabilities),
+    ].filter(Boolean).join('');
     return `
         <div class="catalog-entry stagger-item">
             <div class="flex items-center justify-between gap-2">
                 <div class="font-mono text-sm text-white truncate">${escapeHtml(entry.codex_model_id)}</div>
                 <span class="badge">${escapeHtml(entry.native_currency || '-')}</span>
             </div>
-            <div class="text-xs text-dark-400 truncate">${escapeHtml(entry.provider_display_name)} -> ${escapeHtml(entry.upstream_model_id)}</div>
+            <div class="text-xs text-dark-400 truncate">${escapeHtml(providerLabel)} -> ${escapeHtml(entry.upstream_model_id)}</div>
             <div class="flex flex-wrap gap-1 mt-2">
-                ${renderMiniBadge(entry.provider_alias)}
-                ${entry.api_format === 'anthropic' ? renderMiniBadge('anthropic') : ''}
-                ${entry.responses_profile && entry.responses_profile.domestic_responses ? renderMiniBadge('domestic responses') : ''}
-                ${entry.context_window ? renderMiniBadge(formatNumber(entry.context_window, { compact: false }) + ' ctx') : ''}
-                ${capabilityBadges(entry.capabilities).join('')}
+                ${badges}
             </div>
         </div>
     `;

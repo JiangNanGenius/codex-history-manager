@@ -155,6 +155,11 @@ class UnifiedModelCatalog:
     def _make_entry(provider: Dict[str, Any], model: Dict[str, Any], is_focused: bool = False) -> Dict[str, Any]:
         alias = provider.get("short_alias") or provider.get("id")
         upstream_model_id = model.get("id") or "default"
+        pricing: Dict[str, Any] = {}
+        if isinstance(provider.get("pricing"), dict):
+            pricing.update(copy.deepcopy(provider["pricing"]))
+        if isinstance(model.get("pricing"), dict):
+            pricing.update(copy.deepcopy(model["pricing"]))
         return {
             "codex_model_id": f"{alias}/{upstream_model_id}",
             "display_name": model.get("display_name") or upstream_model_id,
@@ -166,7 +171,9 @@ class UnifiedModelCatalog:
             "responses_profile": provider.get("responses_profile", {}),
             "context_window": model.get("context_window", 0),
             "capabilities": model.get("capabilities") or provider.get("capabilities", {}),
-            "native_currency": model.get("native_currency") or provider.get("native_currency"),
+            "native_currency": model.get("native_currency") or provider.get("native_currency") or pricing.get("native_currency"),
+            "pricing": pricing,
+            "has_model_pricing": bool(isinstance(model.get("pricing"), dict) and model.get("pricing")),
             "catalog_visibility": provider.get("catalog_visibility"),
             "focused": is_focused,
         }

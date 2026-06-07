@@ -203,6 +203,32 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry["capabilities"], {"text": True, "vision": True})
 
+    def test_entry_pricing_merges_model_over_provider(self):
+        providers = [
+            {
+                "id": "p1",
+                "short_alias": "qwen",
+                "enabled": True,
+                "catalog_visibility": "always_visible",
+                "native_currency": "CNY",
+                "pricing": {"input_per_million": 1.0, "output_per_million": 2.0},
+                "models": [
+                    {
+                        "id": "qwen3",
+                        "enabled": True,
+                        "native_currency": "USD",
+                        "pricing": {"input_per_million": 0.5},
+                    }
+                ],
+            }
+        ]
+        entry = UnifiedModelCatalog(providers).find_entry("qwen/qwen3")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["native_currency"], "USD")
+        self.assertEqual(entry["pricing"]["input_per_million"], 0.5)
+        self.assertEqual(entry["pricing"]["output_per_million"], 2.0)
+        self.assertTrue(entry["has_model_pricing"])
+
 
 if __name__ == "__main__":
     unittest.main()
