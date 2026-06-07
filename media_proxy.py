@@ -17,6 +17,7 @@ from approval_broker import (
     normalize_approval_action,
     parse_approval_decision,
 )
+from media_adapters import build_media_adapter_preview, summarize_media_adapter_preview
 from providers import normalize_approval_profile
 
 
@@ -183,13 +184,12 @@ def media_forwarding_status(provider: Dict[str, Any], media_kind: str) -> Dict[s
     """Return whether a media request can be forwarded without an adapter."""
     media_profile = provider.get("media_profile") if isinstance(provider.get("media_profile"), dict) else {}
     if media_profile.get("adapter_required") and not media_profile.get("openai_compatible_media"):
+        preview = build_media_adapter_preview(provider, media_kind)
         return {
             "can_forward": False,
             "error_type": "media_adapter_required",
-            "message": (
-                f"Provider '{provider.get('id')}' is configured as adapter-required for "
-                f"{media_kind} media. Vendor media payload conversion is not implemented yet."
-            ),
+            "message": summarize_media_adapter_preview(preview),
+            "adapter_preview": preview,
         }
     if not provider_supports_media(provider, media_kind):
         return {

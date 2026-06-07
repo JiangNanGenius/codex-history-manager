@@ -1030,7 +1030,8 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(status, 400)
         response_json = json.loads(body.decode())
         self.assertEqual(response_json["error"]["type"], "media_adapter_required")
-        self.assertIn("Vendor media payload conversion is not implemented yet", response_json["error"]["message"])
+        self.assertIn("volcengine_ark", response_json["error"]["message"])
+        self.assertIn("/contents/generations/tasks", response_json["error"]["message"])
 
     def test_models_list(self):
         handler, raw = self._make_handler("/v1/models", method="GET")

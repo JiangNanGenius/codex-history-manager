@@ -36,6 +36,9 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertIn("qwen-api-via-openai-responses", profile["verified_docs_url"])
             self.assertIn("input_image", profile["allowed_input_content_types"])
             self.assertIn("response.output_text.delta", profile["verified_event_types"])
+            self.assertTrue(provider["media_profile"]["adapter_required"])
+            self.assertFalse(provider["media_profile"]["openai_compatible_media"])
+            self.assertEqual(provider["media_profile"]["adapter"], "alibaba_bailian")
 
     def test_volcengine_responses_preset_is_adapter_required(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -104,6 +104,8 @@ class MediaProxyHelperTest(unittest.TestCase):
 
         self.assertFalse(status["can_forward"])
         self.assertEqual(status["error_type"], "media_adapter_required")
+        self.assertEqual(status["adapter_preview"]["adapter_id"], "volcengine_ark")
+        self.assertIn("/contents/generations/tasks", status["message"])
 
     def test_media_operation_detects_submit_poll_cancel(self):
         self.assertEqual(media_operation_for_request("POST", "/v1/images/generations"), "submit")

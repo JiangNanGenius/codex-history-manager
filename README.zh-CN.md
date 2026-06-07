@@ -195,6 +195,7 @@ Codex 会按 `model_provider` 过滤会话列表。在官方 OpenAI 登录态和
 | `anthropic_adapter.py` | Anthropic Messages adapter foundation。 |
 | `domestic_responses.py` | 阿里百炼/火山方舟 Responses profile 与 guardrails。 |
 | `media_proxy.py` | OpenAI-compatible image/video 路由 helper，以及 metadata-only 媒体 Auto Approval hook。 |
+| `media_adapters.py` | 对 adapter-required 媒体供应商提供基于官方资料的 dry-run preview 与 guard。 |
 | `codex_config.py` | Codex config/auth 备份、diff preview、写入和恢复。 |
 | `codex_permissions.py` | 基于官方源码复核的 Codex 审批/沙箱配置审计和 diff preview。 |
 | `codex_rollout_usage.py`, `token_stats.py` | Token/cache usage reader。 |

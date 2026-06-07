@@ -195,6 +195,7 @@ After sync, sessions remain visible across account/provider switches.
 | `anthropic_adapter.py` | Anthropic Messages adapter foundation. |
 | `domestic_responses.py` | Alibaba Bailian and Volcengine Ark Responses profiles and guardrails. |
 | `media_proxy.py` | OpenAI-compatible image/video route helpers plus metadata-only media Auto Approval hooks. |
+| `media_adapters.py` | Source-backed dry-run previews and guards for adapter-required media providers. |
 | `codex_config.py` | Codex config/auth backup, diff preview, write, and restore. |
 | `codex_permissions.py` | Source-verified Codex approval/sandbox config audit and diff preview. |
 | `codex_rollout_usage.py`, `token_stats.py` | Token/cache usage readers. |

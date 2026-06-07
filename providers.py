@@ -1466,8 +1466,9 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "media_profile": {
                 "default_image_provider": True,
                 "default_video_provider": True,
-                "openai_compatible_media": True,
-                "adapter_required": False,
+                "openai_compatible_media": False,
+                "adapter_required": True,
+                "adapter": "alibaba_bailian",
                 "async_submit": True,
                 "poll_required": True,
             },
