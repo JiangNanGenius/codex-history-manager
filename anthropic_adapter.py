@@ -23,6 +23,11 @@ from typing import Any, Dict, List, Optional
 
 DEFAULT_MAX_TOKENS = 4096
 SUPPORTED_IMAGE_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+OPENAI_WEB_SEARCH_TOOL_TYPES = {
+    "web_search",
+    "web_search_preview",
+    "web_search_preview_2025_03_11",
+}
 
 
 class AnthropicConversionError(ValueError):
@@ -102,13 +107,20 @@ def anthropic_message_to_response(
     created_at = int(time.time())
     output: List[Dict[str, Any]] = []
     text_parts: List[str] = []
+    annotations: List[Dict[str, Any]] = []
 
     for block in body.get("content") or []:
         if not isinstance(block, dict):
             continue
         block_type = block.get("type")
         if block_type == "text":
-            text_parts.append(str(block.get("text", "")))
+            text = str(block.get("text", ""))
+            annotations.extend(_anthropic_citations_to_response_annotations(
+                block.get("citations"),
+                offset=sum(len(part) for part in text_parts),
+                text_length=len(text),
+            ))
+            text_parts.append(text)
         elif block_type == "thinking":
             thinking_text = str(block.get("thinking", ""))
             if thinking_text:
@@ -121,6 +133,11 @@ def anthropic_message_to_response(
                 })
         elif block_type == "tool_use":
             output.append(_tool_use_block_to_response_item(block))
+        elif block_type == "server_tool_use":
+            output.append(_server_tool_use_block_to_response_item(block))
+        elif block_type == "web_search_tool_result":
+            _apply_web_search_result_to_output(output, block)
+            continue
 
     if text_parts or not output:
         output.insert(0, {
@@ -128,7 +145,7 @@ def anthropic_message_to_response(
             "type": "message",
             "status": "completed",
             "role": "assistant",
-            "content": [{"type": "output_text", "text": "".join(text_parts), "annotations": []}],
+            "content": [{"type": "output_text", "text": "".join(text_parts), "annotations": annotations}],
         })
 
     status = "completed"
@@ -325,6 +342,50 @@ class AnthropicSseToResponsesConverter:
                     "arguments": state["arguments"],
                 },
             }))
+        elif block_type == "server_tool_use":
+            if str(block.get("name") or "") != "web_search":
+                self.failed = True
+                return "".join(parts) + self._failed(
+                    f"Unsupported Anthropic server tool block: {block.get('name')}",
+                    "unsupported_server_tool",
+                )
+            item_id = str(block.get("id") or f"ws_{index}")
+            state = {
+                "type": "web_search",
+                "item_id": item_id,
+                "output_index": output_index,
+                "arguments": _json_string(block.get("input") if isinstance(block.get("input"), dict) else {}),
+                "done": False,
+            }
+            if state["arguments"] == "{}":
+                state["arguments"] = ""
+            self.blocks[index] = state
+            parts.append(self._sse_event("response.output_item.added", {
+                "type": "response.output_item.added",
+                "output_index": output_index,
+                "item": _web_search_call_item(item_id=item_id, arguments=state["arguments"], status="in_progress"),
+            }))
+            parts.append(self._sse_event("response.web_search_call.in_progress", {
+                "type": "response.web_search_call.in_progress",
+                "item_id": item_id,
+                "output_index": output_index,
+            }))
+            parts.append(self._sse_event("response.web_search_call.searching", {
+                "type": "response.web_search_call.searching",
+                "item_id": item_id,
+                "output_index": output_index,
+            }))
+        elif block_type == "web_search_tool_result":
+            tool_use_id = str(block.get("tool_use_id") or "")
+            state = self._find_web_search_state(tool_use_id)
+            if state and not state.get("done"):
+                parts.append(self._complete_web_search_state(state, block))
+            self.blocks[index] = {
+                "type": "web_search_tool_result",
+                "item_id": tool_use_id,
+                "output_index": output_index,
+                "done": True,
+            }
         elif block_type == "thinking":
             item_id = f"rs_{self.response_id}_{index}"
             state = {
@@ -366,9 +427,11 @@ class AnthropicSseToResponsesConverter:
                 "content_index": 0,
                 "delta": text,
             })
-        if delta_type == "input_json_delta" and state.get("type") == "tool_use":
+        if delta_type == "input_json_delta" and state.get("type") in ("tool_use", "web_search"):
             partial = str(delta.get("partial_json", ""))
             state["arguments"] += partial
+            if state.get("type") == "web_search":
+                return ""
             return self._sse_event("response.function_call_arguments.delta", {
                 "type": "response.function_call_arguments.delta",
                 "item_id": state["item_id"],
@@ -446,6 +509,12 @@ class AnthropicSseToResponsesConverter:
                     "item": item,
                 })
             )
+        if state.get("type") == "web_search":
+            # Anthropic sends a web_search_tool_result block after the
+            # server_tool_use block. Completion is emitted when that result
+            # arrives, or at stream end as a fallback.
+            state["done"] = False
+            return ""
         if state.get("type") == "thinking":
             item = {
                 "id": state["item_id"],
@@ -499,6 +568,7 @@ class AnthropicSseToResponsesConverter:
         if self.completed:
             return ""
         self.completed = True
+        pending_tool_events = self._complete_pending_web_search_calls()
         status = "completed"
         response = self._base_response(status)
         if self.stop_reason == "max_tokens":
@@ -507,11 +577,54 @@ class AnthropicSseToResponsesConverter:
         if self.usage:
             response["usage"] = self.usage
         return (
+            pending_tool_events
+            +
             self._sse_event("response.completed", {
                 "type": "response.completed",
                 "response": response,
             })
             + "data: [DONE]\n\n"
+        )
+
+    def _find_web_search_state(self, item_id: str) -> Optional[Dict[str, Any]]:
+        for state in self.blocks.values():
+            if state.get("type") == "web_search" and state.get("item_id") == item_id:
+                return state
+        return None
+
+    def _complete_pending_web_search_calls(self) -> str:
+        parts: List[str] = []
+        for state in list(self.blocks.values()):
+            if state.get("type") == "web_search" and not state.get("done"):
+                parts.append(self._complete_web_search_state(state))
+        return "".join(parts)
+
+    def _complete_web_search_state(
+        self,
+        state: Dict[str, Any],
+        result_block: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        state["done"] = True
+        status = "failed" if _web_search_result_is_error(result_block) else "completed"
+        item = _web_search_call_item(
+            item_id=state["item_id"],
+            arguments=state.get("arguments", ""),
+            status=status,
+            result_block=result_block,
+        )
+        self.output_items.append(item)
+        return (
+            self._sse_event("response.web_search_call.completed", {
+                "type": "response.web_search_call.completed",
+                "item_id": state["item_id"],
+                "output_index": state["output_index"],
+            })
+            + self._sse_event("response.output_item.done", {
+                "type": "response.output_item.done",
+                "item_id": state["item_id"],
+                "output_index": state["output_index"],
+                "item": item,
+            })
         )
 
     def _failed(self, message: str, error_type: Optional[str] = None) -> str:
@@ -674,13 +787,17 @@ def _responses_tools_to_anthropic_tools(tools: Any) -> List[Dict[str, Any]]:
                     copy_sub = dict(sub)
                     copy_sub["name"] = f"{namespace}.{sub.get('name', '')}" if namespace else sub.get("name", "")
                     result.append(_function_tool_to_anthropic(copy_sub))
-        elif tool_type in ("custom", "web_search", "built_in"):
-            name = str(tool.get("name") or tool_type)
-            result.append({
-                "name": name,
-                "description": str(tool.get("description", "")),
-                "input_schema": {"type": "object", "properties": {}, "required": []},
-            })
+        elif _is_responses_web_search_tool(tool):
+            result.append(_web_search_tool_to_anthropic(tool))
+        elif tool_type in ("custom", "built_in", "web_search_preview"):
+            raise AnthropicConversionError(
+                f"unsupported Responses tool for Anthropic adapter: {tool_type}. "
+                "Only function tools, namespace function tools, and verified web_search are supported."
+            )
+        elif tool_type:
+            raise AnthropicConversionError(
+                f"unsupported Responses tool for Anthropic adapter: {tool_type}"
+            )
     return result
 
 
@@ -717,9 +834,86 @@ def _responses_tool_choice_to_anthropic(tool_choice: Any, parallel_tool_calls: A
         return {"type": "none", "disable_parallel_tool_use": disable_parallel}
     if choice_type == "required":
         return {"type": "any", "disable_parallel_tool_use": disable_parallel}
+    if _is_web_search_tool_choice(choice_type, name):
+        return {"type": "tool", "name": "web_search", "disable_parallel_tool_use": disable_parallel}
     if choice_type in ("function", "custom", "tool") and name:
         return {"type": "tool", "name": name, "disable_parallel_tool_use": disable_parallel}
     return None
+
+
+def _is_responses_web_search_tool(tool: Dict[str, Any]) -> bool:
+    tool_type = str(tool.get("type") or "")
+    name = str(tool.get("name") or "")
+    if tool_type in OPENAI_WEB_SEARCH_TOOL_TYPES:
+        return True
+    return tool_type == "built_in" and name in OPENAI_WEB_SEARCH_TOOL_TYPES.union({"web_search"})
+
+
+def _is_web_search_tool_choice(choice_type: str, name: str) -> bool:
+    if choice_type in OPENAI_WEB_SEARCH_TOOL_TYPES:
+        return True
+    return choice_type in ("built_in", "tool") and name in OPENAI_WEB_SEARCH_TOOL_TYPES.union({"web_search"})
+
+
+def _web_search_tool_to_anthropic(tool: Dict[str, Any]) -> Dict[str, Any]:
+    if tool.get("external_web_access") is False:
+        raise AnthropicConversionError(
+            "OpenAI web_search external_web_access=false cannot be represented by Anthropic web_search_20250305"
+        )
+    unsupported_keys = [
+        key for key in ("return_token_budget", "search_context_size")
+        if key in tool and tool.get(key) not in (None, "", False)
+    ]
+    if unsupported_keys:
+        raise AnthropicConversionError(
+            "unsupported OpenAI web_search fields for Anthropic adapter: "
+            + ", ".join(sorted(unsupported_keys))
+        )
+
+    result: Dict[str, Any] = {"type": "web_search_20250305", "name": "web_search"}
+    max_uses = tool.get("max_uses")
+    if max_uses is not None:
+        try:
+            result["max_uses"] = int(max_uses)
+        except (TypeError, ValueError):
+            raise AnthropicConversionError("web_search.max_uses must be an integer")
+
+    filters = tool.get("filters") if isinstance(tool.get("filters"), dict) else {}
+    unknown_filter_keys = [
+        key for key, value in filters.items()
+        if key not in {"allowed_domains", "blocked_domains"} and value not in (None, "", [], {})
+    ]
+    if unknown_filter_keys:
+        raise AnthropicConversionError(
+            "unsupported OpenAI web_search.filters fields for Anthropic adapter: "
+            + ", ".join(sorted(str(key) for key in unknown_filter_keys))
+        )
+    allowed_domains = _string_list(filters.get("allowed_domains") or tool.get("allowed_domains"))
+    blocked_domains = _string_list(filters.get("blocked_domains") or tool.get("blocked_domains"))
+    if allowed_domains and blocked_domains:
+        raise AnthropicConversionError(
+            "Anthropic web_search_20250305 accepts either allowed_domains or blocked_domains, not both"
+        )
+    if allowed_domains:
+        result["allowed_domains"] = allowed_domains
+    if blocked_domains:
+        result["blocked_domains"] = blocked_domains
+
+    user_location = tool.get("user_location")
+    if isinstance(user_location, dict):
+        location = user_location.get("approximate") if isinstance(user_location.get("approximate"), dict) else user_location
+        mapped_location = {
+            key: str(location[key])
+            for key in ("type", "city", "region", "country", "timezone")
+            if key in location and location[key] is not None
+        }
+        if mapped_location:
+            mapped_location.setdefault("type", "approximate")
+            if mapped_location.get("type") != "approximate":
+                raise AnthropicConversionError("Anthropic web_search user_location.type must be approximate")
+            result["user_location"] = mapped_location
+
+    return result
 
 
 def _anthropic_usage_to_responses_usage(usage: Any) -> Dict[str, Any]:
@@ -768,6 +962,85 @@ def _tool_use_block_to_response_item(block: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
+def _server_tool_use_block_to_response_item(block: Dict[str, Any]) -> Dict[str, Any]:
+    name = str(block.get("name") or "")
+    if name != "web_search":
+        raise AnthropicConversionError(f"unsupported Anthropic server tool block: {name}")
+    return _web_search_call_item(
+        item_id=str(block.get("id") or ""),
+        arguments=_json_string(block.get("input") if isinstance(block.get("input"), dict) else {}),
+        status="completed",
+    )
+
+
+def _web_search_call_item(
+    item_id: str,
+    arguments: Any,
+    status: str,
+    result_block: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    parsed_arguments = _parse_json_object(arguments)
+    action: Dict[str, Any] = {"type": "search"}
+    if parsed_arguments.get("query") is not None:
+        action["query"] = str(parsed_arguments["query"])
+
+    sources = _web_search_sources_from_result(result_block)
+    if sources:
+        action["sources"] = sources
+
+    return {
+        "id": item_id,
+        "type": "web_search_call",
+        "status": status,
+        "action": action,
+    }
+
+
+def _web_search_sources_from_result(result_block: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not isinstance(result_block, dict):
+        return []
+    content = result_block.get("content")
+    if not isinstance(content, list):
+        return []
+    sources: List[Dict[str, Any]] = []
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") != "web_search_result":
+            continue
+        source = {
+            key: item[key]
+            for key in ("url", "title", "page_age")
+            if item.get(key) is not None
+        }
+        if source:
+            sources.append(source)
+    return sources
+
+
+def _apply_web_search_result_to_output(output: List[Dict[str, Any]], result_block: Dict[str, Any]) -> None:
+    tool_use_id = str(result_block.get("tool_use_id") or "")
+    if not tool_use_id:
+        return
+    for item in output:
+        if item.get("type") != "web_search_call" or item.get("id") != tool_use_id:
+            continue
+        if _web_search_result_is_error(result_block):
+            item["status"] = "failed"
+            return
+        sources = _web_search_sources_from_result(result_block)
+        if sources:
+            action = item.setdefault("action", {"type": "search"})
+            if isinstance(action, dict):
+                action["sources"] = sources
+        return
+
+
+def _web_search_result_is_error(result_block: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(result_block, dict):
+        return False
+    content = result_block.get("content")
+    return isinstance(content, dict) and content.get("type") == "web_search_tool_result_error"
+
+
 def _function_call_item(item_id: str, call_id: str, name: str, arguments: str, status: str) -> Dict[str, Any]:
     return {
         "id": item_id,
@@ -795,6 +1068,37 @@ def _coerce_tool_input(value: Any) -> Dict[str, Any]:
     if value is None:
         return {}
     return {"value": value}
+
+
+def _anthropic_citations_to_response_annotations(
+    citations: Any,
+    offset: int,
+    text_length: int,
+) -> List[Dict[str, Any]]:
+    if not isinstance(citations, list):
+        return []
+    annotations: List[Dict[str, Any]] = []
+    for citation in citations:
+        if not isinstance(citation, dict):
+            continue
+        if citation.get("type") != "web_search_result_location":
+            continue
+        url = citation.get("url")
+        if not isinstance(url, str) or not url:
+            continue
+        start_index = _int_value(citation.get("start_index"))
+        end_index = _int_value(citation.get("end_index"))
+        if not end_index:
+            start_index = offset
+            end_index = offset + text_length
+        annotations.append({
+            "type": "url_citation",
+            "start_index": start_index,
+            "end_index": end_index,
+            "url": url,
+            "title": str(citation.get("title") or ""),
+        })
+    return annotations
 
 
 def _stringify_tool_result(value: Any) -> str:
@@ -858,6 +1162,24 @@ def _response_id_from_anthropic(value: Any) -> str:
 
 def _json_string(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _parse_json_object(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None and str(item)]
 
 
 def _int_value(value: Any) -> int:
