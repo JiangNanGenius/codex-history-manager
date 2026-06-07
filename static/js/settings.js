@@ -7,6 +7,7 @@ async function loadSettings() {
     try {
         const data = await api('/api/settings');
         populateSettingsForm(data);
+        applyThemeSettings(data);
         setStatus(t('settingsLoaded'));
 
         // Auto-detect paths if key paths are missing
@@ -30,6 +31,10 @@ function populateSettingsForm(data) {
         'setting-codex-pp': 'codex_plus_plus_path',
         'setting-cc-switch-db': 'cc_switch_db_path',
         'setting-provider-store-path': 'provider_store_path',
+        'setting-temp-dir': 'temp_dir',
+        'setting-diagnostics-dir': 'diagnostics_dir',
+        'setting-exports-dir': 'exports_dir',
+        'setting-theme-preset': 'theme_preset',
         'setting-page-size': 'page_size',
         'setting-backup-interval': 'backup_interval_hours',
         'setting-max-backups': 'max_backups',
@@ -57,6 +62,40 @@ function populateSettingsForm(data) {
             el.checked = Boolean(data[key]);
         }
     }
+
+    const themeAccent = document.getElementById('setting-theme-accent');
+    if (themeAccent) themeAccent.value = (data.theme_custom && data.theme_custom.accent) || '#3b82f6';
+
+    const monitorFields = data.monitor_fields || {};
+    const monitorMap = {
+        'monitor-field-tokens': 'tokens',
+        'monitor-field-progress': 'progress',
+        'monitor-field-threshold': 'threshold',
+        'monitor-field-cache': 'cache',
+        'monitor-field-context': 'context_window',
+        'monitor-field-updated': 'updated_at',
+    };
+    for (const [elId, key] of Object.entries(monitorMap)) {
+        const el = document.getElementById(elId);
+        if (el) el.checked = monitorFields[key] !== false;
+    }
+}
+
+function applyThemeSettings(data) {
+    const custom = (data && data.theme_custom) || {};
+    const accent = custom.accent || '#3b82f6';
+    document.documentElement.style.setProperty('--accent', accent);
+    document.documentElement.style.setProperty('--accent-glow', hexToRgba(accent, 0.25));
+}
+
+function hexToRgba(hex, alpha) {
+    const cleaned = String(hex || '').replace('#', '');
+    if (!/^[0-9a-fA-F]{6}$/.test(cleaned)) return `rgba(59, 130, 246, ${alpha})`;
+    const value = parseInt(cleaned, 16);
+    const r = (value >> 16) & 255;
+    const g = (value >> 8) & 255;
+    const b = value & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 async function saveSettings() {
@@ -69,6 +108,21 @@ async function saveSettings() {
         codex_plus_plus_path: document.getElementById('setting-codex-pp')?.value || '',
         cc_switch_db_path: document.getElementById('setting-cc-switch-db')?.value || '',
         provider_store_path: document.getElementById('setting-provider-store-path')?.value || '',
+        temp_dir: document.getElementById('setting-temp-dir')?.value || '',
+        diagnostics_dir: document.getElementById('setting-diagnostics-dir')?.value || '',
+        exports_dir: document.getElementById('setting-exports-dir')?.value || '',
+        theme_preset: document.getElementById('setting-theme-preset')?.value || 'dark',
+        theme_custom: {
+            accent: document.getElementById('setting-theme-accent')?.value || '#3b82f6',
+        },
+        monitor_fields: {
+            tokens: document.getElementById('monitor-field-tokens')?.checked !== false,
+            progress: document.getElementById('monitor-field-progress')?.checked !== false,
+            threshold: document.getElementById('monitor-field-threshold')?.checked !== false,
+            cache: document.getElementById('monitor-field-cache')?.checked !== false,
+            context_window: document.getElementById('monitor-field-context')?.checked !== false,
+            updated_at: document.getElementById('monitor-field-updated')?.checked !== false,
+        },
         page_size: parseInt(document.getElementById('setting-page-size')?.value) || 50,
         backup_interval_hours: parseInt(document.getElementById('setting-backup-interval')?.value) || 6,
         max_backups: parseInt(document.getElementById('setting-max-backups')?.value) || 20,
@@ -166,3 +220,9 @@ function renderDetectResults(data) {
         `;
     }).join('');
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    api('/api/settings')
+        .then(applyThemeSettings)
+        .catch(() => {});
+});

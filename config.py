@@ -20,18 +20,24 @@ Windows 平台特殊性：
   - Path.home() 在 Windows 下对应 %USERPROFILE%，配置文件存放在用户目录下，
     避免写入 Program Files 等需要管理员权限的目录。
 """
+import copy
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from auto_detect import detect_codex_db, detect_sessions_dir, detect_archived_dir, detect_codex_plus_plus
+from app_paths import LEGACY_CONFIG_FILE, app_data_path, ensure_app_dirs
+
+LEGACY_DEFAULT_BACKUP_DIR = str(Path.home() / "codex_backups")
+LEGACY_DEFAULT_PROVIDER_STORE = str(Path.home() / ".codex_enhance_manager" / "providers.json")
 
 DEFAULT_CONFIG = {
     "db_path": "",
     "sessions_dir": "",
     "archived_dir": "",
-    "backup_dir": str(Path.home() / "codex_backups"),
+    "backup_dir": str(app_data_path("backups")),
     "auto_backup": False,
     "backup_interval_hours": 6,
     "max_backups": 20,
@@ -42,9 +48,26 @@ DEFAULT_CONFIG = {
     "codex_cli_path": "",
     "codex_plus_plus_path": "",
     "cc_switch_db_path": "",
-    "provider_store_path": str(Path.home() / ".codex_enhance_manager" / "providers.json"),
+    "provider_store_path": str(app_data_path("providers", "providers.json")),
+    "temp_dir": str(app_data_path("temp")),
+    "diagnostics_dir": str(app_data_path("diagnostics")),
+    "exports_dir": str(app_data_path("exports")),
     "proxy_port": 8080,
     "dark_mode": True,
+    "theme_preset": "dark",
+    "theme_custom": {
+        "accent": "#3b82f6",
+        "surface": "#1e293b",
+        "background": "#0f172a",
+    },
+    "monitor_fields": {
+        "tokens": True,
+        "progress": True,
+        "threshold": True,
+        "cache": True,
+        "context_window": True,
+        "updated_at": True,
+    },
     "sort_by": "created_at_ms",
     "sort_order": "desc",
     # Phase 11: Codex Page Enhancements settings
@@ -58,7 +81,7 @@ DEFAULT_CONFIG = {
     "enable_service_tier": False,
 }
 
-CONFIG_FILE = Path.home() / ".codex_gui_config.json"
+CONFIG_FILE = app_data_path("config.json")
 
 
 class Config:
@@ -71,7 +94,8 @@ class Config:
           2. 尝试从文件加载已保存配置并合并。
           3. 若关键路径为空，自动探测并填充。
         """
-        self._data: Dict[str, Any] = dict(DEFAULT_CONFIG)
+        ensure_app_dirs()
+        self._data: Dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
         self.load()
         # 首次运行时自动检测路径
         self._auto_detect_if_needed()
@@ -85,15 +109,21 @@ class Config:
           - 静默处理 rename 失败：Windows 上若文件被占用可能无法重命名，
             此时直接回退到默认配置，不阻塞启动。
         """
-        if CONFIG_FILE.exists():
+        source = CONFIG_FILE
+        if not source.exists() and LEGACY_CONFIG_FILE.exists():
+            source = LEGACY_CONFIG_FILE
+        if source.exists():
             try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                with open(source, "r", encoding="utf-8") as f:
                     saved = json.load(f)
                 self._data.update(saved)
+                self._normalize_storage_defaults()
+                if source == LEGACY_CONFIG_FILE and not CONFIG_FILE.exists():
+                    self.save()
             except Exception:
                 try:
-                    corrupted = CONFIG_FILE.with_suffix(".json.corrupted")
-                    CONFIG_FILE.rename(corrupted)
+                    corrupted = source.with_suffix(source.suffix + ".corrupted")
+                    shutil.move(str(source), str(corrupted))
                 except Exception:
                     pass
 
@@ -105,6 +135,7 @@ class Config:
         """
         try:
             tmp = CONFIG_FILE.with_suffix(".tmp")
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
             tmp.replace(CONFIG_FILE)
@@ -118,6 +149,7 @@ class Config:
     def set(self, key: str, value: Any):
         """设置配置值并立即保存到文件。"""
         self._data[key] = value
+        self._normalize_storage_defaults()
         self.save()
 
     def get_all(self) -> Dict:
@@ -127,13 +159,36 @@ class Config:
     def update(self, data: Dict):
         """批量更新配置并保存。"""
         self._data.update(data)
+        self._normalize_storage_defaults()
         self.save()
 
     def reset_defaults(self):
         """重置所有设置为默认值，并重新自动检测路径。"""
-        self._data = dict(DEFAULT_CONFIG)
+        self._data = copy.deepcopy(DEFAULT_CONFIG)
         self._auto_detect_if_needed()
         self.save()
+
+    def _normalize_storage_defaults(self):
+        """Fill app-storage keys when loading legacy configs."""
+        if self._data.get("backup_dir") == LEGACY_DEFAULT_BACKUP_DIR:
+            self._data["backup_dir"] = DEFAULT_CONFIG["backup_dir"]
+        if self._data.get("provider_store_path") == LEGACY_DEFAULT_PROVIDER_STORE:
+            self._data["provider_store_path"] = DEFAULT_CONFIG["provider_store_path"]
+        for key in ("backup_dir", "provider_store_path", "temp_dir", "diagnostics_dir", "exports_dir"):
+            if not self._data.get(key):
+                self._data[key] = DEFAULT_CONFIG[key]
+        if not isinstance(self._data.get("theme_custom"), dict):
+            self._data["theme_custom"] = copy.deepcopy(DEFAULT_CONFIG["theme_custom"])
+        else:
+            merged_theme = copy.deepcopy(DEFAULT_CONFIG["theme_custom"])
+            merged_theme.update(self._data["theme_custom"])
+            self._data["theme_custom"] = merged_theme
+        if not isinstance(self._data.get("monitor_fields"), dict):
+            self._data["monitor_fields"] = copy.deepcopy(DEFAULT_CONFIG["monitor_fields"])
+        else:
+            merged_fields = copy.deepcopy(DEFAULT_CONFIG["monitor_fields"])
+            merged_fields.update(self._data["monitor_fields"])
+            self._data["monitor_fields"] = merged_fields
 
     def _auto_detect_if_needed(self):
         """

@@ -34,8 +34,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from app_paths import app_data_path
 
-CODEX_CONFIG_BACKUP_DIR = Path.home() / ".codex_enhance_manager" / "codex_backups"
+CODEX_CONFIG_BACKUP_DIR = app_data_path("codex_backups")
 REDACTED = "********"
 
 

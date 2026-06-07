@@ -36,11 +36,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from app_paths import app_data_path
+
 
 # Schema version：当数据结构发生不兼容变更时递增，用于未来迁移逻辑。
 SCHEMA_VERSION = 1
-# 默认存储路径：Windows 下为 C:\Users\<用户名>\.codex_enhance_manager\providers.json
-DEFAULT_STORE_PATH = Path.home() / ".codex_enhance_manager" / "providers.json"
+# 默认存储路径：用户文档目录下的 Codex Enhance Manager/providers/providers.json。
+DEFAULT_STORE_PATH = app_data_path("providers", "providers.json")
 
 CATALOG_VISIBILITY = {"hidden", "focused_only", "always_visible", "selected_models"}
 API_FORMATS = {

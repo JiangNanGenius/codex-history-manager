@@ -2,6 +2,7 @@ const TOKEN_ALERT_DEFAULT = 100000;
 const REFRESH_MS = 5000;
 
 let lastAlertBucket = 0;
+let monitorSettings = null;
 
 function formatCompact(value) {
     const n = Number(value || 0);
@@ -45,6 +46,25 @@ async function api(url) {
     return data;
 }
 
+async function loadMonitorSettings() {
+    try {
+        monitorSettings = await api('/api/settings');
+    } catch {
+        monitorSettings = {};
+    }
+}
+
+function monitorFields() {
+    return (monitorSettings && monitorSettings.monitor_fields) || {
+        tokens: true,
+        progress: true,
+        threshold: true,
+        cache: true,
+        context_window: true,
+        updated_at: true,
+    };
+}
+
 function oneHourQuery() {
     const end = new Date();
     const start = new Date(end.getTime() - 60 * 60 * 1000);
@@ -83,6 +103,9 @@ function render(value, threshold, mode, data) {
     const thresholdEl = document.getElementById('monitor-threshold');
     const updatedEl = document.getElementById('monitor-updated');
     const cacheEl = document.getElementById('monitor-cache');
+    const contextEl = document.getElementById('monitor-context');
+    const progressEl = document.querySelector('.progress');
+    const fields = monitorFields();
 
     modeEl.textContent = mode;
     valueEl.textContent = formatCompact(value);
@@ -102,6 +125,17 @@ function render(value, threshold, mode, data) {
     } else {
         cacheEl.textContent = '缓存: 未配置代理缓存数据库';
     }
+    const contextWindow = Number(data.current_context_window || 0);
+    contextEl.textContent = contextWindow
+        ? `上下文窗口: ${formatCompact(contextWindow)} · ${data.current_model || '-'}`
+        : '上下文窗口: 未匹配 provider registry';
+
+    document.querySelector('.value-row').style.display = fields.tokens ? 'flex' : 'none';
+    progressEl.style.display = fields.progress ? 'block' : 'none';
+    thresholdEl.style.display = fields.threshold ? 'inline' : 'none';
+    updatedEl.style.display = fields.updated_at ? 'inline' : 'none';
+    cacheEl.style.display = fields.cache ? 'block' : 'none';
+    contextEl.style.display = fields.context_window ? 'block' : 'none';
 
     maybeAlert(value, threshold);
 }
@@ -160,6 +194,6 @@ window.addEventListener('DOMContentLoaded', () => {
         const button = event.target.closest('button[data-action]');
         if (button) runMenuAction(button.dataset.action);
     });
-    refreshMonitor().catch(console.error);
+    loadMonitorSettings().finally(() => refreshMonitor().catch(console.error));
     setInterval(() => refreshMonitor().catch(console.error), REFRESH_MS);
 });

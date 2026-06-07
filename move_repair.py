@@ -47,6 +47,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from app_paths import app_data_path
+
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
@@ -83,7 +85,7 @@ class MoveRepairManager:
 
         self.archived_dir = self.codex_home / "archived_sessions"
         self.index_path = self.codex_home / "session_index.jsonl"
-        self._backup_dir = Path.home() / ".codex_enhance_manager" / "move_repair_backups"
+        self._backup_dir = app_data_path("move_repair_backups")
 
     # ─────────────── 读取元数据 ───────────────
 

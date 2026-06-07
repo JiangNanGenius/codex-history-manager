@@ -1244,11 +1244,17 @@ async function applyCodexIntegration() {
     const proxyBaseUrl = document.getElementById('ci-proxy-base-url')?.value || 'http://localhost:8080/v1';
     const proxyModel = document.getElementById('ci-proxy-model')?.value || 'auto';
     const preserveAuth = document.getElementById('ci-preserve-auth')?.checked !== false;
-    if (!confirm('This will write to Codex config.toml. A backup will be created automatically. Continue?')) return;
+    const manual = requestCodexMutationConfirmation('write Codex config.toml');
+    if (!manual) return;
     try {
         const result = await api('/api/codex-integration/apply', {
             method: 'POST',
-            body: JSON.stringify({ proxy_base_url: proxyBaseUrl, proxy_model: proxyModel, preserve_official_auth: preserveAuth }),
+            body: JSON.stringify({
+                proxy_base_url: proxyBaseUrl,
+                proxy_model: proxyModel,
+                preserve_official_auth: preserveAuth,
+                ...manual,
+            }),
         });
         if (result.success) {
             showToast('Applied. Restart Codex to take effect.', 'success');
@@ -1264,9 +1270,13 @@ async function applyCodexIntegration() {
 }
 
 async function restoreCodexConfig() {
-    if (!confirm('Restore config.toml from the most recent backup?')) return;
+    const manual = requestCodexMutationConfirmation('restore Codex config.toml');
+    if (!manual) return;
     try {
-        const result = await api('/api/codex-integration/restore-config', { method: 'POST', body: '{}' });
+        const result = await api('/api/codex-integration/restore-config', {
+            method: 'POST',
+            body: JSON.stringify(manual),
+        });
         if (result.success) {
             showToast('Config restored. Restart Codex.', 'success');
         } else {
@@ -1280,9 +1290,13 @@ async function restoreCodexConfig() {
 }
 
 async function restoreCodexAuth() {
-    if (!confirm('Restore auth.json from the most recent backup?')) return;
+    const manual = requestCodexMutationConfirmation('restore Codex auth.json');
+    if (!manual) return;
     try {
-        const result = await api('/api/codex-integration/restore-auth', { method: 'POST', body: '{}' });
+        const result = await api('/api/codex-integration/restore-auth', {
+            method: 'POST',
+            body: JSON.stringify(manual),
+        });
         if (result.success) {
             showToast('Auth restored. Restart Codex.', 'success');
         } else {
@@ -1293,6 +1307,23 @@ async function restoreCodexAuth() {
     } catch (err) {
         showToast('Restore failed: ' + err.message, 'error');
     }
+}
+
+function requestCodexMutationConfirmation(actionLabel) {
+    const phrase = 'MODIFY_CODEX_FILES';
+    const value = prompt(
+        'This action will change Codex files or process state: ' + actionLabel + '\n\n' +
+        'Codex mutation tests are manual-only in this workspace.\n' +
+        'Type ' + phrase + ' to continue.'
+    );
+    if (value !== phrase) {
+        showToast('Codex mutation cancelled', 'warning');
+        return null;
+    }
+    return {
+        manual_codex_mutation: true,
+        confirmation: phrase,
+    };
 }
 
 /**
@@ -1345,7 +1376,7 @@ function renderCodexIntegrationPage() {
                     </div>
                     <div class="flex flex-wrap gap-2 mt-4">
                         <button onclick="previewCodexIntegration()" class="btn btn-secondary">Preview Diff</button>
-                        <button onclick="applyCodexIntegration()" class="btn btn-primary">Apply to Codex Config</button>
+                        <button onclick="applyCodexIntegration()" class="btn btn-warning">Manual Apply to Codex Config</button>
                     </div>
                 </div>
             </div>
@@ -1364,8 +1395,8 @@ function renderCodexIntegrationPage() {
                         `).join('') : '<div class="text-sm text-dark-500">No backups yet.</div>'}
                     </div>
                     <div class="flex flex-wrap gap-2 mt-4">
-                        <button onclick="restoreCodexConfig()" class="btn btn-secondary text-xs">Restore Config</button>
-                        <button onclick="restoreCodexAuth()" class="btn btn-secondary text-xs">Restore Auth</button>
+                        <button onclick="restoreCodexConfig()" class="btn btn-warning text-xs">Manual Restore Config</button>
+                        <button onclick="restoreCodexAuth()" class="btn btn-warning text-xs">Manual Restore Auth</button>
                     </div>
                 </div>
             </div>

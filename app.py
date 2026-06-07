@@ -25,6 +25,7 @@ Windows 平台特殊性：
 import os
 import json
 import re
+import shutil
 import subprocess
 import threading
 from datetime import datetime
@@ -33,7 +34,7 @@ from typing import Dict
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from config import Config
+from config import Config, CONFIG_FILE
 from db import CodexDB
 from reader import read_messages, export_to_markdown, export_to_text, get_file_size_mb
 from backup import BackupManager
@@ -42,10 +43,18 @@ from auto_detect import detect_all
 from token_stats import TokenStats
 from providers import ProviderRegistry, DEFAULT_STORE_PATH
 from amr_registry import AMRRegistry
-from codex_config import CodexConfigManager, redact_auth_for_preview, load_config_toml as _load_config_toml
+from codex_config import (
+    CodexConfigManager,
+    backup_file,
+    redact_auth_for_preview,
+    save_config_toml,
+    load_config_toml as _load_config_toml,
+)
 from proxy_server import LocalProxyServer
 from diagnostics import DiagnosticsCollector
 from move_repair import MoveRepairManager
+from guardrails import codex_mutation_error_payload, has_codex_mutation_confirmation
+from app_paths import LEGACY_CONFIG_FILE, app_data_dir, ensure_app_dirs, is_within
 
 
 def create_app() -> Flask:
@@ -88,6 +97,12 @@ def create_app() -> Flask:
 
     def _refresh_provider_registry_path():
         provider_registry.store_path = Path(config.get("provider_store_path", "") or DEFAULT_STORE_PATH).expanduser()
+
+    def _require_codex_mutation_confirmation(body: Dict, action: str):
+        """Require a typed confirmation for endpoints that mutate Codex state."""
+        if has_codex_mutation_confirmation(body):
+            return None
+        return jsonify(codex_mutation_error_payload(action)), 409
 
     # 启动自动备份
     if config.get("auto_backup"):
@@ -258,6 +273,7 @@ def create_app() -> Flask:
                 data["cache_note"] = (
                     "未配置代理缓存数据库；缓存统计需要请求经过代理数据源，官方 API 和自定义 API 都可被统计。"
                 )
+            data.update(_resolve_current_context_window(config, provider_registry))
             return jsonify(data)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -521,6 +537,81 @@ def create_app() -> Flask:
             except Exception:
                 pass
             return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/settings/storage")
+    def settings_storage():
+        """返回配置、临时文件和导出目录位置。"""
+        try:
+            ensure_app_dirs()
+            settings = config.get_all()
+            return jsonify({
+                "app_data_dir": str(app_data_dir()),
+                "config_file": str(CONFIG_FILE),
+                "legacy_config_file": str(LEGACY_CONFIG_FILE),
+                "legacy_config_exists": LEGACY_CONFIG_FILE.exists(),
+                "backup_dir": settings.get("backup_dir", ""),
+                "provider_store_path": settings.get("provider_store_path", ""),
+                "temp_dir": settings.get("temp_dir", ""),
+                "diagnostics_dir": settings.get("diagnostics_dir", ""),
+                "exports_dir": settings.get("exports_dir", ""),
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/settings/export")
+    def export_settings():
+        """导出当前本地配置。"""
+        try:
+            return jsonify({
+                "schema": "codex_enhance_manager.settings.v1",
+                "exported_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "settings": config.get_all(),
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/settings/import", methods=["POST"])
+    def import_settings():
+        """导入本地配置 JSON。不会写 Codex auth/config。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            imported = body.get("settings") if isinstance(body.get("settings"), dict) else body
+            if not isinstance(imported, dict):
+                return jsonify({"error": "Invalid settings payload"}), 400
+            config.update(imported)
+            ensure_app_dirs()
+            return jsonify({"success": True, "settings": config.get_all()})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/cleanup/preview")
+    def cleanup_preview():
+        """预览可安全清理的本地缓存/临时目录。"""
+        try:
+            return jsonify({"targets": _cleanup_targets(config)})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/cleanup/execute", methods=["POST"])
+    def cleanup_execute():
+        """执行安全清理。只删除 allowlisted local temp/cache paths。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            if body.get("confirmation") != "CLEAN_LOCAL_CACHE":
+                return jsonify({
+                    "error": "Cleanup confirmation required.",
+                    "required_confirmation": "CLEAN_LOCAL_CACHE",
+                }), 409
+            requested = set(body.get("targets") or [])
+            results = []
+            for target in _cleanup_targets(config):
+                if requested and target["id"] not in requested:
+                    continue
+                results.append(_cleanup_target(target))
+            ensure_app_dirs()
+            return jsonify({"success": True, "results": results})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -878,6 +969,9 @@ def create_app() -> Flask:
         """应用 local proxy provider 配置到 Codex config.toml。保留官方登录态。"""
         try:
             body = request.get_json(silent=True) or {}
+            denied = _require_codex_mutation_confirmation(body, "apply_codex_provider_config")
+            if denied:
+                return denied
             mgr = CodexConfigManager()
             result = mgr.write_provider_config(
                 proxy_base_url=body.get("proxy_base_url", "http://localhost:8080/v1"),
@@ -902,6 +996,9 @@ def create_app() -> Flask:
         """从备份恢复 config.toml。"""
         try:
             body = request.get_json(silent=True) or {}
+            denied = _require_codex_mutation_confirmation(body, "restore_codex_config")
+            if denied:
+                return denied
             mgr = CodexConfigManager()
             result = mgr.restore_config(body.get("backup_path", ""))
             return jsonify(result)
@@ -913,6 +1010,9 @@ def create_app() -> Flask:
         """从备份恢复 auth.json。"""
         try:
             body = request.get_json(silent=True) or {}
+            denied = _require_codex_mutation_confirmation(body, "restore_codex_auth")
+            if denied:
+                return denied
             mgr = CodexConfigManager()
             result = mgr.restore_auth(body.get("backup_path", ""))
             return jsonify(result)
@@ -927,6 +1027,9 @@ def create_app() -> Flask:
         """
         try:
             body = request.get_json(silent=True) or {}
+            denied = _require_codex_mutation_confirmation(body, "disable_codex_proxy_provider")
+            if denied:
+                return denied
             mgr = CodexConfigManager()
 
             # 备份当前配置
@@ -956,6 +1059,9 @@ def create_app() -> Flask:
         """
         try:
             body = request.get_json(silent=True) or {}
+            denied = _require_codex_mutation_confirmation(body, "restart_codex_process")
+            if denied:
+                return denied
             use_cpp = body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
 
             # 可选：先同步配置
@@ -1296,3 +1402,92 @@ def _find_file_for_thread(thread: Dict, config: Config) -> str:
         if files:
             return files[0]
     return ""
+
+
+def _cleanup_targets(config: Config) -> list[Dict]:
+    """Build allowlisted cleanup targets with size estimates."""
+    root = app_data_dir()
+    configured = config.get_all()
+    candidates = [
+        ("temp", Path(configured.get("temp_dir") or root / "temp"), root),
+        ("diagnostics", Path(configured.get("diagnostics_dir") or root / "diagnostics"), root),
+        ("exports", Path(configured.get("exports_dir") or root / "exports"), root),
+        ("repo_pycache", Path.cwd() / "__pycache__", Path.cwd()),
+        ("repo_pytest_cache", Path.cwd() / ".pytest_cache", Path.cwd()),
+        ("tests_pycache", Path.cwd() / "tests" / "__pycache__", Path.cwd()),
+    ]
+    targets = []
+    for target_id, path, safe_root in candidates:
+        resolved = path.expanduser()
+        safe = is_within(resolved, safe_root)
+        targets.append({
+            "id": target_id,
+            "path": str(resolved),
+            "exists": resolved.exists(),
+            "safe": safe,
+            "size_bytes": _path_size(resolved) if resolved.exists() and safe else 0,
+            "kind": "directory" if resolved.is_dir() else "file",
+        })
+    return targets
+
+
+def _cleanup_target(target: Dict) -> Dict:
+    path = Path(target["path"])
+    if not target.get("safe"):
+        return {"id": target["id"], "success": False, "error": "Target is outside cleanup allowlist"}
+    if not path.exists():
+        return {"id": target["id"], "success": True, "skipped": True, "path": str(path)}
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        return {"id": target["id"], "success": True, "path": str(path)}
+    except Exception as exc:
+        return {"id": target["id"], "success": False, "path": str(path), "error": str(exc)}
+
+
+def _path_size(path: Path) -> int:
+    try:
+        if path.is_file():
+            return path.stat().st_size
+        total = 0
+        for item in path.rglob("*"):
+            if item.is_file():
+                try:
+                    total += item.stat().st_size
+                except OSError:
+                    pass
+        return total
+    except OSError:
+        return 0
+
+
+def _resolve_current_context_window(config: Config, provider_registry: ProviderRegistry) -> Dict:
+    """Best-effort current model context window for monitor display."""
+    result = {
+        "current_model": "",
+        "current_model_provider": "",
+        "current_context_window": 0,
+        "current_context_source": "",
+    }
+    try:
+        codex_home = resolve_codex_home()
+        config_data = _load_config_toml(str(codex_home / "config.toml"))
+        model = str(config_data.get("model") or "")
+        provider = str(config_data.get("model_provider") or "")
+        result["current_model"] = model
+        result["current_model_provider"] = provider
+        if not model:
+            return result
+
+        provider_registry.store_path = Path(config.get("provider_store_path", "") or DEFAULT_STORE_PATH).expanduser()
+        preview = provider_registry.preview_catalog(focus_provider_id="")
+        for entry in preview.get("entries", []):
+            if model in {entry.get("codex_model_id"), entry.get("upstream_model_id")}:
+                result["current_context_window"] = int(entry.get("context_window") or 0)
+                result["current_context_source"] = "provider_registry"
+                return result
+    except Exception as exc:
+        result["current_context_error"] = str(exc)
+    return result

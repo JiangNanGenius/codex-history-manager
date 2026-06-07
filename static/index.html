@@ -477,6 +477,31 @@
                         <p class="text-xs text-dark-500 mt-1" data-i18n="providerStoreDesc">Stores local provider registry only; it does not write Codex auth or config.</p>
                     </div>
                     <div>
+                        <label class="text-xs text-dark-400">Temp Dir</label>
+                        <input id="setting-temp-dir" type="text" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Diagnostics Dir</label>
+                        <input id="setting-diagnostics-dir" type="text" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Exports Dir</label>
+                        <input id="setting-exports-dir" type="text" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Theme Preset</label>
+                        <select id="setting-theme-preset" class="input mt-1 w-full">
+                            <option value="dark">Dark</option>
+                            <option value="midnight">Midnight</option>
+                            <option value="graphite">Graphite</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Custom Accent</label>
+                        <input id="setting-theme-accent" type="color" class="input mt-1 w-full h-10">
+                    </div>
+                    <div>
                         <label class="text-xs text-dark-400" data-i18n="pageSize">Page Size</label>
                         <input id="setting-page-size" type="number" class="input mt-1" min="10" max="200">
                     </div>
@@ -510,6 +535,17 @@
                         <input id="setting-dark-mode" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
                         <span data-i18n="darkMode">Dark Mode</span>
                     </label>
+                </div>
+                <div class="mt-4">
+                    <div class="text-xs text-dark-400 mb-2">Floating Monitor Fields</div>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-tokens" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Tokens</label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-progress" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Progress</label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-threshold" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Threshold</label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-cache" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Cache</label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-context" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Context Window</label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-updated" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Updated Time</label>
+                    </div>
                 </div>
             </div>
             <div class="flex gap-3">
