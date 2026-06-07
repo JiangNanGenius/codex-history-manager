@@ -74,7 +74,6 @@ The app is organized as an operational console rather than a marketing dashboard
 | Secrets | API keys, bearer tokens, and sensitive headers are redacted in diagnostics and request logs. |
 | Request logs | Local proxy logs are metadata-only. They do not store prompts, request bodies, raw headers, or raw upstream responses. |
 | Local-only materials | `_local_notes/`, `research/`, diagnostics with secrets, and temporary research output are ignored and must not be pushed. |
-| Codex++ content | Implementation ideas may be studied. Sponsor, recommendation, marketplace ad, or promotional content is not migrated. |
 
 ## Quick Start
 
@@ -201,14 +200,18 @@ After sync, sessions remain visible across account/provider switches.
 
 ## References
 
-Primary protocol and provider references used for implementation decisions:
-
-- OpenAI Codex source: [openai/codex](https://github.com/openai/codex), especially `codex-rs/codex-api/src/endpoint/responses.rs`, `codex-rs/codex-api/src/sse/responses.rs`, `codex-rs/codex-api/src/endpoint/images.rs`, `codex-rs/protocol/src/models.rs`, `codex-rs/app-server/src/bespoke_event_handling.rs`, and `codex-rs/app-server-protocol/src/protocol/v2/*`.
-- OpenAI API docs: [Responses](https://platform.openai.com/docs/api-reference/responses), [Chat Completions](https://platform.openai.com/docs/api-reference/chat), and [Images](https://platform.openai.com/docs/api-reference/images).
-- Anthropic API docs: [Messages API](https://docs.anthropic.com/en/api/messages) for Anthropic-to-Codex adapter behavior.
-- Alibaba Bailian / Model Studio: [Qwen via OpenAI Responses](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses) and the user-supplied [Bailian console Responses entry](https://bailian.console.aliyun.com/cn-beijing?spm=5176.12818093_47.resourceCenter.1.52c916d0vlEMb0&tab=api#/api/?type=model&url=3016808).
-- Volcengine Ark: [Responses API](https://www.volcengine.com/docs/82379/1585128?lang=zh), [Seedream image generation](https://www.volcengine.com/docs/82379/1824121?lang=zh), and [Seedance video generation](https://www.volcengine.com/docs/82379/2291680?lang=zh).
-- Comparative implementation references: [cc-switch](https://github.com/farion1231/cc-switch) and [CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus). They are used for protocol and behavior comparison; sponsor, recommendation, marketplace, and ad content is not imported.
+- [OpenAI Codex source](https://github.com/openai/codex)
+- [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses)
+- [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat)
+- [OpenAI Images API](https://platform.openai.com/docs/api-reference/images)
+- [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)
+- [Alibaba Bailian / Qwen OpenAI Responses](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses)
+- [Alibaba Bailian console Responses entry](https://bailian.console.aliyun.com/cn-beijing?spm=5176.12818093_47.resourceCenter.1.52c916d0vlEMb0&tab=api#/api/?type=model&url=3016808)
+- [Volcengine Ark Responses API](https://www.volcengine.com/docs/82379/1585128?lang=zh)
+- [Volcengine Seedream image generation](https://www.volcengine.com/docs/82379/1824121?lang=zh)
+- [Volcengine Seedance video generation](https://www.volcengine.com/docs/82379/2291680?lang=zh)
+- [cc-switch](https://github.com/farion1231/cc-switch)
+- [CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus)
 
 ## Roadmap
 
