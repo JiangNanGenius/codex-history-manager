@@ -576,4 +576,7 @@ def _build_cc_time_filter(time_col: str, start_ts: Optional[int], end_ts: Option
 
 
 def _safe_alias(column: str) -> str:
+    # 拒绝含双引号的列名，防止 SQL 注入；其余非字母数字字符替换为下划线
+    if '"' in column:
+        raise ValueError(f"Invalid column name containing quote: {column}")
     return "sum_" + "".join(ch if ch.isalnum() else "_" for ch in column)

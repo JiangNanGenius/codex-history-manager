@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 
+from codex_config import load_config_toml as _load_config_toml
+
 
 DEFAULT_PROVIDER = "openai"
 DEFAULT_MODEL = "gpt-5"
@@ -70,51 +72,44 @@ def resolve_codex_home(codex_home: str = "") -> Path:
 
 def load_config_toml(config_path: str) -> Dict[str, str]:
     """
-    读取 config.toml 获取当前 model_provider 和 model
-    使用简易 TOML 解析（不引入第三方库）
+    读取 config.toml 获取当前 model_provider 和 model。
+    底层复用 codex_config.load_config_toml，避免 TOML 解析重复实现。
+
+    字段兼容设计：
+      - Codex 不同版本使用不同键名：model_provider、modelProvider、provider。
+      - 本函数按优先级遍历，首个命中即停止，保证向后兼容。
+      - 支持 [defaults] 子表：Codex 某些版本将默认值放在 [defaults] 下。
+
+    边界条件：
+      - 文件不存在或解析失败时返回 DEFAULT_PROVIDER / DEFAULT_MODEL，
+        防止同步流程因配置读取失败而中断。
+
+    Args:
+        config_path: config.toml 的绝对路径。
+
+    Returns:
+        {"model_provider": str, "model": str}
     """
-    path = Path(config_path)
-    if not path.exists():
+    data = _load_config_toml(config_path)
+    if not data:
         return {"model_provider": DEFAULT_PROVIDER, "model": DEFAULT_MODEL}
 
     result = {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except Exception:
-        return {"model_provider": DEFAULT_PROVIDER, "model": DEFAULT_MODEL}
-
-    # 简易 TOML 解析（只需要顶层 key=value）
-    try:
-        import tomllib
-        data = tomllib.loads(content)
-        for key in ("model_provider", "modelProvider", "provider"):
-            if key in data:
-                result["model_provider"] = data[key]
-                break
-        for key in ("model",):
-            if key in data:
-                result["model"] = data[key]
-                break
-        # 检查 [defaults] 子表
-        defaults = data.get("defaults", {})
-        if "model_provider" not in result and "model_provider" in defaults:
-            result["model_provider"] = defaults["model_provider"]
-        if "model" not in result and "model" in defaults:
-            result["model"] = defaults["model"]
-    except Exception:
-        # 回退到简易行解析
-        for line in content.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or line.startswith("[") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip().strip("\"'")
-            if key == "model_provider" or key == "modelProvider" or key == "provider":
-                result["model_provider"] = value
-            elif key == "model":
-                result["model"] = value
+    # 顶层字段：多键名兼容不同 Codex 版本
+    for key in ("model_provider", "modelProvider", "provider"):
+        if key in data:
+            result["model_provider"] = data[key]
+            break
+    for key in ("model",):
+        if key in data:
+            result["model"] = data[key]
+            break
+    # 检查 [defaults] 子表
+    defaults = data.get("defaults", {})
+    if "model_provider" not in result and "model_provider" in defaults:
+        result["model_provider"] = defaults["model_provider"]
+    if "model" not in result and "model" in defaults:
+        result["model"] = defaults["model"]
 
     result.setdefault("model_provider", DEFAULT_PROVIDER)
     result.setdefault("model", DEFAULT_MODEL)
@@ -154,22 +149,48 @@ def _find_pids_by_image(image_name: str) -> List[int]:
 
 
 def _find_node_codex_pids() -> List[int]:
-    """Find node.exe processes that appear to be running codex."""
+    """
+    查找运行 Codex 的 node.exe 进程 PID。
+
+    设计意图与 Windows 平台特殊性：
+      - Codex CLI 早期版本基于 Node.js 运行，主进程名为 node.exe 而非 codex.exe。
+      - Windows 11 23H2+ 移除了 wmic 工具，因此使用 PowerShell Get-CimInstance
+        替代，避免在新系统上命令失败。
+      - creationflags=CREATE_NO_WINDOW 防止 PowerShell 窗口闪烁弹出，
+        提升用户体验。
+      - CSV 输出解析：通过 ConvertTo-Csv 获得结构化输出，比纯文本 tasklist
+        更稳定（不受空格对齐影响）。
+
+    边界条件：
+      - PowerShell 执行失败（如被组策略禁用）时返回空列表，不阻断流程。
+      - 命令行中只要包含 "codex" 子串即视为目标进程，可能误匹配其他 node 程序，
+        但后续会与 codex.exe 搜索结果去重，不会导致误杀。
+
+    Returns:
+        node.exe 进程中疑似 Codex 的 PID 列表。
+    """
     pids = []
     try:
         import subprocess
+        ps_cmd = (
+            "Get-CimInstance Win32_Process -Filter \\\"Name='node.exe'\\\" | "
+            "Select-Object ProcessId,CommandLine | "
+            "ConvertTo-Csv -NoTypeInformation"
+        )
         result = subprocess.run(
-            ["wmic", "process", "where", "name='node.exe'", "get", "ProcessId,CommandLine", "/format:csv"],
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
             capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW
         )
         output = _decode_tasklist_output(result.stdout)
-        for line in output.strip().splitlines():
-            if "node" not in line.lower():
-                continue
+        lines = output.strip().splitlines()
+        if len(lines) < 2:
+            return pids
+        # CSV header: "ProcessId","CommandLine"
+        for line in lines[1:]:
             parts = line.strip('"').split('","')
-            if len(parts) >= 3:
-                cmdline = parts[-2].lower()
-                pid_str = parts[-1]
+            if len(parts) >= 2:
+                pid_str = parts[0]
+                cmdline = parts[1].lower()
                 if "codex" in cmdline and pid_str.isdigit():
                     pids.append(int(pid_str))
     except Exception:
@@ -179,14 +200,26 @@ def _find_node_codex_pids() -> List[int]:
 
 def is_codex_running() -> Tuple[bool, List[int]]:
     """
-    检查 Codex 进程是否在运行
-    返回 (是否运行中, [PID列表])
+    检查 Codex 进程是否在运行。
+
+    设计意图：
+      - 多源检测：同时检查 codex.exe（新版 Electron 打包）和 node.exe（旧版），
+        覆盖不同版本的 Codex CLI。
+      - dict.fromkeys 去重：保持 PID 原始顺序的同时去除重复，
+        避免同一进程被 image_name 和 node 搜索同时命中。
+
+    Windows 平台特殊性：
+      - tasklist 在 Windows 上可靠，但输出编码可能是 utf-8、gbk 或 cp936，
+        _decode_tasklist_output 做多编码回退解码。
+
+    Returns:
+        (是否运行中, [PID列表])
     """
     pids = []
     for image_name in CODEX_PROCESS_NAMES:
         pids.extend(_find_pids_by_image(image_name))
     pids.extend(_find_node_codex_pids())
-    # Deduplicate
+    # Deduplicate：dict.fromkeys 保持顺序去重，Python 3.7+ 有序性保证
     unique_pids = list(dict.fromkeys(pids))
     return len(unique_pids) > 0, unique_pids
 

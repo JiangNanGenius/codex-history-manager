@@ -45,6 +45,10 @@ const translations = {
     unknownError: '未知错误',
 
     // 侧边栏
+    navOverview: '总览',
+    navQuickSetup: '快速设置',
+    navProviders: '供应商',
+    navCodexIntegration: 'Codex 集成',
     navStats: '统计面板',
     navSessions: '会话浏览',
     navSync: '账户同步',
@@ -218,6 +222,8 @@ const translations = {
     targetModel: '目标模型（留空使用 config.toml）',
     ccSwitchDbPath: '代理缓存数据库路径（可选）',
     ccSwitchDbDesc: '用于读取代理数据库中的 cache/token 字段；官方 API 和自定义 API 只要经过代理都可统计。',
+    providerStorePath: 'Provider Registry 路径',
+    providerStoreDesc: '仅保存本地 provider registry；不会写入 Codex auth 或 config。',
 
     // 备份
     backupManager: '备份管理',
@@ -320,6 +326,9 @@ const translations = {
     unknownError: 'Unknown error',
 
     // Sidebar
+    navOverview: 'Overview',
+    navQuickSetup: 'Quick Setup',
+    navProviders: 'Providers',
     navStats: 'Statistics',
     navSessions: 'Sessions',
     navSync: 'Sync',
@@ -519,6 +528,8 @@ const translations = {
     targetModel: 'Target Model (empty = use config.toml)',
     ccSwitchDbPath: 'Proxy Cache DB Path (optional)',
     ccSwitchDbDesc: 'Reads cache/token fields from a proxy database; official and custom APIs are both counted when routed through the proxy.',
+    providerStorePath: 'Provider Registry Path',
+    providerStoreDesc: 'Stores local provider registry only; it does not write Codex auth or config.',
 
     // Settings
     settings: 'Settings',

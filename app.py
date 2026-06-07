@@ -1,6 +1,26 @@
 """
 app.py - Flask Web 应用 + 所有 API 端点
 提供 RESTful API 供前端 SPA 调用
+
+设计意图：
+  - 纯 API 后端：所有 HTML 渲染由前端 SPA（static/js/*.js）完成，
+    Flask 只负责数据接口和静态文件服务。
+  - 全局状态管理：create_app 内初始化 Config、CodexDB、BackupManager、
+    TokenStats、ProviderRegistry 等实例，通过闭包在 API 端点间共享。
+  - 异常捕获：每个端点统一用 try/except 包裹，返回 JSON 错误响应，
+    防止后端崩溃导致前端收到 500 HTML 页面。
+
+工程权衡：
+  - 不使用 Blueprint：当前端点数量适中（~40 个），全部写在 create_app 内
+    可读性尚可；若未来端点翻倍，建议拆分为 Blueprint。
+  - _refresh_provider_registry_path：provider_store_path 可能在设置中被修改，
+    每次访问 provider API 前刷新路径，保证一致性。
+  - JSON_AS_ASCII = False：确保中文错误消息、模型名称等在前端正确显示，
+    而非被转义为 \\uXXXX。
+
+Windows 平台特殊性：
+  - send_from_directory 服务静态文件：Windows 路径分隔符差异由 Flask/Pathlib
+    自动处理，无需手动替换。
 """
 import os
 import json
@@ -17,13 +37,29 @@ from config import Config
 from db import CodexDB
 from reader import read_messages, export_to_markdown, export_to_text, get_file_size_mb
 from backup import BackupManager
-from sync import full_sync, load_config_toml, is_codex_running, kill_codex, start_codex, resolve_codex_home, CODEX_PLUS_PLUS_PATH
+from sync import full_sync, is_codex_running, kill_codex, start_codex, resolve_codex_home, CODEX_PLUS_PLUS_PATH
 from auto_detect import detect_all
 from token_stats import TokenStats
+from providers import ProviderRegistry, DEFAULT_STORE_PATH
+from amr_registry import AMRRegistry
+from codex_config import CodexConfigManager, redact_auth_for_preview, load_config_toml as _load_config_toml
+from proxy_server import LocalProxyServer
+from diagnostics import DiagnosticsCollector
+from move_repair import MoveRepairManager
 
 
 def create_app() -> Flask:
-    """创建 Flask 应用实例"""
+    """
+    创建 Flask 应用实例。
+
+    设计意图：
+      - 工厂模式：便于测试时创建独立实例，避免全局 app 污染。
+      - 静态文件直接服务：index.html 和 monitor.html 通过 send_from_directory
+        提供，无需模板引擎。
+
+    Returns:
+        配置完成的 Flask 应用实例。
+    """
     app = Flask(
         __name__,
         static_folder="static",
@@ -36,6 +72,22 @@ def create_app() -> Flask:
     db = CodexDB(config.get("db_path"))
     backup_mgr = BackupManager(config, db)
     token_stats = TokenStats(config.get("db_path"))
+    provider_registry = ProviderRegistry(config.get("provider_store_path", ""))
+    proxy_server = LocalProxyServer(
+        port=config.get("proxy_port", 8080),
+        provider_store_path=config.get("provider_store_path", ""),
+    )
+    amr_registry = AMRRegistry()
+
+    diagnostics_collector = DiagnosticsCollector(
+        config=config,
+        provider_registry=provider_registry,
+        proxy_server=proxy_server,
+        amr_registry=amr_registry,
+    )
+
+    def _refresh_provider_registry_path():
+        provider_registry.store_path = Path(config.get("provider_store_path", "") or DEFAULT_STORE_PATH).expanduser()
 
     # 启动自动备份
     if config.get("auto_backup"):
@@ -472,6 +524,588 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # ─────────────── Provider Registry API ───────────────
+
+    @app.route("/api/providers")
+    def list_providers():
+        """读取本地 provider registry（默认脱敏）。"""
+        try:
+            _refresh_provider_registry_path()
+            return jsonify(provider_registry.list_providers(include_secrets=False))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers", methods=["POST"])
+    def create_provider():
+        """创建 provider。只写本地 registry，不写 Codex 配置。"""
+        try:
+            _refresh_provider_registry_path()
+            data = request.get_json(silent=True) or {}
+            provider = provider_registry.create_provider(data)
+            return jsonify({"success": True, "provider": provider})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>")
+    def get_provider(provider_id):
+        """读取单个 provider（默认脱敏）。"""
+        try:
+            _refresh_provider_registry_path()
+            provider = provider_registry.get_provider(provider_id, include_secrets=False)
+            if not provider:
+                return jsonify({"error": "Provider not found"}), 404
+            return jsonify(provider)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>", methods=["PUT", "PATCH"])
+    def update_provider(provider_id):
+        """更新 provider。只写本地 registry，不写 Codex 配置。"""
+        try:
+            _refresh_provider_registry_path()
+            data = request.get_json(silent=True) or {}
+            provider = provider_registry.update_provider(provider_id, data)
+            if not provider:
+                return jsonify({"error": "Provider not found"}), 404
+            return jsonify({"success": True, "provider": provider})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>", methods=["DELETE"])
+    def delete_provider(provider_id):
+        """删除本地 provider registry 记录。"""
+        try:
+            _refresh_provider_registry_path()
+            deleted = provider_registry.delete_provider(provider_id)
+            if not deleted:
+                return jsonify({"error": "Provider not found"}), 404
+            return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/provider-presets")
+    def list_provider_presets():
+        """读取内置 provider preset。"""
+        try:
+            return jsonify(provider_registry.list_presets())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/import-preset", methods=["POST"])
+    def import_provider_preset():
+        """从 preset 创建 provider，可带少量 override。"""
+        try:
+            _refresh_provider_registry_path()
+            body = request.get_json(silent=True) or {}
+            provider = provider_registry.import_preset(
+                preset_id=body.get("preset_id", ""),
+                overrides=body.get("overrides") if isinstance(body.get("overrides"), dict) else None,
+            )
+            return jsonify({"success": True, "provider": provider})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/test", methods=["POST"])
+    def test_provider(provider_id):
+        """本地 provider 配置校验；不做真实网络请求，不写 Codex。"""
+        try:
+            _refresh_provider_registry_path()
+            return jsonify(provider_registry.test_provider(provider_id=provider_id))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/test", methods=["POST"])
+    def test_provider_payload():
+        """校验未保存的 provider payload；不做真实网络请求，不写 Codex。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            return jsonify(provider_registry.test_provider(provider_data=body))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/export")
+    def export_provider_bundle():
+        """导出脱敏 provider bundle，供诊断/备份使用。"""
+        try:
+            _refresh_provider_registry_path()
+            return jsonify(provider_registry.export_bundle())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/model-catalog/preview")
+    def preview_model_catalog():
+        """Unified Model Catalog 预览；不写 Codex model catalog。"""
+        try:
+            _refresh_provider_registry_path()
+            focus_provider_id = request.args.get("focus_provider_id", "")
+            return jsonify(provider_registry.preview_catalog(focus_provider_id=focus_provider_id))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/bulk-models", methods=["POST"])
+    def bulk_update_provider_models(provider_id):
+        """
+        批量更新 provider 下的模型选择状态。
+        支持：select_all、deselect_all、select_vision、select_low_cost、select_high_context。
+        """
+        try:
+            _refresh_provider_registry_path()
+            body = request.get_json(silent=True) or {}
+            action = body.get("action", "")
+            criteria = body.get("criteria")
+            result = provider_registry.bulk_update_models(provider_id, action, criteria)
+            if not result.get("success"):
+                return jsonify(result), 404 if result.get("error") == "Provider not found" else 400
+            return jsonify(result)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/visibility", methods=["POST"])
+    def set_provider_visibility_api(provider_id):
+        """设置 provider 的 catalog visibility。"""
+        try:
+            _refresh_provider_registry_path()
+            body = request.get_json(silent=True) or {}
+            visibility = body.get("visibility", "")
+            result = provider_registry.set_provider_visibility(provider_id, visibility)
+            if not result.get("success"):
+                return jsonify(result), 404
+            return jsonify(result)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/model-rotation/simulate", methods=["POST"])
+    def simulate_model_rotation():
+        """
+        AMR 路由模拟：根据当前 provider registry 状态返回路由决策。
+
+        设计意图：
+          - 这是 Route Simulator UI 的后端支撑：用户选择 capability 和 model，
+            后端基于当前 provider registry 动态构建 AMR 候选列表并执行路由。
+          - 动态候选构建：将每个 provider 的每个启用模型转换为一个 candidate，
+            always_visible 的 provider 优先级设为 1（最高），其余为 2。
+          - 纯模拟：不触发真实网络请求，只返回路由决策和 explanation，
+            供用户预览路由行为。
+
+        边界条件：
+          - 若无任何启用 provider/model，AMR route 会返回 "No candidates" 错误，
+            前端展示即可，非 500 异常。
+        """
+        try:
+            _refresh_provider_registry_path()
+            body = request.get_json(silent=True) or {}
+            capability = body.get("capability", "text")
+            model = body.get("model", "")
+
+            providers_data = provider_registry.list_providers(include_secrets=False)
+            candidates = []
+            for p in providers_data.get("providers", []):
+                if not p.get("enabled"):
+                    continue
+                caps = p.get("capabilities", {})
+                for m in p.get("models", []):
+                    if not m.get("enabled", True):
+                        continue
+                    candidates.append({
+                        "id": f"{p['id']}/{m['id']}",
+                        "provider_id": p["id"],
+                        "model_id": m["id"],
+                        "priority": 1 if p.get("catalog_visibility") == "always_visible" else 2,
+                        "capabilities": {
+                            "text": caps.get("text", True),
+                            "vision": caps.get("vision", False),
+                            "tools": caps.get("tools", False),
+                            "reasoning": caps.get("reasoning", False),
+                            "images": caps.get("images", False),
+                            "videos": caps.get("videos", False),
+                        },
+                        "context_window": m.get("context_window", 0),
+                    })
+
+            from model_rotation import AdaptiveModelRotation
+            amr = AdaptiveModelRotation([{
+                "id": "default",
+                "name": "Default Group",
+                "candidates": candidates,
+            }])
+
+            decision = amr.route(
+                group_id="default",
+                required_capabilities={capability},
+            )
+            return jsonify(decision)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ─────────────── AMR Registry API ───────────────
+
+    @app.route("/api/amr/groups")
+    def list_amr_groups():
+        """列出所有 rotation groups。"""
+        try:
+            return jsonify(amr_registry.list_groups())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/amr/groups", methods=["POST"])
+    def create_amr_group():
+        """创建 AMR rotation group。"""
+        try:
+            data = request.get_json(silent=True) or {}
+            group = amr_registry.create_group(data)
+            return jsonify({"success": True, "group": group})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/amr/groups/<group_id>")
+    def get_amr_group(group_id):
+        """读取单个 rotation group。"""
+        try:
+            group = amr_registry.get_group(group_id)
+            if not group:
+                return jsonify({"error": "Group not found"}), 404
+            return jsonify(group)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/amr/groups/<group_id>", methods=["PUT", "PATCH"])
+    def update_amr_group(group_id):
+        """更新 AMR rotation group。"""
+        try:
+            data = request.get_json(silent=True) or {}
+            group = amr_registry.update_group(group_id, data)
+            if not group:
+                return jsonify({"error": "Group not found"}), 404
+            return jsonify({"success": True, "group": group})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/amr/groups/<group_id>", methods=["DELETE"])
+    def delete_amr_group(group_id):
+        """删除 AMR rotation group。"""
+        try:
+            deleted = amr_registry.delete_group(group_id)
+            if not deleted:
+                return jsonify({"error": "Group not found"}), 404
+            return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/amr/sync-from-providers", methods=["POST"])
+    def sync_amr_from_providers():
+        """从当前 provider registry 同步生成 AMR 候选。"""
+        try:
+            _refresh_provider_registry_path()
+            group = amr_registry.build_from_providers(provider_registry)
+            return jsonify({"success": True, "group": group})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/amr/route", methods=["POST"])
+    def amr_route():
+        """执行 AMR 路由测试。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            group_id = body.get("group_id", "")
+            if not group_id:
+                return jsonify({"error": "group_id is required"}), 400
+            capabilities = body.get("capabilities", ["text"])
+            if isinstance(capabilities, list):
+                capabilities = set(capabilities)
+            context = int(body.get("context", 0))
+            decision = amr_registry.route(
+                group_id=group_id,
+                request_capabilities=capabilities,
+                required_context=context,
+            )
+            return jsonify(decision)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ─────────────── Codex Integration API ───────────────
+
+    @app.route("/api/codex-integration/status")
+    def codex_integration_status():
+        """读取当前 Codex config/auth 状态，用于 Diff Preview 和诊断。"""
+        try:
+            mgr = CodexConfigManager()
+            config_data = mgr.read_config()
+            auth_data = mgr.read_auth()
+            return jsonify({
+                "config": config_data,
+                "auth_redacted": redact_auth_for_preview(auth_data),
+                "auth_mode": mgr.get_auth_mode(),
+                "codex_home": str(mgr.codex_home),
+                "config_path": str(mgr.config_path),
+                "auth_path": str(mgr.auth_path),
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/preview", methods=["POST"])
+    def codex_integration_preview():
+        """预览写入 local proxy provider 后的 diff；不做任何写入。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            mgr = CodexConfigManager()
+            preview = mgr.preview_write_provider(
+                proxy_base_url=body.get("proxy_base_url", "http://localhost:8080/v1"),
+                proxy_model=body.get("proxy_model", "auto"),
+            )
+            preview["auth_redacted"] = redact_auth_for_preview(mgr.read_auth())
+            return jsonify(preview)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/apply", methods=["POST"])
+    def codex_integration_apply():
+        """应用 local proxy provider 配置到 Codex config.toml。保留官方登录态。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            mgr = CodexConfigManager()
+            result = mgr.write_provider_config(
+                proxy_base_url=body.get("proxy_base_url", "http://localhost:8080/v1"),
+                proxy_model=body.get("proxy_model", "auto"),
+                preserve_official_auth=body.get("preserve_official_auth", True),
+            )
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/backups")
+    def codex_integration_backups():
+        """列出 Codex config/auth 备份。"""
+        try:
+            mgr = CodexConfigManager()
+            return jsonify({"backups": mgr.list_all_backups()})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/restore-config", methods=["POST"])
+    def codex_integration_restore_config():
+        """从备份恢复 config.toml。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            mgr = CodexConfigManager()
+            result = mgr.restore_config(body.get("backup_path", ""))
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/restore-auth", methods=["POST"])
+    def codex_integration_restore_auth():
+        """从备份恢复 auth.json。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            mgr = CodexConfigManager()
+            result = mgr.restore_auth(body.get("backup_path", ""))
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/disable-proxy-provider", methods=["POST"])
+    def codex_integration_disable_proxy_provider():
+        """
+        禁用本地代理 provider：从 Codex config.toml 中移除 codex_enhance_manager
+        provider 配置，恢复到默认状态。保留官方登录态。
+        """
+        try:
+            body = request.get_json(silent=True) or {}
+            mgr = CodexConfigManager()
+
+            # 备份当前配置
+            if mgr.config_path.exists():
+                backup_file(str(mgr.config_path), mgr.backup_dir)
+
+            current_config = mgr.read_config()
+            # 移除 codex_enhance_manager 相关配置
+            if current_config.get("model_provider") == "codex_enhance_manager":
+                current_config["model_provider"] = ""
+            if "codex_enhance_manager" in current_config.get("providers", {}):
+                del current_config["providers"]["codex_enhance_manager"]
+
+            save_config_toml(str(mgr.config_path), current_config)
+            return jsonify({
+                "success": True,
+                "restart_required": True,
+                "message": "本地代理 provider 已禁用。需要重启 Codex 使变更生效。",
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/restart-codex", methods=["POST"])
+    def codex_integration_restart_codex():
+        """
+        重启 Codex：先 kill 再 start。同步当前 provider/model 配置后启动。
+        """
+        try:
+            body = request.get_json(silent=True) or {}
+            use_cpp = body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
+
+            # 可选：先同步配置
+            if body.get("sync_before_restart", True):
+                sync_payload, sync_status = _run_sync_with_backup(backup_mgr)
+                if sync_status >= 400:
+                    return jsonify({"error": "同步失败，取消重启", "sync": sync_payload}), 500
+
+            # Kill Codex
+            kill_ok, kill_msg = kill_codex()
+
+            # Start Codex
+            start_ok, start_msg = start_codex(
+                use_codex_plus_plus=use_cpp,
+                codex_plus_plus_path=config.get("codex_plus_plus_path", ""),
+                codex_cli_path=config.get("codex_cli_path", ""),
+            )
+
+            return jsonify({
+                "success": start_ok,
+                "killed": kill_ok,
+                "kill_message": kill_msg,
+                "start_message": start_msg,
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ─────────────── Local Proxy API ───────────────
+
+    @app.route("/api/proxy/status")
+    def proxy_status():
+        """获取本地代理状态。"""
+        try:
+            return jsonify(proxy_server.status())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/proxy/start", methods=["POST"])
+    def proxy_start():
+        """启动本地代理服务器。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            new_port = body.get("port")
+            if new_port and isinstance(new_port, int):
+                proxy_server.port = new_port
+                config.set("proxy_port", new_port)
+            new_store = body.get("provider_store_path")
+            if new_store:
+                proxy_server.provider_store_path = new_store
+            ok = proxy_server.start()
+            if ok:
+                return jsonify({"success": True, "status": proxy_server.status()})
+            return jsonify({"error": "端口已被占用或启动失败", "status": proxy_server.status()}), 409
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/proxy/stop", methods=["POST"])
+    def proxy_stop():
+        """停止本地代理服务器。"""
+        try:
+            proxy_server.stop()
+            return jsonify({"success": True, "status": proxy_server.status()})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/proxy/test-route", methods=["POST"])
+    def proxy_test_route():
+        """
+        测试代理路由：给定 model ID，返回会路由到哪个 provider，不触发真实网络请求。
+        """
+        try:
+            body = request.get_json(silent=True) or {}
+            model_id = body.get("model", "")
+            from proxy_server import _resolve_provider_for_model
+            provider = _resolve_provider_for_model(model_id)
+            if provider:
+                return jsonify({
+                    "success": True,
+                    "provider_id": provider.get("id"),
+                    "display_name": provider.get("display_name"),
+                    "base_url": provider.get("base_url"),
+                    "api_format": provider.get("api_format"),
+                    "short_alias": provider.get("short_alias"),
+                })
+            return jsonify({"success": False, "error": f"No provider found for model '{model_id}'"}), 404
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ─────────────── Move Repair API ───────────────
+
+    @app.route("/api/move-repair/status/<thread_id>")
+    def move_repair_status(thread_id):
+        """读取 thread 元数据（SQLite + JSONL 合并视图）。"""
+        try:
+            mgr = MoveRepairManager()
+            data = mgr.read_thread_metadata(thread_id)
+            return jsonify({"success": True, "metadata": data})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/move-repair/dry-run", methods=["POST"])
+    def move_repair_dry_run():
+        """预演移动：验证 target_path 是否有效 Git 仓库，不修改数据。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            thread_id = body.get("thread_id", "")
+            target_path = body.get("target_path", "")
+            if not thread_id or not target_path:
+                return jsonify({"error": "thread_id 和 target_path 必填"}), 400
+            mgr = MoveRepairManager()
+            result = mgr.dry_run_move(thread_id, target_path)
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/move-repair/execute", methods=["POST"])
+    def move_repair_execute():
+        """执行移动：原子更新 SQLite、JSONL、Index，失败自动回滚。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            thread_id = body.get("thread_id", "")
+            target_path = body.get("target_path", "")
+            if not thread_id or not target_path:
+                return jsonify({"error": "thread_id 和 target_path 必填"}), 400
+            mgr = MoveRepairManager()
+            result = mgr.execute_move(thread_id, target_path)
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/move-repair/verify/<thread_id>")
+    def move_repair_verify(thread_id):
+        """一致性校验：检查三端 cwd 是否对齐且指向有效 Git 仓库。"""
+        try:
+            mgr = MoveRepairManager()
+            result = mgr.verify_consistency(thread_id)
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/move-repair/repair-current", methods=["POST"])
+    def move_repair_repair_current():
+        """检测当前工作目录与 thread cwd 匹配关系，提供修复建议。"""
+        try:
+            mgr = MoveRepairManager()
+            result = mgr.repair_current_thread()
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     # ─────────────── 自动检测 API ───────────────
 
     @app.route("/api/detect")
@@ -509,6 +1143,72 @@ def create_app() -> Flask:
             "sessions_dir_exists": bool(sessions_dir and os.path.isdir(sessions_dir)),
             "auto_backup": bool(settings.get("auto_backup")),
         })
+
+    # ─────────────── 诊断 API ───────────────
+
+    @app.route("/api/diagnostics")
+    def get_diagnostics():
+        """
+        获取完整诊断信息。
+
+        设计意图：
+          - 默认返回脱敏数据，防止用户截图或分享时泄露 api_key。
+          - 加 ?include_secrets=1 可返回完整版（需管理员权限前端校验）。
+        """
+        try:
+            include_secrets = request.args.get("include_secrets", "0") == "1"
+            if include_secrets:
+                data = diagnostics_collector.collect_all()
+            else:
+                data = diagnostics_collector.collect_redacted()
+            return jsonify(data)
+        except Exception as e:
+            diagnostics_collector.record_error("api.diagnostics", str(e))
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/diagnostics/export", methods=["POST"])
+    def export_diagnostics():
+        """
+        导出安全诊断包（JSON 下载）。
+
+        工程权衡：
+          - 使用 POST 而非 GET：避免浏览器预加载或缓存意外触发下载。
+          - 返回 Content-Type: application/json，前端可用 Blob + URL.createObjectURL
+            模拟下载，无需后端发送 attachment 头。
+        """
+        try:
+            bundle = diagnostics_collector.export_safe_bundle()
+            return bundle, 200, {"Content-Type": "application/json; charset=utf-8"}
+        except Exception as e:
+            diagnostics_collector.record_error("api.diagnostics.export", str(e))
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/diagnostics/test-provider/<provider_id>", methods=["POST"])
+    def test_provider_connectivity(provider_id):
+        """
+        测试单个 provider 的网络连通性。
+
+        设计意图：
+          - 与 /api/providers/<id>/test 区分：后者只做本地配置校验，
+            本端点做真实网络探测（HEAD 请求）。
+        """
+        try:
+            _refresh_provider_registry_path()
+            result = diagnostics_collector.check_provider_connectivity(provider_id)
+            status_code = 200 if result.get("success") else 503
+            return jsonify(result), status_code
+        except Exception as e:
+            diagnostics_collector.record_error("api.diagnostics.test_provider", str(e))
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/diagnostics/system")
+    def get_diagnostics_system():
+        """返回系统环境信息（轻量子集，供快速排障）。"""
+        try:
+            data = diagnostics_collector.collect_all()
+            return jsonify({"system": data.get("system", {})})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     return app
 

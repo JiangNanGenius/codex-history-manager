@@ -25,6 +25,18 @@ LOCAL_MODULES = [
     "sync",
     "auto_detect",
     "token_stats",
+    # Phase 0-6 新增模块
+    "app",
+    "providers",
+    "codex_config",
+    "responses_adapter",
+    "proxy_server",
+    "model_catalog",
+    "model_rotation",
+    # 正在进行中的模块（由后台 agent 实现）
+    "amr_registry",
+    "diagnostics",
+    "move_repair",
 ]
 
 # PyWebView 平台相关 hidden imports（Windows 使用 EdgeChromium + WinForms）

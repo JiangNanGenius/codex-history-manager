@@ -1,13 +1,13 @@
-# Codex History Manager
+# Codex Enhance Manager
 
-> A Windows desktop manager for Codex chat history: browse sessions, sync account providers, monitor token usage, and manage safety backups.
+> A Windows desktop control center for Codex. It currently manages chat history, account/provider sync, token usage, and backups, and is being expanded into a local provider, routing, media, quota, and cost-management layer for Codex.
 
 [中文说明](README.zh-CN.md)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 
-## Features
+## Current Features
 
 ### Token Monitoring
 - Always-on token dashboard with overview cards, model/provider charts, hourly distribution, and top sessions.
@@ -35,6 +35,52 @@
 - Restore full backups with a pre-restore safety backup.
 - Old backup pruning by configurable retention count.
 
+### Provider Registry
+- JSON-backed local provider registry with 16 built-in presets (OpenAI, Azure, OpenRouter, DeepSeek, Moonshot, Zhipu, SiliconFlow, MiniMax, Alibaba Bailian, Volcengine Ark, ModelScope, StepFun, NVIDIA, and custom endpoints).
+- Provider schema with short alias, country/region, native currency, catalog visibility, custom headers, and User-Agent.
+- Secret redaction for safe diagnostics export.
+- Bulk model selection actions: select all, deselect all, select vision-capable, select high-context, select low-cost.
+- Provider visibility quick toggle: hidden, focused only, always visible, selected models.
+
+### Unified Model Catalog (UMC)
+- Generates a combined model catalog from multiple providers with provider-prefixed model IDs (`qwen/qwen3-coder-plus`).
+- Visibility policies: always-visible providers, selected models only, focus provider override.
+- Catalog preview before injecting into Codex.
+
+### Adaptive Model Rotation (AMR)
+- In-memory routing engine with rotation groups and candidate priorities.
+- Capability-aware routing: text, vision, tools, reasoning, images, videos.
+- Failure cooldown with automatic fallback to the next capable candidate.
+- Group context window = minimum enabled candidate context.
+- AMR registry with JSON persistence, CRUD, and dynamic candidate building from providers.
+
+### Local Proxy
+- Independent HTTP server (not Flask-bound) running on localhost.
+- `/v1/chat/completions` direct pass-through and SSE streaming.
+- `/v1/responses` with Responses-to-Chat Completions conversion and back.
+- `/v1/models` returning UMC visible models with provider prefixes.
+- Provider routing by `provider/model` hard prefix or exact model ID match.
+- Windows-specific fixes: IPv4 binding, system proxy bypass, port conflict pre-check.
+
+### Codex Config Safety
+- Safe read/write for `~/.codex/config.toml` and `auth.json` with backups.
+- Automatic detection of official OAuth vs legacy API key auth mode.
+- Preserves official login state by default; writes third-party config only when explicitly allowed.
+- Rollback on write failure.
+- Diff preview before writing.
+
+### Diagnostics
+- Structured diagnostics collector covering Codex config, auth mode, proxy status, providers, model catalog, AMR groups, and system environment.
+- Redacted diagnostics export for safe sharing.
+- Provider connectivity probe (HEAD request to base URL).
+- Error ring buffer tracking the last 50 proxy and system errors.
+
+### Move Repair
+- Thread/workspace metadata reader from SQLite and JSONL.
+- Move dry-run with Git repo and tracked-file verification.
+- Atomic move with rollback: updates SQLite `threads.cwd`, JSONL `session_meta.cwd`, and `session_index.jsonl`.
+- Post-move consistency verification.
+
 ### Desktop Experience
 - PyWebView desktop window with local Flask backend.
 - System tray support: minimize to tray, restore from tray, and close prompt with tray/exit/cancel choices.
@@ -42,11 +88,33 @@
 - Auto-detects Codex DB, sessions directory, archived sessions, Codex CLI, Codex++, and current provider/model.
 - Bilingual UI: Chinese and English.
 
+## Enhancement Roadmap
+
+The project is being expanded beyond history management.
+
+**Implemented:**
+- ✅ Unified Model Catalog (UMC): show selected models from multiple providers at the same time, with provider aliases and always-visible models.
+- ✅ Adaptive Model Rotation (AMR): route each request by priority, capability, context window, health, quota, and fallback policy.
+- ✅ Local proxy for Codex with Responses/Chat conversion, auth preservation, and route diagnostics.
+- ✅ Provider registry with 16 presets, bulk actions, and visibility controls.
+- ✅ Codex config safety layer with backup, rollback, and auth preservation.
+- ✅ Diagnostics and safe export.
+- ✅ Project/conversation move repair with dry-run and rollback.
+
+**In Progress / Planned:**
+- Independent image/video providers, including OpenAI-compatible pass-through and adapters for Alibaba Bailian and Volcengine Ark.
+- Cache read/write token accounting from Codex rollout logs, local proxy logs, and compatible proxy databases.
+- Provider balance/quota checks, detailed cost estimates, multi-currency display, and manual exchange-rate overrides.
+- Codex page enhancements: session delete, export, timeline, conversation width, scroll restore.
+- Carefully layered settings UX: quick setup, presets, preview-before-write, route simulator, tests before enabling, and rollback for Codex config changes.
+
+Local development plans live under `_local_notes/` and are intentionally ignored by Git.
+
 ## Quick Start
 
 ### Windows EXE
 
-Download the latest release from [Releases](https://github.com/JiangNanGenius/codex-history-manager/releases) and run `CodexHistoryManager.exe`.
+Download the latest release from [Releases](https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases) and run the bundled EXE.
 
 ### From Source
 
@@ -84,6 +152,10 @@ Token statistics come from the `tokens_used` column in Codex's `threads` table. 
 
 Huge JSONL files are read line by line, so multi-GB archived sessions can be inspected without loading the full file into memory.
 
+## Privacy And Local State
+
+This is a local desktop application. Settings are stored on your machine, and diagnostics should redact API keys, bearer tokens, and sensitive headers. Future provider, proxy, quota, and cost features are planned with local-first storage, preview-before-write, and backup/rollback safeguards for Codex configuration files.
+
 ## Configuration
 
 Settings are stored in `~/.codex_gui_config.json`.
@@ -105,7 +177,7 @@ Settings are stored in `~/.codex_gui_config.json`.
 ## Project Structure
 
 ```text
-codex-history-manager/
+Codex-Enhance-Manager/
 ├── main.py              # PyWebView entry point
 ├── app.py               # Flask app and REST API
 ├── config.py            # Settings management
@@ -123,4 +195,4 @@ codex-history-manager/
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).

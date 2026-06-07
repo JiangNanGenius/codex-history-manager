@@ -16,3 +16,9 @@ venv/
 node_modules/
 .DS_Store
 Thumbs.db
+.pytest_cache/
+kimi-export-*.md
+
+# Local-only research and planning notes. Do not push these.
+research/
+_local_notes/

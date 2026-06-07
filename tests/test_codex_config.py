@@ -1,0 +1,203 @@
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from codex_config import (
+    CodexConfigManager,
+    load_config_toml,
+    save_config_toml,
+    load_auth_json,
+    save_auth_json,
+    merge_toml_dict,
+    detect_auth_mode,
+    backup_file,
+    restore_file,
+    redact_auth_for_preview,
+)
+
+
+class ConfigTOMLTest(unittest.TestCase):
+    def test_roundtrip_preserves_unknown_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.toml"
+            original = {
+                "model_provider": "openai",
+                "model": "gpt-5",
+                "unknown_custom_key": "preserve-me",
+                "defaults": {
+                    "model_provider": "openai",
+                    "custom_setting": True,
+                },
+            }
+            save_config_toml(str(path), original)
+            loaded = load_config_toml(str(path))
+            self.assertEqual(loaded.get("unknown_custom_key"), "preserve-me")
+            self.assertEqual(loaded.get("defaults", {}).get("custom_setting"), True)
+
+    def test_merge_toml_does_not_remove_keys(self):
+        base = {
+            "model_provider": "openai",
+            "keep_this": "yes",
+            "defaults": {"model": "gpt-5", "extra": 123},
+        }
+        updates = {"model_provider": "codex_enhance_manager"}
+        merged = merge_toml_dict(base, updates)
+        self.assertEqual(merged["model_provider"], "codex_enhance_manager")
+        self.assertEqual(merged["keep_this"], "yes")
+        self.assertEqual(merged["defaults"]["model"], "gpt-5")
+        self.assertEqual(merged["defaults"]["extra"], 123)
+
+
+class AuthJsonTest(unittest.TestCase):
+    def test_detect_official_oauth(self):
+        self.assertEqual(
+            detect_auth_mode({"access_token": "eyJhbGciOiJ..."}),
+            "official_oauth",
+        )
+
+    def test_detect_legacy_api_key(self):
+        self.assertEqual(
+            detect_auth_mode({"access_token": "sk-proj-abc123"}),
+            "legacy_api_key",
+        )
+        self.assertEqual(
+            detect_auth_mode({"api_key": "sk-test-123"}),
+            "legacy_api_key",
+        )
+
+    def test_detect_none(self):
+        self.assertEqual(detect_auth_mode({}), "none")
+
+
+class BackupRestoreTest(unittest.TestCase):
+    def test_backup_and_restore(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original = Path(tmpdir) / "config.toml"
+            original.write_text("model = 'gpt-5'\n", encoding="utf-8")
+            backup_dir = Path(tmpdir) / "backups"
+            backup_path = backup_file(str(original), backup_dir)
+            self.assertTrue(backup_path)
+            self.assertTrue(Path(backup_path).exists())
+
+            original.write_text("model = 'changed'\n", encoding="utf-8")
+            ok = restore_file(str(original), backup_path)
+            self.assertTrue(ok)
+            self.assertEqual(original.read_text(encoding="utf-8"), "model = 'gpt-5'\n")
+
+
+class CodexConfigManagerTest(unittest.TestCase):
+    def test_preview_shows_restart_required(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=str(tmpdir))
+            preview = mgr.preview_write_provider()
+            self.assertTrue(preview["restart_required"])
+            self.assertEqual(preview["auth_mode"], "none")
+
+    def test_write_provider_config_creates_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=str(tmpdir))
+            result = mgr.write_provider_config(preserve_official_auth=True)
+            self.assertTrue(result["success"])
+            self.assertTrue(mgr.config_path.exists())
+            config = load_config_toml(str(mgr.config_path))
+            self.assertEqual(config.get("model_provider"), "codex_enhance_manager")
+
+    def test_preserve_official_oauth_does_not_touch_auth(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=str(tmpdir))
+            auth_data = {"access_token": "eyJhbGciOiJ...", "expires_at": 1234567890}
+            save_auth_json(str(mgr.auth_path), auth_data)
+
+            result = mgr.write_provider_config(preserve_official_auth=True)
+            self.assertTrue(result["success"])
+            loaded_auth = load_auth_json(str(mgr.auth_path))
+            self.assertEqual(loaded_auth.get("access_token"), "eyJhbGciOiJ...")
+
+    def test_restore_config_from_backup(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=str(tmpdir))
+            save_config_toml(str(mgr.config_path), {"model": "original"})
+            result = mgr.write_provider_config(preserve_official_auth=True)
+            self.assertTrue(result["success"])
+
+            restore_result = mgr.restore_config()
+            self.assertTrue(restore_result["success"])
+            self.assertTrue(restore_result["restart_required"])
+            restored = load_config_toml(str(mgr.config_path))
+            self.assertEqual(restored.get("model"), "original")
+
+    def test_redact_auth_hides_secrets(self):
+        data = {
+            "access_token": "secret-token",
+            "api_key": "sk-123",
+            "refresh_token": "refresh-me",
+            "id_token": "id-me",
+            "safe_field": "visible",
+        }
+        redacted = redact_auth_for_preview(data)
+        self.assertEqual(redacted["access_token"], "********")
+        self.assertEqual(redacted["api_key"], "********")
+        self.assertEqual(redacted["refresh_token"], "********")
+        self.assertEqual(redacted["id_token"], "********")
+        self.assertEqual(redacted["safe_field"], "visible")
+
+
+class RollbackTest(unittest.TestCase):
+    @patch("codex_config.save_config_toml")
+    def test_rollback_on_config_write_failure(self, mock_save):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=str(tmpdir))
+            mgr.backup_dir = Path(tmpdir) / "backups"
+            original = {"model": "original-model", "custom_key": 42}
+            save_config_toml(str(mgr.config_path), original)
+            original_text = mgr.config_path.read_text(encoding="utf-8")
+
+            mock_save.side_effect = PermissionError("mock disk full")
+
+            result = mgr.write_provider_config(preserve_official_auth=True)
+            self.assertFalse(result["success"])
+            self.assertTrue(result["errors"])
+            self.assertTrue(any("config.toml write failed" in e for e in result["errors"]))
+            self.assertIn("config_toml", result["backups"])
+
+            # 验证 rollback 后 config.toml 内容与写入前一致
+            restored_text = mgr.config_path.read_text(encoding="utf-8")
+            self.assertEqual(restored_text, original_text)
+
+    def test_no_rollback_when_write_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=str(tmpdir))
+            mgr.backup_dir = Path(tmpdir) / "backups"
+            save_config_toml(str(mgr.config_path), {"model": "original"})
+
+            result = mgr.write_provider_config(preserve_official_auth=True)
+            self.assertTrue(result["success"])
+            self.assertEqual(len(result["errors"]), 0)
+            self.assertIn("config_toml", result["backups"])
+
+            # 验证确实写入了新配置
+            loaded = load_config_toml(str(mgr.config_path))
+            self.assertEqual(loaded.get("model_provider"), "codex_enhance_manager")
+
+
+class TOMLEscapingTest(unittest.TestCase):
+    def test_roundtrip_string_with_quotes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.toml"
+            original = {
+                "defaults": {
+                    "system_prompt": 'You are a "helpful" assistant.',
+                    "multiline": "Line one\nLine two",
+                    "backslash": "C:\\Users\\test",
+                },
+            }
+            save_config_toml(str(path), original)
+            loaded = load_config_toml(str(path))
+            self.assertEqual(loaded["defaults"]["system_prompt"], 'You are a "helpful" assistant.')
+            self.assertEqual(loaded["defaults"]["multiline"], "Line one\nLine two")
+            self.assertEqual(loaded["defaults"]["backslash"], "C:\\Users\\test")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,6 +1,20 @@
 """
 auto_detect.py - 自动检测 Codex 相关路径
 自动发现 Codex 数据库、CLI、Codex++ 和 Sessions 目录
+
+设计意图：
+  - 降低新用户配置门槛：首次启动时自动探测 Codex 安装位置，无需手动填写路径。
+  - 多源探测：不依赖单一来源，从环境变量、标准安装路径、注册表、PATH 等多处搜索。
+  - 优先级排序：当存在多个候选时，选择「最可能正确」的那个（如 state_*.sqlite
+    按编号取最大值，因为 Codex 升级时会创建更高编号的数据库）。
+
+Windows 平台特殊性：
+  - 同时搜索 %LOCALAPPDATA% 和 %APPDATA%：不同版本 Codex 的默认安装路径不同。
+  - 注册表搜索 detect_codex_plus_plus：Windows 安装程序通常会在
+    Uninstall 注册表键中写入 InstallLocation。
+  - where codex（PATH 搜索）：Windows 的 where 命令类似 Unix 的 which，
+    但输出可能包含多行，取第一行即可。
+  - creationflags=CREATE_NO_WINDOW：子进程不弹窗，避免用户体验受损。
 """
 import os
 import glob
@@ -172,7 +186,25 @@ def detect_archived_dir() -> str:
 
 
 def read_codex_config() -> Dict:
-    """读取 ~/.codex/config.toml 获取当前 model_provider 和 model"""
+    """
+    读取 ~/.codex/config.toml 获取当前 model_provider 和 model。
+    底层复用 codex_config.load_config_toml，避免 TOML 解析重复实现。
+
+    设计意图：
+      - 为 auto_detect.py 和 sync.py 提供统一的 config.toml 读取入口。
+      - 多键名兼容：model_provider / modelProvider / provider，覆盖不同版本。
+      - [defaults] 子表回退：Codex 某些版本将默认值放在 [defaults] 下。
+      - mcp_servers.CODEX_CLI_PATH 探测：从 MCP 服务器配置中提取 Codex CLI 路径。
+
+    边界条件：
+      - 文件不存在时返回空值字典，不抛出异常。
+      - 所有路径字段通过 os.path.isfile 校验，不存在时不返回。
+
+    Returns:
+        {"model_provider": str, "model": str, "codex_cli_path": str}
+    """
+    from codex_config import load_config_toml
+
     codex_home = Path.home() / ".codex"
     config_path = codex_home / "config.toml"
 
@@ -183,21 +215,13 @@ def read_codex_config() -> Dict:
             "codex_cli_path": "",
         }
 
-    try:
-        import tomllib
-        with open(config_path, "rb") as f:
-            data = tomllib.load(f)
-    except ImportError:
-        # Python < 3.11 fallback
-        try:
-            import tomli
-            with open(config_path, "rb") as f:
-                data = tomli.load(f)
-        except ImportError:
-            # 简易行解析
-            return _simple_toml_parse(config_path)
-    except Exception:
-        return _simple_toml_parse(config_path)
+    data = load_config_toml(str(config_path))
+    if not data:
+        return {
+            "model_provider": "",
+            "model": "",
+            "codex_cli_path": "",
+        }
 
     result = {
         "model_provider": "",
@@ -235,33 +259,23 @@ def read_codex_config() -> Dict:
     return result
 
 
-def _simple_toml_parse(config_path: Path) -> Dict:
-    """简易 TOML 行解析（只解析顶层 key=value）"""
-    result = {
-        "model_provider": "",
-        "model": "",
-        "codex_cli_path": "",
-    }
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or line.startswith("[") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip().strip("\"'")
-                if key in ("model_provider", "modelProvider", "provider"):
-                    result["model_provider"] = value
-                elif key == "model":
-                    result["model"] = value
-    except Exception:
-        pass
-    return result
-
-
 def detect_all() -> Dict:
-    """检测所有路径，返回完整字典"""
+    """
+    检测所有路径，返回完整字典。
+
+    这是 /api/detect 端点的底层实现，供前端「自动检测」按钮调用。
+    一次性探测所有关键路径，避免用户逐个手动填写。
+
+    Returns:
+        {
+            "db_path": str,
+            "codex_cli_path": str,
+            "codex_plus_plus_path": str,
+            "sessions_dir": str,
+            "archived_dir": str,
+            "codex_config": Dict,
+        }
+    """
     return {
         "db_path": detect_codex_db(),
         "codex_cli_path": detect_codex_cli(),

@@ -48,7 +48,23 @@
         </div>
         <!-- Nav -->
         <nav class="flex-1 py-4 px-3 space-y-1">
-            <button onclick="navigateTo('stats')" data-nav="stats" class="nav-btn active w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+            <button onclick="navigateTo('overview')" data-nav="overview" class="nav-btn active w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 13h6V4H4v9zm10 7h6V4h-6v16zM4 20h6v-4H4v4z"/></svg>
+                <span data-i18n="navOverview">Overview</span>
+            </button>
+            <button onclick="navigateTo('quick-setup')" data-nav="quick-setup" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <span data-i18n="navQuickSetup">Quick Setup</span>
+            </button>
+            <button onclick="navigateTo('providers')" data-nav="providers" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M6 7v10a2 2 0 002 2h8a2 2 0 002-2V7M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                <span data-i18n="navProviders">Providers</span>
+            </button>
+            <button onclick="navigateTo('codex-integration')" data-nav="codex-integration" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                <span data-i18n="navCodexIntegration">Codex Integration</span>
+            </button>
+            <button onclick="navigateTo('stats')" data-nav="stats" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
                 <span data-i18n="navStats">Token Dashboard</span>
             </button>
@@ -77,8 +93,28 @@
 
     <!-- Main Content -->
     <main class="flex-1 overflow-auto">
+        <!-- Overview Page -->
+        <div id="page-overview" class="page active p-6 space-y-6">
+            <div id="enhance-overview-root"></div>
+        </div>
+
+        <!-- Quick Setup Page -->
+        <div id="page-quick-setup" class="page p-6 space-y-6">
+            <div id="quick-setup-root"></div>
+        </div>
+
+        <!-- Providers Page -->
+        <div id="page-providers" class="page p-6 space-y-6">
+            <div id="providers-root"></div>
+        </div>
+
+        <!-- Codex Integration Page -->
+        <div id="page-codex-integration" class="page p-6 space-y-6">
+            <div id="codex-integration-root"></div>
+        </div>
+
         <!-- Stats Page -->
-        <div id="page-stats" class="page active p-6 space-y-6">
+        <div id="page-stats" class="page p-6 space-y-6">
             <!-- Realtime Notice -->
             <div class="card bg-dark-950/50 border-accent-500/20">
                 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -436,6 +472,11 @@
                         <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">用于读取代理数据库中的 cache/token 字段；官方 API 和自定义 API 只要经过代理都可统计。</p>
                     </div>
                     <div>
+                        <label class="text-xs text-dark-400" data-i18n="providerStorePath">Provider Registry Path</label>
+                        <input id="setting-provider-store-path" type="text" class="input mt-1">
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="providerStoreDesc">Stores local provider registry only; it does not write Codex auth or config.</p>
+                    </div>
+                    <div>
                         <label class="text-xs text-dark-400" data-i18n="pageSize">Page Size</label>
                         <input id="setting-page-size" type="number" class="input mt-1" min="10" max="200">
                     </div>
@@ -479,7 +520,7 @@
     </main>
 
     <!-- Toast notification -->
-    <div id="toast" class="fixed bottom-4 right-4 transform translate-y-20 opacity-0 transition-all duration-300 z-50">
+    <div id="toast" class="fixed bottom-4 right-4 z-50">
         <div id="toast-inner" class="px-4 py-3 rounded-lg shadow-lg text-sm font-medium"></div>
     </div>
 
@@ -491,6 +532,7 @@
     <script src="js/sessions.js"></script>
     <script src="js/sync.js"></script>
     <script src="js/backup.js"></script>
+    <script src="js/providers.js"></script>
     <script src="js/settings.js"></script>
 </body>
 </html>

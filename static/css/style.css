@@ -1,4 +1,126 @@
-/* style.css - Codex History Manager 自定义样式 */
+/* style.css - Codex Enhance Manager 动画美化版 */
+/* ============================================================
+   1. CSS 变量系统
+   2. 全局动画关键帧
+   3. 基础组件过渡
+   4. 页面切换动画
+   5. 卡片与容器动画
+   6. 按钮与交互元素
+   7. 列表项 stagger 进入
+   8. 表单与输入框
+   9. 侧边栏与导航
+   10. 表格与数据展示
+   11. Toast 与通知
+   12. 模态框与覆盖层
+   13. Token Monitor
+   14. Diff 与代码预览
+   15. 工具类
+   16. 响应式
+   ============================================================ */
+
+/* ─────────────── 1. CSS 变量 ───────────────
+   统一设计令牌：颜色、缓动曲线、阴影层级、圆角。
+   所有过渡时间使用 cubic-bezier(0.4,0,0.2,1) 实现 Material
+   风格的“先快后慢”手感；bounce 曲线用于数值/微交互的
+   弹性反馈。 */
+:root {
+  --bg-deep: #020617;
+  --bg-base: #0f172a;
+  --bg-elevated: #1e293b;
+  --bg-surface: rgba(30, 41, 59, 0.7);
+  --border-subtle: rgba(51, 65, 85, 0.5);
+  --border-hover: rgba(96, 165, 250, 0.35);
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --accent: #3b82f6;
+  --accent-glow: rgba(59, 130, 246, 0.25);
+  --emerald: #10b981;
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --purple: #a855f7;
+  --transition-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-bounce: 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.35), 0 2px 4px -2px rgba(0,0,0,0.25);
+  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.4), 0 4px 6px -4px rgba(0,0,0,0.3);
+  --shadow-glow: 0 0 20px -5px var(--accent-glow);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+}
+
+/* ─────────────── 2. 全局动画关键帧 ───────────────
+   所有关键帧均为通用原子动画，可被多个组件复用。
+   fadeInUp  是最常用的页面/卡片进入动画。
+   scaleIn   用于模态框、下拉菜单等“从中心弹出”场景。
+   shimmer   骨架屏扫光，background-size 必须 > 100%
+             才能让渐变边界在动画中不可见。
+   pulse-glow 输入框 focus 时的呼吸外发光。
+   count-bump 数值更新时的弹性放大，使用 bounce 曲线。 */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(18px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+  50%      { box-shadow: 0 0 16px 2px rgba(59,130,246,0.18); }
+}
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes count-bump {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+@keyframes ripple {
+  to { transform: scale(4); opacity: 0; }
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(100%) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(100%) scale(0.95); }
+}
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+  50%      { opacity: 0.85; box-shadow: 0 0 10px 2px rgba(16,185,129,0.25); }
+}
+@keyframes border-flow {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
 
 /* Smooth scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -6,420 +128,1069 @@
 ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #475569; }
 
-/* Card */
+/* ─────────────── 3. 基础组件过渡 ───────────────
+   全局默认过渡属性限制在 color/background/border/box-shadow
+   与 opacity，避免意外触发 layout 属性（width/height/top）
+   导致重排掉帧。will-change 在后续具体组件中按需声明。 */
+* {
+  transition-property: color, background-color, border-color, box-shadow, opacity;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─────────────── 4. 页面切换动画 ───────────────
+   SPA 路由切换时，旧页面先 opacity→0 并短暂 pointer-events:none
+   防止点击穿透；新页面从 translateY(14px) scale(0.985) 滑入。
+   will-change 提前告知浏览器准备合成层，减少首次切换白屏。 */
+.page {
+  display: block;
+  opacity: 0;
+  transform: translateY(14px) scale(0.985);
+  pointer-events: none;
+  transition: opacity var(--transition-slow), transform var(--transition-slow);
+  will-change: opacity, transform;
+}
+.page.active {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+/* 页面内元素 stagger 进入
+   .animate-in 由 JS 在渲染后注入；nth-child 选择器实现
+   40ms 等差延迟，最多覆盖 12 个同级子元素。超出部分
+   可自行追加选择器或改用 JS 动态计算 delay。 */
+.page.active .animate-in {
+  animation: fadeInUp var(--transition-slow) both;
+}
+.page.active .animate-in:nth-child(1)  { animation-delay: 0ms; }
+.page.active .animate-in:nth-child(2)  { animation-delay: 40ms; }
+.page.active .animate-in:nth-child(3)  { animation-delay: 80ms; }
+.page.active .animate-in:nth-child(4)  { animation-delay: 120ms; }
+.page.active .animate-in:nth-child(5)  { animation-delay: 160ms; }
+.page.active .animate-in:nth-child(6)  { animation-delay: 200ms; }
+.page.active .animate-in:nth-child(7)  { animation-delay: 240ms; }
+.page.active .animate-in:nth-child(8)  { animation-delay: 280ms; }
+.page.active .animate-in:nth-child(9)  { animation-delay: 320ms; }
+.page.active .animate-in:nth-child(10) { animation-delay: 360ms; }
+.page.active .animate-in:nth-child(11) { animation-delay: 400ms; }
+.page.active .animate-in:nth-child(12) { animation-delay: 440ms; }
+
+/* ─────────────── 5. 卡片与容器动画 ───────────────
+   card 采用 backdrop-filter 毛玻璃 + 半透背景，hover 时
+   translateY(-5px) 与 shadow-glow 叠加制造“浮起”体感。
+   ::before 伪元素实现渐变边框高光，hover 时 opacity 0→1
+   过渡，避免直接修改 border-color 产生的锯齿感。 */
 .card {
-    @apply bg-dark-800/80 backdrop-blur-sm border border-dark-700/60 rounded-xl p-5;
-    background: rgba(30, 41, 59, 0.8);
-    border: 1px solid rgba(51, 65, 85, 0.6);
-    border-radius: 8px;
-    padding: 1.25rem;
-    backdrop-filter: blur(10px);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255,255,255,0.03);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  backdrop-filter: blur(12px) saturate(1.2);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.025);
+  transition: transform var(--transition-base), box-shadow var(--transition-base), border-color var(--transition-base);
+  will-change: transform, box-shadow;
+  position: relative;
+  overflow: hidden;
+}
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.06), transparent 40%, transparent 60%, rgba(255,255,255,0.03));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--transition-base);
+}
+.card:hover {
+  transform: translateY(-5px);
+  box-shadow: var(--shadow-lg), var(--shadow-glow);
+  border-color: var(--border-hover);
+}
+.card:hover::before {
+  opacity: 1;
 }
 .card-title {
-    @apply text-sm font-semibold text-dark-300 uppercase tracking-wider mb-1;
-    margin-bottom: 0.25rem;
-    color: #cbd5e1;
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-transform: uppercase;
+  margin-bottom: 0.25rem;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 .card-label {
-    @apply text-xs text-dark-400 uppercase tracking-wider font-medium;
-    color: #94a3b8;
-    font-size: 0.75rem;
-    font-weight: 500;
-    text-transform: uppercase;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 .card-value {
-    @apply text-2xl font-bold text-white mt-1;
-    margin-top: 0.25rem;
-    color: #fff;
-    font-size: 1.5rem;
-    line-height: 2rem;
-    font-weight: 700;
+  margin-top: 0.25rem;
+  color: var(--text-primary);
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 700;
+  transition: transform var(--transition-bounce);
+}
+.card-value.bump {
+  animation: count-bump 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .card-sub {
-    @apply text-xs text-dark-400 mt-0.5;
-    margin-top: 0.125rem;
-    color: #94a3b8;
-    font-size: 0.75rem;
+  margin-top: 0.125rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
 }
 
-/* Button base */
+/* ─────────────── 6. 按钮与交互元素 ───────────────
+   所有按钮统一使用 radial-gradient 高光层 (::after) 在 hover
+   时显现，制造“光源从中心扩散”效果。active 时 scale(0.96)
+   提供明确的按压反馈，transition-duration 缩短至 80ms 让
+   按压感更干脆。ripple 由 JS 动态创建并附加到按钮内部。 */
 .btn {
-    @apply px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150 inline-flex items-center gap-2 cursor-pointer select-none;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    transition: background 150ms ease, color 150ms ease, border-color 150ms ease, transform 150ms ease;
-    cursor: pointer;
-    user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  overflow: hidden;
+  transition: transform var(--transition-fast), box-shadow var(--transition-base), background-color var(--transition-fast), border-color var(--transition-fast);
+  will-change: transform;
 }
-.btn:active { @apply scale-95; }
-.btn-primary {
-    @apply bg-accent-600 text-white hover:bg-accent-700 shadow-lg shadow-accent-600/20;
-    background: #2563eb;
-    color: #fff;
-    box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.2);
+.btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(255,255,255,0.12) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
 }
-.btn-primary:hover { background: #1d4ed8; }
-.btn-secondary {
-    @apply bg-dark-700 text-dark-200 hover:bg-dark-600 border border-dark-600;
-    background: #334155;
-    color: #e2e8f0;
-    border: 1px solid #475569;
+.btn:hover::after {
+  opacity: 1;
 }
-.btn-secondary:hover { background: #475569; }
-.btn-ghost {
-    @apply text-dark-300 hover:text-white hover:bg-dark-800;
-    color: #cbd5e1;
-    background: transparent;
-}
-.btn-ghost:hover { color: #fff; background: #1e293b; }
-.btn-danger {
-    @apply bg-red-600/20 text-red-400 hover:bg-red-600/30 border border-red-600/30;
-    color: #f87171;
-    background: rgba(220, 38, 38, 0.2);
-    border: 1px solid rgba(220, 38, 38, 0.3);
-}
-.btn-warning {
-    @apply bg-amber-600/20 text-amber-400 hover:bg-amber-600/30 border border-amber-600/30;
-    color: #fbbf24;
-    background: rgba(217, 119, 6, 0.2);
-    border: 1px solid rgba(217, 119, 6, 0.3);
-}
-.btn-success {
-    @apply bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-600/30;
-    color: #34d399;
-    background: rgba(5, 150, 105, 0.2);
-    border: 1px solid rgba(5, 150, 105, 0.3);
+.btn:active {
+  transform: scale(0.96) !important;
+  transition-duration: 80ms;
 }
 .btn:disabled {
-    @apply opacity-40 cursor-not-allowed pointer-events-none;
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
-/* Input */
+.btn-primary {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #fff;
+  box-shadow: 0 4px 14px -2px rgba(37, 99, 235, 0.35), inset 0 1px 0 rgba(255,255,255,0.1);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+}
+.btn-primary:hover {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  box-shadow: 0 6px 20px -2px rgba(37, 99, 235, 0.5), inset 0 1px 0 rgba(255,255,255,0.15);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background: linear-gradient(135deg, #334155, #1e293b);
+  color: var(--text-secondary);
+  border: 1px solid rgba(71, 85, 105, 0.6);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.btn-secondary:hover {
+  background: linear-gradient(135deg, #475569, #334155);
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.btn-ghost {
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+}
+.btn-ghost:hover {
+  color: #fff;
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(71, 85, 105, 0.4);
+}
+
+.btn-danger {
+  color: #fca5a5;
+  background: linear-gradient(135deg, rgba(220,38,38,0.18), rgba(153,27,27,0.12));
+  border: 1px solid rgba(220,38,38,0.25);
+}
+.btn-danger:hover {
+  background: linear-gradient(135deg, rgba(220,38,38,0.3), rgba(153,27,27,0.2));
+  border-color: rgba(248,113,113,0.4);
+  transform: translateY(-1px);
+}
+
+.btn-warning {
+  color: #fcd34d;
+  background: linear-gradient(135deg, rgba(217,119,6,0.18), rgba(180,83,9,0.12));
+  border: 1px solid rgba(217,119,6,0.25);
+}
+.btn-warning:hover {
+  background: linear-gradient(135deg, rgba(217,119,6,0.3), rgba(180,83,9,0.2));
+  border-color: rgba(251,191,36,0.4);
+  transform: translateY(-1px);
+}
+
+.btn-success {
+  color: #6ee7b7;
+  background: linear-gradient(135deg, rgba(5,150,105,0.18), rgba(4,120,87,0.12));
+  border: 1px solid rgba(5,150,105,0.25);
+}
+.btn-success:hover {
+  background: linear-gradient(135deg, rgba(5,150,105,0.3), rgba(4,120,87,0.2));
+  border-color: rgba(52,211,153,0.4);
+  transform: translateY(-1px);
+}
+
+/* Ripple 效果容器
+   .ripple 由 JS 在点击坐标生成，通过 scale(0→4) + opacity
+   衰减实现水波纹；pointer-events:none 确保不拦截后续事件。 */
+.btn-ripple {
+  position: relative;
+  overflow: hidden;
+}
+.ripple {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.25);
+  transform: scale(0);
+  animation: ripple 500ms linear;
+  pointer-events: none;
+}
+
+/* ─────────────── 7. 列表项 stagger 进入 ───────────────
+   .stagger-item 默认 opacity:0，由 JS 在 DOM 插入后按索引
+   设置 transitionDelay 并添加 .visible。CSS transition
+   比 keyframe 更利于中途取消或反向动画（如快速切换页面）。 */
+.stagger-item {
+  opacity: 0;
+  transform: translateY(14px) scale(0.97);
+  transition: opacity var(--transition-base), transform var(--transition-base), background-color var(--transition-fast), border-color var(--transition-fast);
+}
+.stagger-item.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+/* ─────────────── 8. 表单与输入框 ───────────────
+   focus 状态使用双层 box-shadow：内层 3px 聚焦环 + 外层
+   16px 扩散光晕，制造“光晕溢出”效果。translateY(-1px)
+   配合 focus 让输入框也产生轻微浮起，强化层级关系。 */
 .input {
-    @apply bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-dark-100 placeholder-dark-500 focus:outline-none focus:border-accent-500 focus:ring-1 focus:ring-accent-500/30 transition;
-    background: #1e293b;
-    border: 1px solid #475569;
-    border-radius: 8px;
-    color: #f1f5f9;
-    font-size: 0.875rem;
-    padding: 0.5rem 0.75rem;
-    transition: border-color 150ms ease, box-shadow 150ms ease;
+  background: var(--bg-elevated);
+  border: 1px solid rgba(71, 85, 105, 0.5);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base), transform var(--transition-fast);
+  position: relative;
+}
+.input:hover {
+  border-color: rgba(96, 165, 250, 0.3);
 }
 .input:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow), 0 0 16px -4px var(--accent-glow);
+  transform: translateY(-1px);
 }
 
-/* Nav button */
+/* Checkbox / Toggle 动画 */
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  transition: transform var(--transition-fast);
+}
+input[type="checkbox"]:active {
+  transform: scale(0.9);
+}
+
+/* ─────────────── 9. 侧边栏与导航 ───────────────
+   active 指示条使用 ::before + scaleY(0→1) 实现从中心向
+   两端展开的动画；hover 时 translateX(2px) 制造被“推开”
+   的物理感。背景使用 90deg 线性渐变，从 accent 色极淡
+   版本向透明过渡，保持视觉干净。 */
 .nav-btn {
-    @apply text-dark-400 hover:text-white hover:bg-dark-800;
-    color: #94a3b8;
+  color: var(--text-muted);
+  position: relative;
+  overflow: hidden;
+  transition: color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast);
 }
-.nav-btn:hover { color: #fff; background: #1e293b; }
+.nav-btn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%) scaleY(0);
+  width: 3px;
+  height: 60%;
+  background: linear-gradient(to bottom, var(--accent), #60a5fa);
+  border-radius: 0 4px 4px 0;
+  transition: transform var(--transition-base);
+}
+.nav-btn:hover {
+  color: #fff;
+  background: rgba(30, 41, 59, 0.6);
+  transform: translateX(2px);
+}
 .nav-btn.active {
-    @apply text-accent-400 bg-accent-500/10;
-    color: #60a5fa;
-    background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+  background: linear-gradient(90deg, rgba(59,130,246,0.08), transparent);
+}
+.nav-btn.active::before {
+  transform: translateY(-50%) scaleY(1);
 }
 
-/* Status dot */
+/* ─────────────── 10. 表格与数据展示 ───────────────
+   行 hover 时左侧 3px accent 指示条通过 scaleY(0→1) 从
+   顶部向下生长；::before 伪元素脱离文档流，不占用额外
+   宽度，避免表格列抖动。 */
+tbody tr {
+  border-bottom: 1px solid rgba(51, 65, 85, 0.35);
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+  position: relative;
+}
+tbody tr::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(to bottom, var(--accent), #60a5fa);
+  opacity: 0;
+  transform: scaleY(0);
+  transition: opacity var(--transition-fast), transform var(--transition-base);
+  border-radius: 0 3px 3px 0;
+}
+tbody tr:hover {
+  background-color: rgba(30, 41, 59, 0.5);
+}
+tbody tr:hover::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+/* Status dot
+   emerald 状态点附加 2.5s 无限 pulse 动画，模拟心跳节律；
+   hover 时 scale(1.3) 方便用户确认状态含义。 */
 .status-dot {
-    @apply w-2.5 h-2.5 rounded-full inline-block;
-    width: 0.625rem;
-    height: 0.625rem;
-    border-radius: 999px;
-    display: inline-block;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 999px;
+  display: inline-block;
+  transition: transform var(--transition-bounce), box-shadow var(--transition-base);
+}
+.status-dot.bg-emerald-500 {
+  animation: status-pulse 2.5s ease-in-out infinite;
+}
+.status-dot:hover {
+  transform: scale(1.3);
 }
 
-/* Page visibility */
-.page { display: none; }
-.page.active { display: block; }
+/* ─────────────── 11. Toast 与通知 ───────────────
+   Toast 使用 fixed 定位 + 关键帧动画（非 transition），
+   因为 toast 的显示/隐藏由 JS 定时器控制，关键帧更易
+   精确管理生命周期。show 使用 bounce 曲线制造“弹到指定
+   位置”的俏皮感；hide 使用 ease-in 制造“自然下坠”消失。 */
+.toast-info {
+  background: linear-gradient(135deg, rgba(37,99,235,0.85), rgba(30,58,138,0.8));
+  color: #fff;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  box-shadow: 0 8px 24px -4px rgba(37, 99, 235, 0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+}
+.toast-success {
+  background: linear-gradient(135deg, rgba(5,150,105,0.85), rgba(4,120,87,0.8));
+  color: #fff;
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  box-shadow: 0 8px 24px -4px rgba(5, 150, 105, 0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+}
+.toast-error {
+  background: linear-gradient(135deg, rgba(185,28,28,0.85), rgba(127,29,29,0.8));
+  color: #fff;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  box-shadow: 0 8px 24px -4px rgba(185, 28, 28, 0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+}
+.toast-warning {
+  background: linear-gradient(135deg, rgba(217,119,6,0.85), rgba(146,64,14,0.8));
+  color: #fff;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  box-shadow: 0 8px 24px -4px rgba(217, 119, 6, 0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+}
+#toast {
+  transition: opacity var(--transition-base), transform var(--transition-base);
+  will-change: opacity, transform;
+}
+#toast.show {
+  animation: toast-in 350ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+#toast.hide {
+  animation: toast-out 250ms ease-in forwards;
+}
 
-/* Modal */
+/* ─────────────── 12. 模态框与覆盖层 ───────────────
+   遮罩层使用 backdrop-filter:blur(8px) 制造景深模糊，
+   同时降低背景亮度（rgba(0,0,0,0.55)）。内容区从
+   scale(0.94) translateY(16px) 弹入，shadow 使用极大
+   模糊半径制造“悬浮于顶层”的空间感。 */
 .modal-overlay {
-    @apply fixed inset-0 bg-black/60 backdrop-blur-sm z-40 flex items-center justify-center p-4;
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1rem;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  transition: opacity var(--transition-base);
+  pointer-events: none;
+}
+.modal-overlay:not(.hidden) {
+  opacity: 1;
+  pointer-events: auto;
 }
 .modal-content {
-    @apply bg-dark-800 border border-dark-700 rounded-2xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl;
-    width: 100%;
-    max-width: 56rem;
-    max-height: 90vh;
-    overflow-y: auto;
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 12px;
-    padding: 1.5rem;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  width: 100%;
+  max-width: 56rem;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #1e293b, #172033);
+  border: 1px solid rgba(51, 65, 85, 0.7);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6), 0 0 40px -10px rgba(59, 130, 246, 0.1);
+  transform: scale(0.94) translateY(16px);
+  opacity: 0;
+  transition: transform var(--transition-slow), opacity var(--transition-slow);
+}
+.modal-overlay:not(.hidden) .modal-content {
+  transform: scale(1) translateY(0);
+  opacity: 1;
 }
 
-/* Message bubbles */
-.msg-user {
-    @apply bg-accent-600/15 border-accent-500/20;
+/* ─────────────── 13. Enhance Manager 专属组件动画 ───────────────
+   以下样式服务于 providers.js / codex-integration 等页面：
+   status-pill、enhance-step-row、guardrail-line、preview-tile
+   等组件均遵循“hover 微位移 + 边框/阴影变色”的统一模式，
+   保持视觉语言一致。preview-number 在父级 hover 时通过
+   CSS 父子选择器联动放大，避免额外 JS 事件监听。 */
+.enhance-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
 }
-.msg-assistant {
-    @apply bg-dark-700 border-dark-600;
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(71, 85, 105, 0.6);
+  background: linear-gradient(135deg, rgba(15,23,42,0.7), rgba(2,6,23,0.5));
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  white-space: nowrap;
+  transition: transform var(--transition-fast), box-shadow var(--transition-base), border-color var(--transition-base);
 }
-.msg-system {
-    @apply bg-purple-600/15 border-purple-500/20;
+.status-pill:hover {
+  transform: translateY(-1px);
 }
-.msg-tool {
-    @apply bg-amber-600/15 border-amber-500/20;
+.status-pill-emerald {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: linear-gradient(135deg, rgba(5,150,105,0.12), rgba(6,78,59,0.08));
+  color: #6ee7b7;
+  box-shadow: 0 0 12px -3px rgba(16,185,129,0.15);
+}
+.status-pill-amber {
+  border-color: rgba(245, 158, 11, 0.36);
+  background: linear-gradient(135deg, rgba(217,119,6,0.12), rgba(120,53,15,0.08));
+  color: #fcd34d;
+  box-shadow: 0 0 12px -3px rgba(245,158,11,0.15);
+}
+.status-pill-accent {
+  border-color: rgba(59, 130, 246, 0.4);
+  background: linear-gradient(135deg, rgba(37,99,235,0.14), rgba(30,58,138,0.08));
+  color: #93c5fd;
+  box-shadow: 0 0 12px -3px rgba(59,130,246,0.15);
+}
+.status-pill-red {
+  border-color: rgba(248, 113, 113, 0.42);
+  background: linear-gradient(135deg, rgba(185,28,28,0.14), rgba(127,29,29,0.08));
+  color: #fca5a5;
+  box-shadow: 0 0 12px -3px rgba(248,113,113,0.15);
+}
+.status-pill-dark {
+  color: var(--text-muted);
 }
 
-/* Code block in messages */
-.msg-content pre {
-    @apply bg-dark-950 rounded-lg p-3 my-2 overflow-x-auto text-xs;
+.enhance-step-list {
+  display: grid;
+  gap: 0.75rem;
 }
-.msg-content code {
-    @apply font-mono text-accent-300;
+.enhance-step-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, rgba(15,23,42,0.5), rgba(2,6,23,0.3));
+  transition: transform var(--transition-fast), border-color var(--transition-base), box-shadow var(--transition-base);
 }
-
-/* Chart container */
-.chart-container {
-    @apply mt-3 relative;
-    height: 250px;
-}
-.chart-container:has(.range-placeholder) {
-    height: auto;
-    min-height: 120px;
-}
-
-/* Toast */
-.toast-success { @apply bg-emerald-600 text-white; }
-.toast-error { @apply bg-red-600 text-white; }
-.toast-info { @apply bg-accent-600 text-white; }
-.toast-warning { @apply bg-amber-600 text-white; }
-
-/* Provider bar */
-.provider-bar {
-    @apply flex items-center gap-3 py-1.5;
-}
-.provider-bar-fill {
-    @apply h-6 rounded bg-accent-500/30 flex items-center px-2 text-xs font-medium text-accent-300 transition-all duration-500;
+.enhance-step-row:hover {
+  transform: translateX(4px);
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-glow);
 }
 
-/* Table rows hover */
-tbody tr { @apply border-b border-dark-700/50 hover:bg-dark-800/50 transition; }
-
-/* Empty state */
-.empty-state {
-    @apply flex flex-col items-center justify-center py-10 text-dark-400;
+.guardrail-line {
+  padding: 0.7rem 0.75rem;
+  border-left: 3px solid rgba(59, 130, 246, 0.5);
+  background: linear-gradient(90deg, rgba(15,23,42,0.5), transparent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: transform var(--transition-fast), border-color var(--transition-base);
 }
-.empty-state-icon {
-    @apply w-12 h-12 mb-3 opacity-30;
+.guardrail-line:hover {
+  transform: translateX(3px);
+  border-left-color: rgba(96, 165, 250, 0.8);
 }
 
-/* Pulse animation */
-@keyframes pulse-dot {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+.preset-list {
+  display: grid;
+  gap: 0.75rem;
 }
-.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+.preset-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, rgba(15,23,42,0.5), rgba(2,6,23,0.3));
+  transition: transform var(--transition-fast), box-shadow var(--transition-base), border-color var(--transition-base);
+}
+.preset-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-md), var(--shadow-glow);
+}
 
-/* Floating token monitor */
+.compact-preset-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(71, 85, 105, 0.6);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, rgba(15,23,42,0.55), rgba(2,6,23,0.35));
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  text-align: left;
+  transition: transform var(--transition-fast), background var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base);
+  cursor: pointer;
+}
+.compact-preset-btn:hover {
+  background: linear-gradient(135deg, rgba(30,41,59,0.85), rgba(15,23,42,0.6));
+  border-color: rgba(96, 165, 250, 0.5);
+  box-shadow: var(--shadow-glow);
+  transform: translateX(3px);
+}
+
+.preview-tile {
+  min-height: 8rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, rgba(15,23,42,0.5), rgba(2,6,23,0.3));
+  transition: transform var(--transition-fast), box-shadow var(--transition-base), border-color var(--transition-base);
+}
+.preview-tile:hover {
+  transform: translateY(-4px);
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-md), var(--shadow-glow);
+}
+.preview-number {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+  border-radius: 999px;
+  color: #bfdbfe;
+  background: linear-gradient(135deg, rgba(37,99,235,0.3), rgba(30,58,138,0.2));
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  font-weight: 700;
+  transition: transform var(--transition-bounce), box-shadow var(--transition-base);
+}
+.preview-tile:hover .preview-number {
+  transform: scale(1.1);
+  box-shadow: 0 0 12px rgba(59,130,246,0.25);
+}
+
+.provider-list-item {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, rgba(15,23,42,0.5), rgba(2,6,23,0.3));
+  text-align: left;
+  transition: transform var(--transition-fast), background var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.provider-list-item::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(to bottom, var(--accent), #60a5fa);
+  transform: scaleY(0);
+  transition: transform var(--transition-base);
+}
+.provider-list-item:hover,
+.provider-list-item.active {
+  background: linear-gradient(135deg, rgba(30,41,59,0.85), rgba(15,23,42,0.6));
+  border-color: rgba(96, 165, 250, 0.45);
+  box-shadow: var(--shadow-glow);
+}
+.provider-list-item.active::after {
+  transform: scaleY(1);
+}
+.provider-list-item:hover {
+  transform: translateX(3px);
+}
+
+.advanced-box {
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 0.9rem;
+  background: linear-gradient(135deg, rgba(15,23,42,0.4), rgba(2,6,23,0.25));
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+}
+.advanced-box:hover {
+  border-color: rgba(96, 165, 250, 0.25);
+}
+.advanced-box summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: color var(--transition-fast);
+}
+.advanced-box summary:hover {
+  color: #fff;
+}
+
+.preview-code {
+  max-height: 18rem;
+  overflow: auto;
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(2,6,23,0.85), rgba(2,6,23,0.7));
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+}
+.preview-code:hover {
+  border-color: rgba(96, 165, 250, 0.3);
+  box-shadow: inset 0 0 20px rgba(59,130,246,0.05);
+}
+
+.catalog-entry {
+  padding: 0.75rem;
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, rgba(15,23,42,0.5), rgba(2,6,23,0.3));
+  transition: transform var(--transition-fast), border-color var(--transition-base), box-shadow var(--transition-base);
+}
+.catalog-entry:hover {
+  transform: translateY(-2px) scale(1.01);
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-glow);
+}
+
+.badge,
+.mini-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.35rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(71, 85, 105, 0.6);
+  color: var(--text-secondary);
+  background: linear-gradient(135deg, rgba(30,41,59,0.7), rgba(15,23,42,0.5));
+  font-size: 0.7rem;
+  transition: transform var(--transition-fast), box-shadow var(--transition-base);
+}
+.badge:hover,
+.mini-badge:hover {
+  transform: scale(1.05);
+}
+
+/* ─────────────── 14. Token Monitor ───────────────
+   悬浮窗动画分三条路径：
+   1) 进入：opacity + translateY + scale 同时过渡；
+   2) 收起：max-height + opacity + padding 联动压缩；
+   3) 报警：border-color 变 amber + box-shadow 脉冲。
+   .updated 类通过 JS 在数值变化时临时附加，触发 count-bump
+   关键帧，结束后自动移除。 */
 .token-monitor {
-    position: fixed;
-    right: 18px;
-    bottom: 86px;
-    z-index: 45;
-    width: min(300px, calc(100vw - 32px));
-    color: #e2e8f0;
-    background: rgba(15, 23, 42, 0.72);
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    border-radius: 14px;
-    box-shadow: 0 20px 46px rgba(2, 6, 23, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(18px) saturate(1.4);
-    transform: translateY(0) scale(1);
-    opacity: 1;
-    transition: opacity 180ms ease, transform 180ms ease, border-color 180ms ease;
-    overflow: hidden;
+  position: fixed;
+  right: 18px;
+  bottom: 86px;
+  z-index: 45;
+  width: min(300px, calc(100vw - 32px));
+  color: var(--text-secondary);
+  background: linear-gradient(180deg, rgba(15,23,42,0.78), rgba(2,6,23,0.65));
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 46px rgba(2, 6, 23, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(18px) saturate(1.4);
+  transform: translateY(0) scale(1);
+  opacity: 1;
+  transition: opacity 220ms ease, transform 220ms ease, border-color 220ms ease;
+  overflow: hidden;
 }
 .token-monitor.hidden-monitor {
-    opacity: 0;
-    transform: translateY(16px) scale(0.97);
-    pointer-events: none;
+  opacity: 0;
+  transform: translateY(18px) scale(0.96);
+  pointer-events: none;
 }
 .token-monitor.alert {
-    border-color: rgba(245, 158, 11, 0.78);
-    animation: monitor-alert 1.2s ease-in-out infinite;
+  border-color: rgba(245, 158, 11, 0.7);
+  animation: monitor-alert 1.4s ease-in-out infinite;
 }
 .token-monitor-header {
-    @apply flex items-center justify-between gap-3 px-4 py-3 cursor-move select-none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    cursor: move;
-    user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  cursor: move;
+  user-select: none;
 }
 .token-monitor-kicker {
-    @apply text-[11px] font-semibold uppercase text-dark-400;
-    color: #94a3b8;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 .token-monitor-mode {
-    @apply text-sm font-medium text-white;
-    color: #fff;
-    font-size: 0.875rem;
-    font-weight: 500;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
 }
 .token-monitor-icon-btn {
-    @apply w-7 h-7 rounded-md inline-flex items-center justify-center text-dark-300 hover:text-white hover:bg-white/10 transition;
-    width: 1.75rem;
-    height: 1.75rem;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    color: #cbd5e1;
-    background: transparent;
-    border: 0;
-    transition: background 150ms ease, color 150ms ease;
+  width: 1.75rem;
+  height: 1.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  transition: background var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 .token-monitor-icon-btn:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.1);
 }
 .token-monitor-body {
-    @apply px-4 pb-4;
-    padding: 0 1rem 1rem;
-    transition: max-height 180ms ease, opacity 180ms ease, padding 180ms ease;
-    max-height: 160px;
+  padding: 0 1rem 1rem;
+  transition: max-height 200ms ease, opacity 200ms ease, padding 200ms ease;
+  max-height: 160px;
 }
 .token-monitor.compact .token-monitor-body {
-    max-height: 0;
-    opacity: 0;
-    padding-bottom: 0;
-    overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  padding-bottom: 0;
+  overflow: hidden;
 }
 .token-monitor-value-row {
-    @apply flex items-baseline gap-2;
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
 }
 .token-monitor-value {
-    @apply text-3xl font-bold text-white tabular-nums;
-    color: #fff;
-    font-size: 1.875rem;
-    line-height: 2.25rem;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    transition: transform 160ms ease, color 160ms ease;
+  color: #fff;
+  font-size: 1.875rem;
+  line-height: 2.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  transition: transform 180ms ease, color 180ms ease;
 }
 .token-monitor-value.updated {
-    transform: scale(1.06);
-    color: #67e8f9;
+  animation: count-bump 450ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .token-monitor-unit {
-    @apply text-xs text-dark-400;
-    color: #94a3b8;
-    font-size: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
 }
 .token-monitor-progress {
-    @apply mt-3 h-2 rounded-full bg-dark-900/80 overflow-hidden;
-    margin-top: 0.75rem;
-    height: 0.5rem;
-    border-radius: 999px;
-    background: rgba(15, 23, 42, 0.8);
-    overflow: hidden;
+  margin-top: 0.75rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.8);
+  overflow: hidden;
 }
 .token-monitor-progress-fill {
-    height: 100%;
-    width: 0%;
-    border-radius: 999px;
-    background: linear-gradient(90deg, #22c55e, #06b6d4);
-    transition: width 260ms ease, background 180ms ease;
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22c55e, #06b6d4);
+  transition: width 350ms cubic-bezier(0.4, 0, 0.2, 1), background 200ms ease;
 }
 .token-monitor.alert .token-monitor-progress-fill {
-    background: linear-gradient(90deg, #f59e0b, #ef4444);
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
 }
 .token-monitor-meta {
-    @apply flex items-center justify-between mt-2 text-[11px] text-dark-400;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 0.5rem;
-    color: #94a3b8;
-    font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 @keyframes monitor-alert {
-    0%, 100% { box-shadow: 0 20px 46px rgba(2, 6, 23, 0.42), 0 0 0 rgba(245, 158, 11, 0); }
-    50% { box-shadow: 0 20px 46px rgba(2, 6, 23, 0.42), 0 0 28px rgba(245, 158, 11, 0.24); }
+  0%, 100% { box-shadow: 0 20px 46px rgba(2, 6, 23, 0.42), 0 0 0 rgba(245, 158, 11, 0); }
+  50% { box-shadow: 0 20px 46px rgba(2, 6, 23, 0.42), 0 0 28px rgba(245, 158, 11, 0.28); }
 }
 
+/* ─────────────── 15. Diff 预览 ───────────────
+   diff-added/changed/removed 均使用左侧色条 + 渐变背景，
+   hover 时 translateX(2px) 制造“被推出”的动势，配合
+   box-shadow 光晕让差异行在扫视时更容易被捕捉。 */
+.diff-added {
+  color: #34d399;
+  background: linear-gradient(90deg, rgba(6,78,59,0.25), rgba(6,78,59,0.1));
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  border-left: 2px solid rgba(52,211,153,0.4);
+  transition: transform var(--transition-fast), box-shadow var(--transition-base);
+}
+.diff-added:hover {
+  transform: translateX(2px);
+  box-shadow: 0 0 10px rgba(52,211,153,0.1);
+}
+.diff-changed {
+  color: #fbbf24;
+  background: linear-gradient(90deg, rgba(120,53,15,0.25), rgba(120,53,15,0.1));
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  border-left: 2px solid rgba(251,191,36,0.4);
+  transition: transform var(--transition-fast), box-shadow var(--transition-base);
+}
+.diff-changed:hover {
+  transform: translateX(2px);
+  box-shadow: 0 0 10px rgba(251,191,36,0.1);
+}
+.diff-removed {
+  color: #f87171;
+  background: linear-gradient(90deg, rgba(127,29,29,0.25), rgba(127,29,29,0.1));
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  border-left: 2px solid rgba(248,113,113,0.4);
+  transition: transform var(--transition-fast), box-shadow var(--transition-base);
+}
+.diff-removed:hover {
+  transform: translateX(2px);
+  box-shadow: 0 0 10px rgba(248,113,113,0.1);
+}
+
+/* ─────────────── 16. 消息气泡动画 ───────────────
+   四种消息类型使用不同的渐变方向与边框色，hover 时
+   向消息来源方向微位移（user 向右、assistant 向左），
+   强化对话轮次的视觉流向。 */
+.msg-user {
+  background: linear-gradient(135deg, rgba(37,99,235,0.12), rgba(30,58,138,0.06));
+  border: 1px solid rgba(59,130,246,0.15);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  transition: transform var(--transition-fast), box-shadow var(--transition-base);
+}
+.msg-user:hover {
+  transform: translateX(3px);
+  box-shadow: var(--shadow-glow);
+}
+.msg-assistant {
+  background: linear-gradient(135deg, rgba(51,65,85,0.3), rgba(30,41,59,0.15));
+  border: 1px solid rgba(71,85,105,0.25);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  transition: transform var(--transition-fast), box-shadow var(--transition-base);
+}
+.msg-assistant:hover {
+  transform: translateX(-3px);
+  box-shadow: 0 0 20px -5px rgba(148,163,184,0.1);
+}
+.msg-system {
+  background: linear-gradient(135deg, rgba(168,85,247,0.1), rgba(88,28,135,0.05));
+  border: 1px solid rgba(168,85,247,0.15);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+}
+.msg-tool {
+  background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(146,64,14,0.05));
+  border: 1px solid rgba(245,158,11,0.15);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+}
+
+/* ─────────────── 17. 工具类 ───────────────
+   原子工具类供 HTML/JS 快速调用，避免重复写长串样式：
+   - glass：毛玻璃通用面板
+   - glow-accent：accent 色外发光
+   - hover-lift：通用 hover 浮起
+   - text-gradient：蓝紫渐变文字
+   - shimmer：骨架屏扫光背景
+   - empty-state：空数据占位居中 */
+.glass {
+  background: linear-gradient(135deg, rgba(30,41,59,0.6), rgba(15,23,42,0.4));
+  backdrop-filter: blur(12px) saturate(1.2);
+  border: 1px solid rgba(51, 65, 85, 0.4);
+}
+.glow-accent {
+  box-shadow: 0 0 20px -5px var(--accent-glow);
+}
+.hover-lift {
+  transition: transform var(--transition-base), box-shadow var(--transition-base);
+}
+.hover-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+.text-gradient {
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* 骨架屏 shimmer */
+.shimmer {
+  background: linear-gradient(90deg, rgba(30,41,59,0.4) 25%, rgba(51,65,85,0.5) 50%, rgba(30,41,59,0.4) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* 空状态 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 1rem;
+  color: var(--text-muted);
+  animation: fadeIn 500ms ease both;
+}
+
+/* ─────────────── 18. 响应式 ───────────────
+   860px 断点：侧边栏改为顶部 sticky 横向滚动导航，
+   释放纵向空间给主内容区。520px 断点：进一步收紧
+   card padding 与按钮尺寸，防止移动端溢出。 */
 @media (max-width: 860px) {
-    body {
-        flex-direction: column;
-    }
-    #sidebar {
-        position: sticky;
-        top: 0;
-        z-index: 35;
-        width: 100%;
-        height: auto;
-        border-right: 0;
-        border-bottom: 1px solid rgba(51, 65, 85, 0.7);
-    }
-    #sidebar nav {
-        display: flex;
-        overflow-x: auto;
-        padding: 10px 12px;
-        gap: 6px;
-        flex: none;
-    }
-    #sidebar nav .nav-btn {
-        width: auto;
-        white-space: nowrap;
-        flex: 0 0 auto;
-    }
-    #sidebar-status {
-        display: none;
-    }
-    .page {
-        padding: 16px !important;
-    }
-    .modal-content {
-        border-radius: 12px;
-        padding: 16px;
-    }
+  body { flex-direction: column; }
+  #sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 35;
+    width: 100%;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.7);
+  }
+  #sidebar nav {
+    display: flex;
+    overflow-x: auto;
+    padding: 10px 12px;
+    gap: 6px;
+    flex: none;
+  }
+  #sidebar nav .nav-btn {
+    width: auto;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+  #sidebar-status { display: none; }
+  .page { padding: 16px !important; }
+  .modal-content { border-radius: var(--radius-md); padding: 16px; }
 }
 
 @media (max-width: 520px) {
-    .card {
-        padding: 16px;
-        border-radius: 10px;
-    }
-    .btn {
-        padding-left: 12px;
-        padding-right: 12px;
-    }
-    .token-monitor {
-        right: 10px;
-        bottom: 74px;
-        width: calc(100vw - 20px);
-    }
+  .card { padding: 16px; border-radius: var(--radius-sm); }
+  .btn { padding-left: 12px; padding-right: 12px; }
+  .token-monitor {
+    right: 10px;
+    bottom: 74px;
+    width: calc(100vw - 20px);
+  }
+}
+
+/* ─────────────── 19. 批量操作与代理控制 ───────────────
+   btn-success-flash 用于操作成功后给按钮施加短暂绿色脉冲，
+   替代 toast 的轻量反馈；配合 JS setTimeout 在 1.2s 后移除类名。 */
+.btn-success-flash {
+  animation: btn-success-pulse 1.2s ease;
+}
+
+@keyframes btn-success-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); border-color: rgba(16,185,129,0.5); }
+  70%  { box-shadow: 0 0 0 8px rgba(16,185,129,0); border-color: rgba(16,185,129,0.3); }
+  100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); border-color: rgba(71,85,105,0.6); }
+}
+
+/* provider-list-item 内的 select 需要覆盖 hover 位移，防止展开时抖动 */
+.provider-list-item select {
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.provider-list-item select:focus {
+  transform: none;
+}
+
+/* ─────────────── 20. 打印优化 ───────────────
+   打印时隐藏所有交互层（侧边栏、toast、悬浮窗、模态框），
+   card 阴影去除并改用浅色边框，保证黑白打印可读性。 */
+@media print {
+  #sidebar, #toast, .token-monitor, .modal-overlay { display: none !important; }
+  .card { box-shadow: none; border: 1px solid #ccc; }
 }
