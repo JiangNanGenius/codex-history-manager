@@ -60,6 +60,10 @@
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M6 7v10a2 2 0 002 2h8a2 2 0 002-2V7M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
                 <span data-i18n="navProviders">Providers</span>
             </button>
+            <button onclick="navigateTo('amr')" data-nav="amr" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h7m0 0L8 3m3 3L8 9m8 9h4m-4 0l3-3m-3 3l3 3M4 18h7a4 4 0 004-4V6h5"/></svg>
+                <span>AMR</span>
+            </button>
             <button onclick="navigateTo('codex-integration')" data-nav="codex-integration" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
                 <span data-i18n="navCodexIntegration">Codex Integration</span>
@@ -106,6 +110,11 @@
         <!-- Providers Page -->
         <div id="page-providers" class="page p-6 space-y-6">
             <div id="providers-root"></div>
+        </div>
+
+        <!-- Adaptive Model Rotation Page -->
+        <div id="page-amr" class="page p-6 space-y-6">
+            <div id="amr-root"></div>
         </div>
 
         <!-- Codex Integration Page -->
@@ -778,6 +787,7 @@
     <script src="js/sync.js"></script>
     <script src="js/backup.js"></script>
     <script src="js/providers.js"></script>
+    <script src="js/amr.js"></script>
     <script src="js/settings.js"></script>
 </body>
 </html>

@@ -80,6 +80,7 @@ function navigateTo(page) {
         case 'overview': loadEnhanceOverview(); break;
         case 'quick-setup': loadQuickSetup(); break;
         case 'providers': loadProvidersPage(); break;
+        case 'amr': loadAmrPage(); break;
         case 'codex-integration': loadCodexIntegrationPage(); break;
         case 'stats':
             loadStats();
