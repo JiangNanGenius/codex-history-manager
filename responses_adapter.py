@@ -1057,6 +1057,22 @@ def models_url(base_url: str) -> str:
     return url
 
 
+def responses_url(base_url: str) -> str:
+    """Build Responses URL from a provider base URL."""
+    skip_version_prefix = base_url.strip().endswith("#")
+    base = base_url.strip().rstrip("#").rstrip("/")
+    if base.lower().endswith("/responses"):
+        return base
+    origin_only = "://" not in base or (base.split("://", 1)[1].count("/") == 0)
+    if skip_version_prefix or _has_version_suffix(base) or not origin_only:
+        url = f"{base}/responses"
+    else:
+        url = f"{base}/v1/responses"
+    while "/v1/v1" in url:
+        url = url.replace("/v1/v1", "/v1")
+    return url
+
+
 def _has_version_suffix(base_url: str) -> bool:
     segment = base_url.split("/")[-1]
     if segment.startswith("v") and len(segment) > 1 and segment[1].isdigit():

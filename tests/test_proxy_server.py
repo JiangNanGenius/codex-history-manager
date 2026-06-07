@@ -467,6 +467,131 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertIn("messages", upstream_body)
 
     @patch("proxy_server._upstream_request")
+    def test_responses_endpoint_with_native_responses_provider(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "openai-responses",
+                    "short_alias": "oresp",
+                    "display_name": "OpenAI Responses",
+                    "enabled": True,
+                    "base_url": "https://api.openai.com/v1",
+                    "api_format": "openai_responses",
+                    "api_key": "sk-openai",
+                    "models": [{"id": "gpt-5", "enabled": True}],
+                }
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "id": "resp_1",
+            "object": "response",
+            "status": "completed",
+            "model": "gpt-5",
+            "output": [],
+        }).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/responses",
+            body={
+                "model": "oresp/gpt-5",
+                "input": "test",
+                "previous_response_id": "resp_prev",
+            },
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        response_json = json.loads(body.decode())
+        self.assertEqual(response_json["id"], "resp_1")
+
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://api.openai.com/v1/responses")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "gpt-5")
+        self.assertEqual(upstream_body["previous_response_id"], "resp_prev")
+        self.assertNotIn("messages", upstream_body)
+
+    def test_domestic_partial_responses_blocks_unverified_custom_tool(self):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "bailian",
+                    "short_alias": "qwen",
+                    "display_name": "Bailian",
+                    "enabled": True,
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "api_format": "openai_responses",
+                    "api_key": "sk-qwen",
+                    "responses_profile": {
+                        "domestic_responses": True,
+                        "partial_compatibility": True,
+                        "requires_adapter": True,
+                        "verified_docs_url": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses",
+                    },
+                    "models": [{"id": "qwen3.7-plus", "enabled": True}],
+                }
+            ]
+        })
+
+        handler, raw = self._make_handler(
+            "/v1/responses",
+            body={
+                "model": "qwen/qwen3.7-plus",
+                "input": "test",
+                "tools": [{"type": "custom", "name": "shell"}],
+            },
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 400)
+        response_json = json.loads(body.decode())
+        self.assertEqual(response_json["error"]["type"], "domestic_responses_unsupported")
+        self.assertIn("unsupported tool types: custom", response_json["error"]["message"])
+
+    def test_domestic_partial_responses_blocks_compact(self):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "ark",
+                    "short_alias": "ark",
+                    "display_name": "Ark",
+                    "enabled": True,
+                    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+                    "api_format": "openai_responses",
+                    "api_key": "sk-ark",
+                    "responses_profile": {
+                        "domestic_responses": True,
+                        "partial_compatibility": True,
+                        "requires_adapter": True,
+                        "verified_docs_url": "https://www.volcengine.com/docs/82379/1585128?lang=zh",
+                    },
+                    "models": [{"id": "doubao-seed", "enabled": True}],
+                }
+            ]
+        })
+
+        handler, raw = self._make_handler(
+            "/v1/responses/compact",
+            body={"model": "ark/doubao-seed", "input": "compact me"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 400)
+        response_json = json.loads(body.decode())
+        self.assertEqual(response_json["error"]["type"], "domestic_responses_unsupported")
+        self.assertIn("/responses/compact", response_json["error"]["message"])
+
+    @patch("proxy_server._upstream_request")
     def test_responses_endpoint_with_anthropic_provider(self, mock_upstream):
         self._write_providers({
             "providers": [

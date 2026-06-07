@@ -56,6 +56,7 @@ from responses_adapter import (
     is_responses_proxy_path,
     responses_error_from_upstream,
     responses_to_chat_completions,
+    responses_url,
 )
 
 DEFAULT_PROXY_PORT = 8080
@@ -246,6 +247,14 @@ def _has_header(headers: Dict[str, str], name: str) -> bool:
     return any(key.lower() == lower_name for key in headers)
 
 
+def _provider_api_format(provider: Dict[str, Any]) -> str:
+    api_format = provider.get("api_format")
+    if api_format in {"openai_responses", "openai_chat", "anthropic", "custom"}:
+        return str(api_format)
+    # Legacy provider stores created before api_format existed were Chat-based.
+    return "openai_chat"
+
+
 def _is_port_available(port: int) -> bool:
     try:
         test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -255,6 +264,77 @@ def _is_port_available(port: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def _native_responses_unsupported_reason(
+    provider: Dict[str, Any],
+    request_json: Dict[str, Any],
+    compact: bool = False,
+) -> Optional[str]:
+    """Return a clear reason when a partial domestic Responses route is unsafe."""
+    profile = provider.get("responses_profile") if isinstance(provider.get("responses_profile"), dict) else {}
+    if not profile.get("domestic_responses"):
+        return None
+
+    issues: List[str] = []
+    if compact and profile.get("requires_adapter"):
+        issues.append("/responses/compact")
+
+    unsupported_tools = _domestic_unsupported_tool_types(request_json.get("tools"))
+    if unsupported_tools:
+        issues.append(f"unsupported tool types: {', '.join(sorted(unsupported_tools))}")
+
+    unsupported_items = _domestic_unsupported_input_items(request_json.get("input"))
+    if unsupported_items:
+        issues.append(f"unsupported input item/content types: {', '.join(sorted(unsupported_items))}")
+
+    if not issues:
+        return None
+
+    docs_url = str(profile.get("verified_docs_url") or "")
+    return (
+        "Domestic Responses compatibility is partial for this provider. "
+        f"Blocked until adapter/probe verification: {'; '.join(issues)}. "
+        f"Docs: {docs_url or 'not configured'}"
+    )
+
+
+def _domestic_unsupported_tool_types(tools: Any) -> List[str]:
+    if not isinstance(tools, list):
+        return []
+    # Bailian docs explicitly cover custom function tools and named built-ins.
+    # Other Codex/OpenAI custom tool shapes need provider-specific adapters.
+    allowed = {"function", "web_search", "code_interpreter", "web_extractor"}
+    unsupported: List[str] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        tool_type = str(tool.get("type") or "")
+        if tool_type and tool_type not in allowed:
+            unsupported.append(tool_type)
+    return unsupported
+
+
+def _domestic_unsupported_input_items(input_value: Any) -> List[str]:
+    unsupported: List[str] = []
+    if not isinstance(input_value, list):
+        return unsupported
+    unsupported_item_types = {"custom_tool_call", "custom_tool_call_output"}
+    unsupported_content_types = {"input_image", "input_file"}
+    for item in input_value:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type") or "")
+        if item_type in unsupported_item_types:
+            unsupported.append(item_type)
+        content = item.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    part_type = str(part.get("type") or "")
+                    if part_type in unsupported_content_types:
+                        unsupported.append(part_type)
+    return unsupported
 
 
 def _upstream_request(
@@ -502,14 +582,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             _send_error(self, 400, "Invalid JSON", "invalid_request_error")
             return
 
-        # 转换 Responses -> Chat Completions
-        try:
-            chat_request = responses_to_chat_completions(request_json)
-        except Exception as e:
-            _send_error(self, 400, f"Request conversion failed: {e}", "invalid_request_error")
-            return
-
-        model_id = chat_request.get("model", "") or request_json.get("model", "")
+        model_id = request_json.get("model", "")
         provider = _resolve_provider_for_model(model_id)
         if not provider:
             _send_error(
@@ -526,9 +599,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
             _send_error(self, 502, f"Provider '{provider.get('id')}' has no base_url configured.", "provider_misconfigured")
             return
 
-        # 替换 model ID
-        if provider.get("api_format") == "anthropic":
+        api_format = _provider_api_format(provider)
+        if api_format == "anthropic":
             self._handle_responses_anthropic(request_json, provider, base_url)
+            return
+        if api_format == "openai_responses":
+            self._handle_responses_native(request_json, provider, base_url, compact=compact)
+            return
+
+        # 转换 Responses -> Chat Completions
+        try:
+            chat_request = responses_to_chat_completions(request_json)
+        except Exception as e:
+            _send_error(self, 400, f"Request conversion failed: {e}", "invalid_request_error")
             return
 
         upstream_model = _extract_model_id_for_upstream(chat_request, provider)
@@ -564,6 +647,54 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._forward_responses_stream(upstream_resp, request_json)
         else:
             self._forward_responses_non_streaming(upstream_resp, request_json)
+
+    def _handle_responses_native(
+        self,
+        request_json: Dict[str, Any],
+        provider: Dict[str, Any],
+        base_url: str,
+        compact: bool = False,
+    ) -> None:
+        """Forward a Responses request to an upstream that natively speaks Responses."""
+        unsupported_reason = _native_responses_unsupported_reason(provider, request_json, compact=compact)
+        if unsupported_reason:
+            _send_error(self, 400, unsupported_reason, "domestic_responses_unsupported")
+            return
+
+        upstream_request = dict(request_json)
+        upstream_model = _extract_model_id_for_upstream(request_json, provider)
+        upstream_request["model"] = upstream_model
+        upstream_body = json.dumps(upstream_request, ensure_ascii=False).encode("utf-8")
+
+        upstream_url = responses_url(base_url)
+        headers = _build_upstream_headers(provider)
+        is_stream = bool(upstream_request.get("stream"))
+
+        try:
+            upstream_resp = _upstream_request(
+                "POST",
+                upstream_url,
+                headers,
+                body=upstream_body,
+                stream=is_stream,
+            )
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="replace") if e.fp else "{}"
+            self.send_response(e.code)
+            for header_key, header_value in e.headers.items():
+                if header_key.lower() in ("content-type", "content-length"):
+                    self.send_header(header_key, header_value)
+            self.end_headers()
+            self.wfile.write(error_body.encode("utf-8"))
+            return
+        except (urllib.error.URLError, socket.timeout, OSError) as e:
+            _send_error(self, 502, f"Responses upstream connection failed: {e}", "upstream_error")
+            return
+
+        if is_stream:
+            self._forward_stream(upstream_resp)
+        else:
+            self._forward_non_streaming(upstream_resp)
 
     def _handle_responses_anthropic(
         self,

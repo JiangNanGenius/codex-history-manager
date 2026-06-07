@@ -7,6 +7,7 @@ from responses_adapter import (
     responses_error_from_upstream,
     chat_completions_url,
     models_url,
+    responses_url,
     is_responses_proxy_path,
     is_chat_completions_proxy_path,
     is_models_proxy_path,
@@ -272,6 +273,12 @@ class UrlHelperTest(unittest.TestCase):
     def test_models_url(self):
         self.assertEqual(models_url("https://api.openai.com"), "https://api.openai.com/v1/models")
         self.assertEqual(models_url("https://api.openai.com/v1"), "https://api.openai.com/v1/models")
+
+    def test_responses_url(self):
+        self.assertEqual(responses_url("https://api.openai.com"), "https://api.openai.com/v1/responses")
+        self.assertEqual(responses_url("https://api.openai.com/v1"), "https://api.openai.com/v1/responses")
+        self.assertEqual(responses_url("https://api.openai.com/v1/responses"), "https://api.openai.com/v1/responses")
+        self.assertEqual(responses_url("https://proxy.example/v1#"), "https://proxy.example/v1/responses")
 
     def test_proxy_path_matchers(self):
         self.assertTrue(is_responses_proxy_path("/v1/responses"))
