@@ -658,6 +658,60 @@
             </div>
             <div class="card">
                 <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h3 class="card-title">Startup & Elevation</h3>
+                        <p class="text-xs text-dark-500 mt-1">Windows startup changes require explicit confirmation; preview and status are read-only.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="loadStartupStatus()" class="btn btn-secondary text-xs">Refresh Status</button>
+                        <button onclick="previewStartupSettings()" class="btn btn-secondary text-xs">Preview</button>
+                    </div>
+                </div>
+                <div id="startup-status-strip" class="mt-4 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-2 text-sm text-dark-300">Status not loaded.</div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+                    <div>
+                        <label class="text-xs text-dark-400">Mode</label>
+                        <select id="setting-startup-mode" class="input mt-1 w-full">
+                            <option value="disabled">Disabled</option>
+                            <option value="startup_folder">Startup Folder</option>
+                            <option value="scheduled_task_highest">Task Scheduler: Highest</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Task Name</label>
+                        <input id="setting-startup-task-name" type="text" class="input mt-1" placeholder="CodexEnhanceManager">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Startup File Name</label>
+                        <input id="setting-startup-shortcut-name" type="text" class="input mt-1" placeholder="CodexEnhanceManager.cmd">
+                    </div>
+                    <div class="lg:col-span-2">
+                        <label class="text-xs text-dark-400">Target Path</label>
+                        <input id="setting-startup-target-path" type="text" class="input mt-1" placeholder="Leave empty to use this app">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Arguments</label>
+                        <input id="setting-startup-arguments" type="text" class="input mt-1" placeholder="Optional">
+                    </div>
+                </div>
+                <div class="flex flex-wrap items-center gap-4 mt-4">
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input id="setting-startup-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <span>Enable at Logon</span>
+                    </label>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input id="setting-startup-auto-elevate" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <span>Request Highest Privileges</span>
+                    </label>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="applyStartupSettings()" class="btn btn-warning text-xs">Apply Startup Change</button>
+                        <button onclick="removeStartupSettings()" class="btn btn-danger text-xs">Remove Startup Entry</button>
+                    </div>
+                </div>
+                <pre id="startup-preview-result" class="preview-code mt-4">No preview yet.</pre>
+            </div>
+            <div class="card">
+                <div class="flex flex-wrap items-center justify-between gap-3">
                     <h3 class="card-title">Storage & Cleanup</h3>
                     <div class="flex flex-wrap gap-2">
                         <button onclick="loadStorageInfo()" class="btn btn-secondary text-xs">Refresh</button>

@@ -39,6 +39,7 @@ async function loadSettings() {
             loadCleanupPreview(),
             loadUninstallPreview(),
             loadCurrencySettings(),
+            loadStartupStatus(),
         ]);
 
         const hasDbPath = data.db_path && String(data.db_path).trim().length > 0;
@@ -67,6 +68,11 @@ function populateSettingsForm(data) {
         'setting-request-log-path': 'request_log_path',
         'setting-request-log-retention-days': 'request_log_retention_days',
         'setting-request-log-max-mb': 'request_log_max_mb',
+        'setting-startup-mode': 'startup_mode',
+        'setting-startup-task-name': 'startup_task_name',
+        'setting-startup-shortcut-name': 'startup_shortcut_name',
+        'setting-startup-target-path': 'startup_target_path',
+        'setting-startup-arguments': 'startup_arguments',
         'setting-theme-preset': 'theme_preset',
         'setting-page-size': 'page_size',
         'setting-backup-interval': 'backup_interval_hours',
@@ -84,11 +90,14 @@ function populateSettingsForm(data) {
         'setting-auto-backup': 'auto_backup',
         'setting-use-codex-pp': 'use_codex_plus_plus',
         'setting-dark-mode': 'dark_mode',
+        'setting-startup-enabled': 'startup_enabled',
+        'setting-startup-auto-elevate': 'startup_auto_elevate',
     };
     for (const [elId, key] of Object.entries(checkboxFields)) {
         const el = document.getElementById(elId);
         if (el && data[key] !== undefined) el.checked = Boolean(data[key]);
     }
+    syncStartupControls();
 
     const themeCustom = normalizeThemeCustom(data.theme_custom || {});
     for (const [key, elId] of THEME_FIELDS) {
@@ -170,6 +179,163 @@ async function previewCurrencyRate() {
     }
 }
 
+function readStartupSettingsFromForm() {
+    let mode = document.getElementById('setting-startup-mode')?.value || 'disabled';
+    let enabled = document.getElementById('setting-startup-enabled')?.checked || mode !== 'disabled';
+    let autoElevate = document.getElementById('setting-startup-auto-elevate')?.checked || mode === 'scheduled_task_highest';
+    if (!enabled) {
+        mode = 'disabled';
+        autoElevate = false;
+    } else if (autoElevate) {
+        mode = 'scheduled_task_highest';
+    } else if (mode === 'disabled') {
+        mode = 'startup_folder';
+    }
+    return {
+        startup_enabled: enabled,
+        startup_mode: mode,
+        startup_auto_elevate: autoElevate,
+        startup_task_name: document.getElementById('setting-startup-task-name')?.value || 'CodexEnhanceManager',
+        startup_shortcut_name: document.getElementById('setting-startup-shortcut-name')?.value || 'CodexEnhanceManager.cmd',
+        startup_target_path: document.getElementById('setting-startup-target-path')?.value || '',
+        startup_arguments: document.getElementById('setting-startup-arguments')?.value || '',
+    };
+}
+
+function syncStartupControls(source = '') {
+    const modeEl = document.getElementById('setting-startup-mode');
+    const enabledEl = document.getElementById('setting-startup-enabled');
+    const autoEl = document.getElementById('setting-startup-auto-elevate');
+    if (!modeEl || !enabledEl || !autoEl) return;
+    if (source === 'setting-startup-enabled' && !enabledEl.checked) {
+        modeEl.value = 'disabled';
+        autoEl.checked = false;
+    } else if (source === 'setting-startup-auto-elevate' && autoEl.checked) {
+        enabledEl.checked = true;
+        modeEl.value = 'scheduled_task_highest';
+    } else if (source === 'setting-startup-auto-elevate' && !autoEl.checked && modeEl.value === 'scheduled_task_highest') {
+        enabledEl.checked = true;
+        modeEl.value = 'startup_folder';
+    } else if (modeEl.value === 'scheduled_task_highest') {
+        enabledEl.checked = true;
+        autoEl.checked = true;
+    } else if (modeEl.value === 'startup_folder') {
+        enabledEl.checked = true;
+        autoEl.checked = false;
+    } else if (!enabledEl.checked) {
+        modeEl.value = 'disabled';
+        autoEl.checked = false;
+    } else if (autoEl.checked) {
+        modeEl.value = 'scheduled_task_highest';
+    } else if (enabledEl.checked && modeEl.value === 'disabled') {
+        modeEl.value = 'startup_folder';
+    }
+}
+
+async function loadStartupStatus() {
+    const strip = document.getElementById('startup-status-strip');
+    if (!strip) return;
+    try {
+        const data = await api('/api/startup/status');
+        renderStartupStatus(data);
+    } catch (err) {
+        strip.className = 'mt-4 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200';
+        strip.textContent = 'Startup status failed: ' + err.message;
+    }
+}
+
+async function previewStartupSettings() {
+    const resultEl = document.getElementById('startup-preview-result');
+    if (!resultEl) return;
+    try {
+        syncStartupControls();
+        const data = await api('/api/startup/preview', {
+            method: 'POST',
+            body: JSON.stringify(readStartupSettingsFromForm()),
+        });
+        resultEl.textContent = JSON.stringify(data, null, 2);
+        renderStartupStatus({
+            supported: data.supported,
+            configured: {
+                startup_mode: data.mode,
+                startup_enabled: data.enabled,
+                startup_auto_elevate: data.auto_elevate,
+            },
+            startup_entry_path: data.startup_entry_path,
+            startup_entry_exists: false,
+            scheduled_task_exists: false,
+            scheduled_task_checked: false,
+        });
+    } catch (err) {
+        renderInlineError('startup-preview-result', err.message);
+    }
+}
+
+async function applyStartupSettings() {
+    const confirmation = prompt('Type MODIFY_WINDOWS_STARTUP to apply the startup change.');
+    if (confirmation !== 'MODIFY_WINDOWS_STARTUP') {
+        showToast('Startup change cancelled', 'warning');
+        return;
+    }
+    try {
+        syncStartupControls();
+        const result = await api('/api/startup/apply', {
+            method: 'POST',
+            body: JSON.stringify({ ...readStartupSettingsFromForm(), confirmation }),
+        });
+        renderStartupMutationResult(result);
+        await loadStartupStatus();
+        showToast('Startup change applied', 'success');
+    } catch (err) {
+        renderInlineError('startup-preview-result', err.message);
+    }
+}
+
+async function removeStartupSettings() {
+    const confirmation = prompt('Type MODIFY_WINDOWS_STARTUP to remove the startup entry.');
+    if (confirmation !== 'MODIFY_WINDOWS_STARTUP') {
+        showToast('Startup removal cancelled', 'warning');
+        return;
+    }
+    try {
+        const result = await api('/api/startup/remove', {
+            method: 'POST',
+            body: JSON.stringify({ ...readStartupSettingsFromForm(), confirmation }),
+        });
+        renderStartupMutationResult(result);
+        await loadStartupStatus();
+        await loadSettings();
+        showToast('Startup entry removed', 'success');
+    } catch (err) {
+        renderInlineError('startup-preview-result', err.message);
+    }
+}
+
+function renderStartupStatus(data) {
+    const strip = document.getElementById('startup-status-strip');
+    if (!strip) return;
+    const configured = data.configured || {};
+    const mode = configured.startup_mode || data.mode || 'disabled';
+    const supported = data.supported !== false;
+    const active = mode !== 'disabled';
+    const cls = !supported
+        ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+        : active
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+            : 'border-dark-800 bg-dark-950/40 text-dark-300';
+    const entry = data.startup_entry_exists ? 'startup file present' : 'startup file absent';
+    const task = data.scheduled_task_exists ? 'scheduled task present' : 'scheduled task absent';
+    const checked = data.scheduled_task_checked === false ? 'task not checked' : task;
+    strip.className = `mt-4 rounded-md border ${cls} px-4 py-2 text-sm`;
+    strip.textContent = `${supported ? 'Windows integration supported' : 'Unsupported platform'} · Mode: ${mode} · ${entry} · ${checked}`;
+}
+
+function renderStartupMutationResult(result) {
+    const resultEl = document.getElementById('startup-preview-result');
+    if (!resultEl) return;
+    resultEl.textContent = JSON.stringify(result, null, 2);
+}
+
 function resolveTheme(data) {
     const presetName = (data && data.theme_preset) || 'dark';
     const preset = THEME_PRESETS[presetName] || THEME_PRESETS.dark;
@@ -235,6 +401,7 @@ async function saveSettings() {
         request_log_path: document.getElementById('setting-request-log-path')?.value || '',
         request_log_retention_days: parseInt(document.getElementById('setting-request-log-retention-days')?.value, 10) || 30,
         request_log_max_mb: parseFloat(document.getElementById('setting-request-log-max-mb')?.value) || 50,
+        ...readStartupSettingsFromForm(),
         theme_preset: document.getElementById('setting-theme-preset')?.value || 'dark',
         theme_custom: readThemeCustomFromForm(),
         monitor_fields: {
@@ -609,6 +776,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!el) return;
             el.addEventListener('input', previewThemeFromForm);
             el.addEventListener('change', previewThemeFromForm);
+        });
+    ['setting-startup-mode', 'setting-startup-enabled', 'setting-startup-auto-elevate']
+        .forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('change', () => syncStartupControls(id));
         });
 });
 

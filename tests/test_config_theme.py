@@ -17,6 +17,30 @@ class ConfigThemeTest(unittest.TestCase):
         self.assertEqual(cfg._data["theme_custom"]["text_primary"], DEFAULT_CONFIG["theme_custom"]["text_primary"])
         self.assertEqual(cfg._data["theme_custom"]["text_muted"], DEFAULT_CONFIG["theme_custom"]["text_muted"])
 
+    def test_startup_defaults_are_added_and_normalized(self):
+        cfg = Config.__new__(Config)
+        cfg._data = {"startup_enabled": True, "startup_mode": "unexpected"}
+
+        cfg._normalize_storage_defaults()
+
+        self.assertEqual(cfg._data["startup_mode"], "startup_folder")
+        self.assertFalse(cfg._data["startup_auto_elevate"])
+        self.assertEqual(cfg._data["startup_task_name"], DEFAULT_CONFIG["startup_task_name"])
+        self.assertEqual(cfg._data["startup_shortcut_name"], DEFAULT_CONFIG["startup_shortcut_name"])
+
+    def test_disabled_startup_clears_auto_elevate(self):
+        cfg = Config.__new__(Config)
+        cfg._data = {
+            "startup_enabled": False,
+            "startup_mode": "scheduled_task_highest",
+            "startup_auto_elevate": True,
+        }
+
+        cfg._normalize_storage_defaults()
+
+        self.assertEqual(cfg._data["startup_mode"], "disabled")
+        self.assertFalse(cfg._data["startup_auto_elevate"])
+
 
 if __name__ == "__main__":
     unittest.main()

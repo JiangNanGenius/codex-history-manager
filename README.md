@@ -49,7 +49,7 @@ The project is intentionally local-first: provider settings, backups, request-lo
 | Protocol adapters | Convert verified Responses, Chat, Anthropic Messages, tools, images, SSE events, and domestic Responses profiles only where behavior is sourced. |
 | Cost and currency | Estimate input/output/cache/reasoning/media cost, preserve per-request FX snapshots, support manual FX overrides, and keep online FX blocked until verified. |
 | Config recovery | Preview Codex config diffs, audit approval/sandbox settings, create backups, restore config/auth, preserve official login state, and repair moved session/project metadata. |
-| Settings polish | Use richer built-in themes, full custom theme colors, theme import/export, settings import/export, cleanup preview/execute, and uninstall cleanup write-lock. |
+| Settings polish | Use richer built-in themes, full custom theme colors, theme import/export, settings import/export, startup/elevation preview, cleanup preview/execute, and uninstall cleanup write-lock. |
 
 ## The Desktop Surface
 
@@ -60,7 +60,7 @@ The app is organized as an operational console rather than a marketing dashboard
 - **Providers**: preset-first setup, focused editing, section-local testing, status strips, custom `User-Agent`, and visibility policy.
 - **Unified Model Catalog**: preview before writing anything into Codex.
 - **Local Proxy**: start/stop/status, actual bound port, route explanations, and log retention.
-- **Settings**: storage paths, theme editor, import/export, safe cleanup, uninstall cleanup, currency settings, and monitor field customization.
+- **Settings**: storage paths, theme editor, import/export, startup/elevation controls, safe cleanup, uninstall cleanup, currency settings, and monitor field customization.
 - **Diagnostics and Recovery**: redacted diagnostics, approval/sandbox audit, backup/restore, rollback, and move repair.
 
 ## Safety Model
@@ -68,6 +68,7 @@ The app is organized as an operational console rather than a marketing dashboard
 | Boundary | Rule |
 | --- | --- |
 | Codex auth/config/model catalog/process writes | Read-only checks, dry-runs, and previews are allowed in this Codex window. Real mutation testing must be performed manually by the user. |
+| Windows startup/elevation writes | Status and preview are safe to run here. Creating/removing Startup folder entries or Task Scheduler jobs requires typed confirmation and manual user testing. |
 | Protocol conversion | No guessed adapters. Responses, Chat, Anthropic, SSE, tool, media, and domestic provider differences must be verified from official docs/source or explicit source analysis. |
 | Secrets | API keys, bearer tokens, and sensitive headers are redacted in diagnostics and request logs. |
 | Request logs | Local proxy logs are metadata-only. They do not store prompts, request bodies, raw headers, or raw upstream responses. |
@@ -178,6 +179,7 @@ After sync, sessions remain visible across account/provider switches.
 | `app.py` | Flask API surface and desktop backend orchestration. |
 | `main.py` | PyWebView desktop entry point. |
 | `app_paths.py`, `config.py` | Documents-based storage and settings migration. |
+| `startup_manager.py` | Windows Startup folder and Task Scheduler preview/apply/remove integration with confirmation guardrails. |
 | `providers.py` | Provider registry, presets, schema normalization, and redaction. |
 | `model_catalog.py` | Unified Model Catalog generation and preview. |
 | `model_rotation.py`, `amr_registry.py` | Adaptive Model Rotation engine and persistence. |
@@ -200,6 +202,7 @@ After sync, sessions remain visible across account/provider switches.
 | Protocol verification | Continue source/doc comparison for official Codex, domestic Responses, Anthropic, tools, SSE, compacting, and media item behavior. |
 | Media adapters | Add real Alibaba Bailian and Volcengine Ark image/video adapters after payload, polling, cancel, and response formats are verified. |
 | Approval and sandbox repair | Expand the source-verified approval/sandbox audit into corruption repair presets once user-manual write testing is complete. |
+| Startup integration | Manually verify Startup folder and Task Scheduler highest-privilege flows from the packaged EXE, then polish UX around UAC/task errors. |
 | Cost dashboard | Add deeper native/display currency comparison, stale FX warnings, provider-reported-vs-estimated cost, and media pricing tiers. |
 | Quota integrations | Layer provider-specific balance/quota endpoints on top of the generic probe scaffold. |
 | UI polish | Continue cleaning legacy copy, icons, i18n coverage, screenshots, and narrow-window layout checks. |

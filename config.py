@@ -47,6 +47,13 @@ DEFAULT_CONFIG = {
     "request_log_path": str(app_data_path("logs", "proxy_requests.jsonl")),
     "request_log_retention_days": 30,
     "request_log_max_mb": 50,
+    "startup_enabled": False,
+    "startup_mode": "disabled",
+    "startup_auto_elevate": False,
+    "startup_task_name": "CodexEnhanceManager",
+    "startup_shortcut_name": "CodexEnhanceManager.cmd",
+    "startup_target_path": "",
+    "startup_arguments": "",
     "proxy_port": 8080,
     "dark_mode": True,
     "theme_preset": "dark",
@@ -202,6 +209,32 @@ class Config:
             self._data["display_currency"] = DEFAULT_CONFIG["display_currency"]
         if not self._data.get("exchange_rate_source"):
             self._data["exchange_rate_source"] = DEFAULT_CONFIG["exchange_rate_source"]
+        for key in (
+            "startup_enabled",
+            "startup_mode",
+            "startup_auto_elevate",
+            "startup_task_name",
+            "startup_shortcut_name",
+            "startup_target_path",
+            "startup_arguments",
+        ):
+            if key not in self._data:
+                self._data[key] = copy.deepcopy(DEFAULT_CONFIG[key])
+        if self._data.get("startup_mode") not in {"disabled", "startup_folder", "scheduled_task_highest"}:
+            self._data["startup_mode"] = DEFAULT_CONFIG["startup_mode"]
+        self._data["startup_enabled"] = bool(self._data.get("startup_enabled"))
+        self._data["startup_auto_elevate"] = bool(self._data.get("startup_auto_elevate"))
+        if not self._data["startup_enabled"]:
+            self._data["startup_mode"] = "disabled"
+            self._data["startup_auto_elevate"] = False
+        elif self._data["startup_auto_elevate"]:
+            self._data["startup_mode"] = "scheduled_task_highest"
+        elif self._data["startup_mode"] == "disabled":
+            self._data["startup_mode"] = "startup_folder"
+        elif self._data["startup_mode"] == "scheduled_task_highest":
+            self._data["startup_auto_elevate"] = True
+        for key in ("startup_task_name", "startup_shortcut_name", "startup_target_path", "startup_arguments"):
+            self._data[key] = str(self._data.get(key) or DEFAULT_CONFIG[key])
         try:
             self._data["exchange_rate_ttl_hours"] = max(int(self._data.get("exchange_rate_ttl_hours", 24)), 1)
         except (TypeError, ValueError):

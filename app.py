@@ -68,6 +68,7 @@ from currency import (
 from costing import estimate_request_cost, pricing_preview_payload
 from quota import QuotaManager
 from request_logs import RequestLogStore
+from startup_manager import STARTUP_CONFIG_KEYS, StartupManager
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -108,6 +109,7 @@ def create_app() -> Flask:
     )
     amr_registry = AMRRegistry()
     quota_manager = QuotaManager(lambda: provider_registry.list_providers(include_secrets=True).get("providers", []))
+    startup_manager = StartupManager()
 
     diagnostics_collector = DiagnosticsCollector(
         config=config,
@@ -126,6 +128,17 @@ def create_app() -> Flask:
             retention_days=config.get("request_log_retention_days", 30),
             max_mb=config.get("request_log_max_mb", 50),
         )
+
+    def _startup_settings_from_body(body: Dict) -> Dict:
+        settings = config.get_all()
+        for key in STARTUP_CONFIG_KEYS:
+            if key in body:
+                settings[key] = body[key]
+        return settings
+
+    def _startup_config_update(settings: Dict) -> Dict:
+        normalized = startup_manager.normalize_settings(settings)
+        return {key: normalized.get(key, settings.get(key, "")) for key in STARTUP_CONFIG_KEYS}
 
     def _sync_proxy_request_log_config():
         proxy_server.request_log_path = config.get("request_log_path", "")
@@ -667,6 +680,54 @@ def create_app() -> Flask:
             ensure_app_dirs()
             _sync_proxy_request_log_config()
             return jsonify({"success": True, "settings": redact_currency_settings(config.get_all())})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/startup/status")
+    def startup_status():
+        """Read Windows startup integration status without mutating the OS."""
+        try:
+            return jsonify(startup_manager.status(config.get_all()))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/startup/preview", methods=["POST"])
+    def startup_preview():
+        """Preview startup-folder or scheduled-task changes."""
+        try:
+            body = request.get_json(silent=True) or {}
+            return jsonify(startup_manager.preview(_startup_settings_from_body(body)))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/startup/apply", methods=["POST"])
+    def startup_apply():
+        """Apply Windows startup integration after explicit confirmation."""
+        try:
+            body = request.get_json(silent=True) or {}
+            settings = _startup_settings_from_body(body)
+            result = startup_manager.apply(settings, confirmation=str(body.get("confirmation") or ""))
+            if not result.get("success"):
+                status = 409 if result.get("required_confirmation") else 400
+                return jsonify(result), status
+            config.update(_startup_config_update(settings))
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/startup/remove", methods=["POST"])
+    def startup_remove():
+        """Remove this app's startup-folder entry and scheduled task."""
+        try:
+            body = request.get_json(silent=True) or {}
+            settings = _startup_settings_from_body(body)
+            result = startup_manager.remove(settings, confirmation=str(body.get("confirmation") or ""))
+            if not result.get("success"):
+                status = 409 if result.get("required_confirmation") else 400
+                return jsonify(result), status
+            update = _startup_config_update({**settings, "startup_enabled": False, "startup_mode": "disabled"})
+            config.update(update)
+            return jsonify(result)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
