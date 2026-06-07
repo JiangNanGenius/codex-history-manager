@@ -60,6 +60,7 @@ from responses_adapter import (
 )
 
 DEFAULT_PROXY_PORT = 8080
+PORT_BACKOFF_SCAN_LIMIT = 50
 MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
 DEFAULT_UPSTREAM_TIMEOUT = 120  # 秒
 
@@ -257,10 +258,9 @@ def _provider_api_format(provider: Dict[str, Any]) -> str:
 
 def _is_port_available(port: int) -> bool:
     try:
-        test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        test_sock.settimeout(1)
-        test_sock.bind(("127.0.0.1", port))
-        test_sock.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_sock:
+            test_sock.settimeout(1)
+            test_sock.bind(("127.0.0.1", port))
         return True
     except OSError:
         return False
@@ -992,8 +992,8 @@ class LocalProxyServer:
         使 ProxyHandler 能读取正确的 provider 配置。
 
     Windows 平台特殊性：
-      - OSError 捕获：若端口已被占用（如上次崩溃未释放），start() 返回 False
-        而非抛出未处理异常，便于上层提示用户。
+      - OSError 捕获：若端口已被占用（如上次崩溃未释放），start() 自动尝试
+        后续端口，并在 status() 中暴露退避结果，便于上层提示用户。
     """
 
     def __init__(self, port: int = DEFAULT_PROXY_PORT, provider_store_path: str = ""):
@@ -1001,26 +1001,72 @@ class LocalProxyServer:
         self.provider_store_path = provider_store_path
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
+        self._last_requested_port = port
+        self._last_start_error = ""
+        self._last_port_backoff: Dict[str, Any] = {
+            "used": False,
+            "from": port,
+            "to": port,
+            "attempts": 0,
+            "scan_limit": PORT_BACKOFF_SCAN_LIMIT,
+        }
 
     def start(self) -> bool:
         if self._server is not None:
+            self.port = int(self._server.server_address[1])
             return True
         # 设置全局 provider store 路径，供 ProxyHandler 使用
         if self.provider_store_path:
             _set_provider_store_path(self.provider_store_path)
+
+        if not isinstance(self.port, int) or self.port < 1 or self.port > 65535:
+            self._last_requested_port = self.port
+            self._last_start_error = f"Invalid proxy port: {self.port}"
+            self._last_port_backoff = {
+                "used": False,
+                "from": self.port,
+                "to": self.port,
+                "attempts": 0,
+                "scan_limit": PORT_BACKOFF_SCAN_LIMIT,
+            }
+            return False
+
         original_port = self.port
-        for candidate_port in range(original_port, min(original_port + 50, 65536)):
+        self._last_requested_port = original_port
+        self._last_start_error = ""
+        attempts = 0
+
+        for candidate_port in range(
+            original_port,
+            min(original_port + PORT_BACKOFF_SCAN_LIMIT, 65536),
+        ):
+            attempts += 1
             if not _is_port_available(candidate_port):
                 continue
             try:
                 self._server = HTTPServer(("127.0.0.1", candidate_port), ProxyHandler)
                 self.port = candidate_port
+                self._last_port_backoff = {
+                    "used": candidate_port != original_port,
+                    "from": original_port,
+                    "to": candidate_port,
+                    "attempts": attempts,
+                    "scan_limit": PORT_BACKOFF_SCAN_LIMIT,
+                }
                 break
-            except OSError:
+            except OSError as e:
+                self._last_start_error = str(e)
                 self._server = None
                 continue
         if self._server is None:
             self.port = original_port
+            self._last_port_backoff = {
+                "used": False,
+                "from": original_port,
+                "to": original_port,
+                "attempts": attempts,
+                "scan_limit": PORT_BACKOFF_SCAN_LIMIT,
+            }
             return False
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
@@ -1028,8 +1074,10 @@ class LocalProxyServer:
 
     def stop(self) -> None:
         if self._server is not None:
-            self._server.shutdown()
+            server = self._server
             self._server = None
+            server.shutdown()
+            server.server_close()
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
@@ -1038,9 +1086,13 @@ class LocalProxyServer:
         return self._server is not None
 
     def status(self) -> Dict[str, Any]:
+        bound_port = int(self._server.server_address[1]) if self._server is not None else self.port
         return {
             "running": self.is_running(),
-            "port": self.port,
-            "base_url": f"http://127.0.0.1:{self.port}/v1" if self.is_running() else "",
+            "port": bound_port,
+            "requested_port": self._last_requested_port,
+            "base_url": f"http://127.0.0.1:{bound_port}/v1" if self.is_running() else "",
             "provider_store_path": str(_get_provider_store_path()),
+            "port_backoff": self._last_port_backoff,
+            "last_start_error": self._last_start_error,
         }

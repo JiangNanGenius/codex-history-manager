@@ -1191,7 +1191,9 @@ def create_app() -> Flask:
         try:
             body = request.get_json(silent=True) or {}
             new_port = body.get("port")
-            if new_port and isinstance(new_port, int):
+            if new_port is not None:
+                if isinstance(new_port, bool) or not isinstance(new_port, int) or new_port < 1 or new_port > 65535:
+                    return jsonify({"error": "Invalid proxy port", "status": proxy_server.status()}), 400
                 proxy_server.port = new_port
                 config.set("proxy_port", new_port)
             new_store = body.get("provider_store_path")
@@ -1202,7 +1204,10 @@ def create_app() -> Flask:
                 status = proxy_server.status()
                 config.set("proxy_port", status.get("port", proxy_server.port))
                 return jsonify({"success": True, "status": status})
-            return jsonify({"error": "端口已被占用或启动失败", "status": proxy_server.status()}), 409
+            return jsonify({
+                "error": "未能在配置端口及后续端口中找到可用代理端口",
+                "status": proxy_server.status(),
+            }), 409
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

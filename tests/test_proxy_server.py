@@ -248,7 +248,9 @@ class LocalProxyServerTest(unittest.TestCase):
         status = server.status()
         self.assertFalse(status["running"])
         self.assertEqual(status["port"], 18080)
+        self.assertEqual(status["requested_port"], 18080)
         self.assertEqual(status["base_url"], "")
+        self.assertFalse(status["port_backoff"]["used"])
 
     def test_start_stop_cycle(self):
         server = LocalProxyServer(port=18081)
@@ -266,13 +268,18 @@ class LocalProxyServerTest(unittest.TestCase):
         self.assertTrue(server.start())  # 第二次应直接返回 True
         server.stop()
 
-    def test_port_conflict(self):
+    def test_port_conflict_auto_backs_off(self):
         server1 = LocalProxyServer(port=18083)
         server2 = LocalProxyServer(port=18083)
         self.assertTrue(server1.start())
         self.assertTrue(server2.start())
-        self.assertNotEqual(server2.status()["port"], 18083)
-        self.assertTrue(server2.status()["base_url"].startswith("http://127.0.0.1:"))
+        status = server2.status()
+        self.assertNotEqual(status["port"], 18083)
+        self.assertEqual(status["requested_port"], 18083)
+        self.assertTrue(status["port_backoff"]["used"])
+        self.assertEqual(status["port_backoff"]["from"], 18083)
+        self.assertEqual(status["port_backoff"]["to"], status["port"])
+        self.assertEqual(status["base_url"], f"http://127.0.0.1:{status['port']}/v1")
         server2.stop()
         server1.stop()
 

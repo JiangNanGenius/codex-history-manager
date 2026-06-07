@@ -312,7 +312,11 @@ class DiagnosticsCollector:
 
         for url in urls_to_try:
             try:
-                req = urllib.request.Request(url, method="HEAD")
+                req = urllib.request.Request(
+                    url,
+                    method="HEAD",
+                    headers=_provider_health_check_headers(provider),
+                )
                 # 禁用系统代理，确保直连
                 proxy_handler = urllib.request.ProxyHandler({})
                 opener = urllib.request.build_opener(proxy_handler)
@@ -370,3 +374,28 @@ class DiagnosticsCollector:
             "error": "Could not connect to any tested endpoint.",
             "urls_tested": urls_to_try,
         }
+
+
+def _provider_health_check_headers(provider: Dict[str, Any]) -> Dict[str, str]:
+    """Build low-risk headers for provider connectivity probes.
+
+    Health checks should verify the network path without sending credentials.
+    User-Agent is still first-class because some providers and gateways use it
+    for allowlists, analytics, or routing.
+    """
+    headers: Dict[str, str] = {}
+    configured_headers = provider.get("headers") if isinstance(provider.get("headers"), dict) else {}
+    for key, value in configured_headers.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        if key.lower() in {"authorization", "x-api-key", "api-key", "apikey", "bearer"}:
+            continue
+        headers[key] = value
+
+    user_agent = str(provider.get("user_agent") or configured_headers.get("User-Agent") or "").strip()
+    if user_agent:
+        headers["User-Agent"] = user_agent
+    elif "User-Agent" not in headers:
+        headers["User-Agent"] = "Codex-Enhance-Manager-HealthCheck/1.0"
+
+    return headers
