@@ -9,11 +9,25 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
+
+from approval_broker import (
+    failure_decision,
+    is_auto_approval_enabled,
+    normalize_approval_action,
+    parse_approval_decision,
+)
+from providers import normalize_approval_profile
 
 
 MEDIA_KIND_IMAGE = "image"
 MEDIA_KIND_VIDEO = "video"
+MEDIA_OPERATION_SUBMIT = "submit"
+MEDIA_OPERATION_POLL = "poll"
+MEDIA_OPERATION_CANCEL = "cancel"
+MEDIA_OPERATION_UNKNOWN = "unknown"
+
+MediaApprovalReviewer = Callable[[Dict[str, Any], Dict[str, Any], Dict[str, Any]], Any]
 
 
 def canonical_media_path(path: str) -> str:
@@ -34,6 +48,19 @@ def media_kind_for_path(path: str) -> str:
     if canonical == "/videos" or canonical.startswith("/videos/"):
         return MEDIA_KIND_VIDEO
     return ""
+
+
+def media_operation_for_request(method: str, path: str) -> str:
+    """Return submit/poll/cancel for known OpenAI-compatible media endpoints."""
+    canonical = canonical_media_path(path)
+    method = str(method or "").upper()
+    if method == "POST" and canonical in {"/images/generations", "/images/edits", "/images/variations", "/videos"}:
+        return MEDIA_OPERATION_SUBMIT
+    if method == "GET" and canonical.startswith("/videos/"):
+        return MEDIA_OPERATION_POLL
+    if method == "DELETE" and canonical.startswith("/videos/"):
+        return MEDIA_OPERATION_CANCEL
+    return MEDIA_OPERATION_UNKNOWN
 
 
 def is_media_proxy_path(path: str) -> bool:
@@ -180,6 +207,94 @@ def media_forwarding_status(provider: Dict[str, Any], media_kind: str) -> Dict[s
             ),
         }
     return {"can_forward": True, "error_type": "", "message": ""}
+
+
+def build_media_approval_action(
+    provider: Dict[str, Any],
+    media_kind: str,
+    operation: str,
+    canonical_path: str,
+    model_id: str = "",
+    upstream_model_id: str = "",
+    route_explanation: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Build a metadata-only Auto Approval action for media operations."""
+    kind = "image_generation" if media_kind == MEDIA_KIND_IMAGE else "video_generation"
+    provider_id = str(provider.get("id") or "")
+    model = upstream_model_id or model_id
+    return normalize_approval_action({
+        "kind": kind,
+        "summary": f"{media_kind or 'media'} {operation or MEDIA_OPERATION_UNKNOWN} via provider '{provider_id}'",
+        "operation": operation or MEDIA_OPERATION_UNKNOWN,
+        "provider_id": provider_id,
+        "model": model,
+        "upstream_model": upstream_model_id or model_id,
+        "media_kind": media_kind,
+        "endpoint": canonical_media_path(canonical_path),
+        "route_explanation": "; ".join(route_explanation or []),
+    })
+
+
+def evaluate_media_approval(
+    provider: Dict[str, Any],
+    media_kind: str,
+    operation: str,
+    canonical_path: str,
+    model_id: str = "",
+    upstream_model_id: str = "",
+    route_explanation: Optional[List[str]] = None,
+    reviewer: Optional[MediaApprovalReviewer] = None,
+) -> Dict[str, Any]:
+    """
+    Evaluate the provider Auto Approval policy for a media operation.
+
+    The reviewer is injected so the proxy can later call the configured model
+    without coupling media routing to a network client. No prompt/body content is
+    included in the approval action.
+    """
+    profile = normalize_approval_profile(provider.get("approval_profile"))
+    action = build_media_approval_action(
+        provider,
+        media_kind,
+        operation,
+        canonical_path,
+        model_id=model_id,
+        upstream_model_id=upstream_model_id,
+        route_explanation=route_explanation,
+    )
+    if not is_auto_approval_enabled(profile):
+        return {
+            "required": False,
+            "approved": True,
+            "action": action,
+            "decision": {
+                "decision": "accept",
+                "risk_level": "low",
+                "reason": "Auto Approval is not enabled for this provider.",
+                "scope": "request",
+                "confidence": 1.0,
+            },
+            "error_type": "",
+            "message": "",
+        }
+
+    try:
+        if reviewer is None:
+            decision = failure_decision("Auto Approval reviewer is not connected.", profile)
+        else:
+            decision = parse_approval_decision(reviewer(action, profile, provider), profile)
+    except Exception as exc:
+        decision = failure_decision(str(exc), profile)
+
+    approved = decision.get("decision") == "accept"
+    return {
+        "required": True,
+        "approved": approved,
+        "action": action,
+        "decision": decision,
+        "error_type": "" if approved else "media_auto_approval_declined",
+        "message": "" if approved else f"Auto Approval did not approve this media request: {decision.get('reason') or 'declined'}",
+    }
 
 
 def prepare_media_body(

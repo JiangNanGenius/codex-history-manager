@@ -14,6 +14,7 @@ from proxy_server import (
     _extract_model_id_for_upstream,
     _load_providers_with_secrets,
     _resolve_provider_for_model,
+    _set_media_approval_reviewer,
     _set_request_log_config,
     _set_provider_store_path,
     _upstream_request,
@@ -344,6 +345,7 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.tmpdir.cleanup()
         _set_provider_store_path("")
         _set_request_log_config("")
+        _set_media_approval_reviewer(None)
 
     def _write_providers(self, data):
         self.store_path.write_text(json.dumps(data), encoding="utf-8")
@@ -698,6 +700,94 @@ class ProxyIntegrationTest(unittest.TestCase):
         args = mock_upstream.call_args
         self.assertEqual(args[0][0], "GET")
         self.assertEqual(args[0][1], "https://video.example.test/v1/videos/video_1")
+
+    @patch("proxy_server._upstream_request")
+    def test_media_auto_approval_decline_blocks_upstream(self, mock_upstream):
+        log_path = Path(self.tmpdir.name) / "proxy_requests.jsonl"
+        _set_request_log_config(str(log_path))
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "image-main",
+                    "short_alias": "img",
+                    "display_name": "Image Provider",
+                    "enabled": True,
+                    "base_url": "https://image.example.test/v1",
+                    "api_format": "openai_images",
+                    "api_key": "sk-image",
+                    "capabilities": {"images": True},
+                    "approval_profile": {"mode": "proxy_auto_approve"},
+                    "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+                    "models": [{"id": "gpt-image-1", "enabled": True, "capabilities": {"images": True}}],
+                },
+            ]
+        })
+
+        _set_media_approval_reviewer(
+            lambda action, profile, provider: {
+                "decision": "decline",
+                "risk_level": "high",
+                "reason": "Media request is outside policy.",
+            }
+        )
+
+        handler, raw = self._make_handler(
+            "/v1/images/generations",
+            body={"model": "gpt-image-1", "prompt": "private prompt"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(body.decode())["error"]["type"], "media_auto_approval_declined")
+        mock_upstream.assert_not_called()
+        self.assertNotIn("private prompt", log_path.read_text(encoding="utf-8"))
+
+    @patch("proxy_server._upstream_request")
+    def test_media_auto_approval_runs_for_submit_poll_and_cancel(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "video-main",
+                    "short_alias": "vid",
+                    "display_name": "Video Provider",
+                    "enabled": True,
+                    "base_url": "https://video.example.test/v1",
+                    "api_format": "openai_videos",
+                    "api_key": "sk-video",
+                    "capabilities": {"videos": True},
+                    "approval_profile": {"mode": "proxy_auto_approve"},
+                    "media_profile": {"default_video_provider": True, "openai_compatible_media": True},
+                    "models": [{"id": "sora-2", "enabled": True, "capabilities": {"videos": True}}],
+                },
+            ]
+        })
+        seen_operations = []
+
+        def reviewer(action, profile, provider):
+            seen_operations.append(action["media"]["operation"])
+            self.assertNotIn("prompt", json.dumps(action).lower())
+            return {"decision": "accept", "risk_level": "low", "reason": "Allowed media operation."}
+
+        _set_media_approval_reviewer(reviewer)
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"id": "video_1", "object": "video", "status": "queued"}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        self._make_handler(
+            "/v1/videos",
+            body={"model": "sora-2", "prompt": "private video prompt"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        self._make_handler("/v1/videos/video_1", method="GET")
+        self._make_handler("/v1/videos/video_1", method="DELETE")
+
+        self.assertEqual(seen_operations, ["submit", "poll", "cancel"])
+        self.assertEqual(mock_upstream.call_count, 3)
 
     def test_adapter_required_media_provider_returns_clear_error(self):
         self._write_providers({

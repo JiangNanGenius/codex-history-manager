@@ -3,9 +3,12 @@ import unittest
 from media_proxy import (
     MEDIA_KIND_IMAGE,
     MEDIA_KIND_VIDEO,
+    build_media_approval_action,
     canonical_media_path,
+    evaluate_media_approval,
     media_endpoint_url,
     media_forwarding_status,
+    media_operation_for_request,
     resolve_media_provider,
     resolve_media_route,
 )
@@ -101,6 +104,78 @@ class MediaProxyHelperTest(unittest.TestCase):
 
         self.assertFalse(status["can_forward"])
         self.assertEqual(status["error_type"], "media_adapter_required")
+
+    def test_media_operation_detects_submit_poll_cancel(self):
+        self.assertEqual(media_operation_for_request("POST", "/v1/images/generations"), "submit")
+        self.assertEqual(media_operation_for_request("POST", "/v1/videos"), "submit")
+        self.assertEqual(media_operation_for_request("GET", "/v1/videos/video_1"), "poll")
+        self.assertEqual(media_operation_for_request("DELETE", "/v1/videos/video_1"), "cancel")
+
+    def test_media_approval_action_is_metadata_only(self):
+        action = build_media_approval_action(
+            {"id": "image-main"},
+            MEDIA_KIND_IMAGE,
+            "submit",
+            "/images/generations",
+            model_id="img/gpt-image-1",
+            upstream_model_id="gpt-image-1",
+            route_explanation=["Using default image provider."],
+        )
+
+        encoded = str(action)
+        self.assertEqual(action["kind"], "image_generation")
+        self.assertEqual(action["media"]["operation"], "submit")
+        self.assertIn("gpt-image-1", encoded)
+        self.assertNotIn("prompt", encoded.lower())
+
+    def test_media_approval_not_required_when_profile_is_manual(self):
+        result = evaluate_media_approval(
+            {"id": "image-main", "approval_profile": {"mode": "manual_only"}},
+            MEDIA_KIND_IMAGE,
+            "submit",
+            "/images/generations",
+        )
+
+        self.assertFalse(result["required"])
+        self.assertTrue(result["approved"])
+
+    def test_media_approval_uses_injected_reviewer(self):
+        calls = []
+
+        def reviewer(action, profile, provider):
+            calls.append((action, profile, provider))
+            return {"decision": "accept", "risk_level": "low", "reason": "Allowed media operation."}
+
+        result = evaluate_media_approval(
+            {"id": "video-main", "approval_profile": {"mode": "proxy_auto_approve"}},
+            MEDIA_KIND_VIDEO,
+            "cancel",
+            "/videos/video_1",
+            reviewer=reviewer,
+        )
+
+        self.assertTrue(result["required"])
+        self.assertTrue(result["approved"])
+        self.assertEqual(calls[0][0]["kind"], "video_generation")
+        self.assertEqual(calls[0][0]["media"]["operation"], "cancel")
+
+    def test_media_approval_without_reviewer_follows_error_policy(self):
+        declined = evaluate_media_approval(
+            {"id": "video-main", "approval_profile": {"mode": "proxy_auto_approve", "on_review_error": "decline"}},
+            MEDIA_KIND_VIDEO,
+            "submit",
+            "/videos",
+        )
+        allowed = evaluate_media_approval(
+            {"id": "video-main", "approval_profile": {"mode": "proxy_auto_approve", "on_review_error": "allow"}},
+            MEDIA_KIND_VIDEO,
+            "submit",
+            "/videos",
+        )
+
+        self.assertFalse(declined["approved"])
+        self.assertEqual(declined["error_type"], "media_auto_approval_declined")
+        self.assertTrue(allowed["approved"])
 
 
 if __name__ == "__main__":

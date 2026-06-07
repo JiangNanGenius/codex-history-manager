@@ -39,7 +39,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from anthropic_adapter import (
     AnthropicConversionError,
@@ -54,11 +54,13 @@ from domestic_responses import (
 )
 from media_proxy import (
     canonical_media_path,
+    evaluate_media_approval,
     extract_json_model,
     is_media_proxy_path,
     media_endpoint_url,
     media_forwarding_status,
     media_kind_for_path,
+    media_operation_for_request,
     prepare_media_body,
     resolve_media_route,
 )
@@ -95,6 +97,7 @@ _request_log_path: Optional[Path] = None
 _request_log_retention_days = 30
 _request_log_max_mb = 50.0
 _request_log_currency_settings: Dict[str, Any] = {}
+_media_approval_reviewer: Optional[Callable[[Dict[str, Any], Dict[str, Any], Dict[str, Any]], Any]] = None
 
 
 def _set_provider_store_path(path: str) -> None:
@@ -121,6 +124,14 @@ def _set_request_log_config(
     except (TypeError, ValueError):
         _request_log_max_mb = 50.0
     _request_log_currency_settings = dict(currency_settings or {})
+
+
+def _set_media_approval_reviewer(
+    reviewer: Optional[Callable[[Dict[str, Any], Dict[str, Any], Dict[str, Any]], Any]]
+) -> None:
+    """Install an injectable media Auto Approval reviewer for tests/future runtime wiring."""
+    global _media_approval_reviewer
+    _media_approval_reviewer = reviewer
 
 
 def _get_provider_store_path() -> Path:
@@ -656,6 +667,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         media_kind = media_kind_for_path(path)
         canonical_path = canonical_media_path(path)
+        media_operation = media_operation_for_request(method, canonical_path)
         content_type = self.headers.get("Content-Type", "")
         model_id = extract_json_model(body, content_type)
         route = resolve_media_route(_load_providers_with_secrets(), media_kind, model_id=model_id)
@@ -674,6 +686,38 @@ class ProxyHandler(BaseHTTPRequestHandler):
             _send_error(self, 400, str(status.get("message") or "Media provider cannot be forwarded"), str(status.get("error_type") or "media_unsupported"))
             return
 
+        media_endpoint = canonical_path.strip("/")
+        if media_endpoint.startswith("v1/"):
+            media_endpoint = media_endpoint[3:]
+        route_explanation = "; ".join(route.get("route_explanation") or ["media provider route"])
+        log_context = _make_request_log_context(
+            media_endpoint or "media",
+            method,
+            provider,
+            model=model_id,
+            upstream_model=str(route.get("upstream_model_id") or model_id or ""),
+            stream=False,
+            media_kind=str(media_kind or ""),
+            usage_hint=_media_usage_hint(body, content_type, str(media_kind or "")),
+            route_explanation=route_explanation,
+        )
+        approval = evaluate_media_approval(
+            provider,
+            str(media_kind or ""),
+            media_operation,
+            canonical_path,
+            model_id=model_id,
+            upstream_model_id=str(route.get("upstream_model_id") or model_id or ""),
+            route_explanation=route.get("route_explanation") or [],
+            reviewer=_media_approval_reviewer,
+        )
+        if not approval.get("approved"):
+            message = str(approval.get("message") or "Auto Approval did not approve this media request.")
+            error_type = str(approval.get("error_type") or "media_auto_approval_declined")
+            _record_request_log(log_context, 403, error_type=error_type, error_message=message)
+            _send_error(self, 403, message, error_type)
+            return
+
         base_url = provider.get("base_url", "").rstrip("/")
         if not base_url:
             _send_error(self, 502, f"Provider '{provider.get('id')}' has no base_url configured.", "provider_misconfigured")
@@ -689,20 +733,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
         headers = _build_upstream_headers(provider)
         if content_type:
             headers["Content-Type"] = content_type
-        media_endpoint = canonical_path.strip("/")
-        if media_endpoint.startswith("v1/"):
-            media_endpoint = media_endpoint[3:]
-        log_context = _make_request_log_context(
-            media_endpoint or "media",
-            method,
-            provider,
-            model=model_id,
-            upstream_model=str(route.get("upstream_model_id") or model_id or ""),
-            stream=False,
-            media_kind=str(media_kind or ""),
-            usage_hint=_media_usage_hint(body, content_type, str(media_kind or "")),
-            route_explanation="media provider route",
-        )
 
         try:
             upstream_resp = _upstream_request(
