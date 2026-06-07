@@ -47,6 +47,16 @@ let providerState = {
     healthPreview: null,
 };
 
+const PROVIDER_API_FORMATS = new Set([
+    'openai_responses',
+    'openai_chat',
+    'openai_images',
+    'openai_videos',
+    'openai_compatible',
+    'anthropic',
+    'custom',
+]);
+
 /**
  * 加载 Overview 数据并渲染。
  * 注意：renderEnhanceOverview 内部已包含 triggerStaggerAnimations
@@ -435,6 +445,8 @@ function renderProviderEditor(provider) {
         m.display_name || '',
         m.context_window || 0,
         m.selected ? 'selected' : '',
+        m.api_format || '',
+        m.native_approval ? 'native_approval' : '',
     ].join('|')).join('\n');
     const approvalProfile = provider.approval_profile || {};
     const mediaProfile = provider.media_profile || {};
@@ -501,7 +513,7 @@ function renderProviderEditor(provider) {
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                     ${renderTextarea('provider-headers-json', t('headersJson'), JSON.stringify(provider.headers || {}, null, 2), 7)}
-                    ${renderTextarea('provider-models-text', t('modelsText'), modelsText, 7)}
+                    ${renderTextarea('provider-models-text', t('modelsText'), modelsText, 7, t('modelsTextHint'))}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                     ${renderTextarea('provider-aliases-json', t('modelAliasesJson'), JSON.stringify(provider.aliases || {}, null, 2), 6)}
@@ -1053,7 +1065,8 @@ function renderCatalogEntry(entry) {
         entry.focused ? renderMiniBadge(t('focusedBadge')) : '',
         entry.catalog_visibility ? renderMiniBadge(entry.catalog_visibility) : '',
         entry.catalog_collision ? renderMiniBadge(t('collisionResolved')) : '',
-        entry.api_format ? renderMiniBadge(entry.api_format) : '',
+        entry.api_format ? renderMiniBadge(providerOptionLabel(entry.api_format)) : '',
+        entry.api_format_source === 'model' ? renderMiniBadge(t('modelInterfaceOverride')) : '',
         entry.responses_profile && entry.responses_profile.domestic_responses ? renderMiniBadge(t('domesticResponsesBadge')) : '',
         entry.context_window ? renderMiniBadge(t('contextShort', { value: formatNumber(entry.context_window, { compact: false }) })) : '',
         inputPrice !== null ? renderMiniBadge(t('inputPriceBadge', { value: formatCatalogPrice(inputPrice) })) : '',
@@ -1598,12 +1611,25 @@ function parseModelsText(text, existingModels = []) {
             const modelId = parts[0] || 'model-id';
             const existingList = existingById.get(modelId) || [];
             const existing = existingList.shift() || {};
+            const apiFormat = PROVIDER_API_FORMATS.has(parts[4]) ? parts[4] : (existing.api_format || '');
+            const nativeApprovalToken = String(parts[5] || '').trim().toLowerCase();
+            const hasNativeApprovalToken = Boolean(nativeApprovalToken);
+            const nativeApproval = hasNativeApprovalToken
+                ? ['1', 'true', 'yes', 'on', 'native_approval', 'supports_native_approval'].includes(nativeApprovalToken)
+                : Boolean(existing.native_approval);
+            const capabilityOverrides = {
+                ...(existing.capability_overrides || {}),
+                ...(hasNativeApprovalToken ? { native_approval: nativeApproval } : {}),
+            };
             return {
                 ...existing,
                 id: parts[0] || 'model-id',
                 display_name: parts[1] || parts[0] || 'Model',
                 context_window: parseInt(parts[2], 10) || 0,
                 selected: parts[3] === 'selected' || parts[3] === 'true',
+                api_format: apiFormat,
+                native_approval: nativeApproval,
+                capability_overrides: capabilityOverrides,
                 enabled: true,
             };
         });
@@ -1642,11 +1668,12 @@ function renderInput(id, label, value, type = 'text') {
     `;
 }
 
-function renderTextarea(id, label, value, rows = 4) {
+function renderTextarea(id, label, value, rows = 4, hint = '') {
     return `
         <div>
             <label class="text-xs text-dark-400">${escapeHtml(label)}</label>
             <textarea id="${escapeAttr(id)}" class="input mt-1 w-full font-mono" rows="${rows}">${escapeHtml(value || '')}</textarea>
+            ${hint ? `<p class="text-xs text-dark-500 mt-1">${escapeHtml(hint)}</p>` : ''}
         </div>
     `;
 }
@@ -1706,7 +1733,7 @@ function approvalModeFromProfile(profile) {
     if (mode === 'official_guardian' || mode === 'proxy_auto_approve' || mode === 'manual_only') return mode;
     if (profile && profile.proxy_auto_approve) return 'proxy_auto_approve';
     if (profile && profile.official_guardian) return 'official_guardian';
-    return 'manual_only';
+    return 'proxy_auto_approve';
 }
 
 function renderApprovalModeSegment(profile) {
@@ -1739,7 +1766,7 @@ function renderApprovalModeSegment(profile) {
 }
 
 function getSelectedApprovalMode() {
-    return document.querySelector('input[name="approval-mode"]:checked')?.value || 'manual_only';
+    return document.querySelector('input[name="approval-mode"]:checked')?.value || 'proxy_auto_approve';
 }
 
 function syncApprovalModeControls() {
@@ -1929,7 +1956,7 @@ function renderMiniBadge(label) {
 
 function capabilityBadges(capabilities) {
     const caps = capabilities || {};
-    return ['text', 'vision', 'tools', 'custom_tools', 'reasoning', 'images', 'videos']
+    return ['text', 'vision', 'tools', 'custom_tools', 'reasoning', 'images', 'videos', 'native_approval']
         .filter(key => caps[key])
         .map(key => renderMiniBadge(providerCapabilityLabel(key)));
 }
@@ -1943,6 +1970,7 @@ function providerCapabilityLabel(capability) {
         reasoning: t('reasoningCapability'),
         images: t('imagesCapability'),
         videos: t('videosCapability'),
+        native_approval: t('nativeApprovalCapability'),
     };
     return labels[capability] || capability;
 }

@@ -154,7 +154,10 @@ function saveTrackerState() {
 async function showDesktopTokenMonitor() {
     saveTokenMonitorSettings();
     if (window.pywebview && window.pywebview.api && window.pywebview.api.show_monitor) {
-        await window.pywebview.api.show_monitor();
+        const result = await window.pywebview.api.show_monitor();
+        if (result && result.success === false) {
+            showToast(result.error || t('desktopMonitorOnly'), 'error');
+        }
         return;
     }
     showToast(t('desktopMonitorOnly'), 'info');

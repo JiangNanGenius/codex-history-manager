@@ -798,7 +798,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                 {
                     "id": "native-mixin",
                     "short_alias": "mix",
-                    "display_name": "Native Mix-in",
+                    "display_name": "Native Bridge",
                     "enabled": True,
                     "base_url": "https://native.example.test/v1",
                     "api_format": "openai_responses",
@@ -1362,6 +1362,87 @@ class ProxyIntegrationTest(unittest.TestCase):
         upstream_body = json.loads(args[1]["body"])
         self.assertEqual(upstream_body["model"], "gpt-5")
         self.assertEqual(upstream_body["previous_response_id"], "resp_prev")
+        self.assertNotIn("messages", upstream_body)
+
+    @patch("proxy_server._upstream_request")
+    def test_responses_endpoint_uses_model_level_chat_interface(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "mixed-provider",
+                    "short_alias": "mix",
+                    "display_name": "Mixed Provider",
+                    "enabled": True,
+                    "base_url": "https://mixed.example.test/v1",
+                    "api_format": "openai_responses",
+                    "api_key": "sk-mixed",
+                    "models": [{"id": "chat-model", "enabled": True, "api_format": "openai_chat"}],
+                }
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "id": "chatcmpl-model-chat",
+            "object": "chat.completion",
+            "model": "chat-model",
+            "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+        }).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        self._make_handler(
+            "/v1/responses",
+            body={"model": "mix/chat-model", "input": "test"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://mixed.example.test/v1/chat/completions")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "chat-model")
+        self.assertIn("messages", upstream_body)
+
+    @patch("proxy_server._upstream_request")
+    def test_responses_endpoint_uses_model_level_responses_interface(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "mixed-provider",
+                    "short_alias": "mix",
+                    "display_name": "Mixed Provider",
+                    "enabled": True,
+                    "base_url": "https://mixed.example.test/v1",
+                    "api_format": "openai_chat",
+                    "api_key": "sk-mixed",
+                    "models": [{"id": "responses-model", "enabled": True, "api_format": "openai_responses"}],
+                }
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "id": "resp_model_level",
+            "object": "response",
+            "status": "completed",
+            "model": "responses-model",
+            "output": [],
+        }).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        self._make_handler(
+            "/v1/responses",
+            body={"model": "mix/responses-model", "input": "test"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://mixed.example.test/v1/responses")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "responses-model")
         self.assertNotIn("messages", upstream_body)
 
     def test_domestic_partial_responses_blocks_unverified_custom_tool(self):

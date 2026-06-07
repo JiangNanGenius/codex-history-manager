@@ -315,7 +315,17 @@ def evaluate_media_approval(
 
     try:
         if reviewer is None:
-            decision = failure_decision("Auto Approval reviewer is not connected.", profile)
+            if profile.get("mode_source") == "default":
+                decision = {
+                    "decision": "accept",
+                    "risk_level": "low",
+                    "reason": "Default Auto Approval is pending a connected reviewer; media request continues.",
+                    "scope": "request",
+                    "confidence": 1.0,
+                    "policy_overrides": ["implicit_default_no_reviewer"],
+                }
+            else:
+                decision = failure_decision("Auto Approval reviewer is not connected.", profile)
         else:
             decision = parse_approval_decision(reviewer(action, profile, provider), profile)
     except Exception as exc:

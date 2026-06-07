@@ -27,11 +27,49 @@ const THEME_FIELDS = [
     ['text_muted', 'setting-theme-text-muted'],
 ];
 
+const SETTINGS_WIZARD_STEP_COUNT = 8;
+let settingsWizardStep = 0;
+let defaultAutoApprovalSystemPrompt = '';
+
+function showSettingsWizardStep(step, options = {}) {
+    const nextStep = Math.min(Math.max(Number(step) || 0, 0), SETTINGS_WIZARD_STEP_COUNT - 1);
+    settingsWizardStep = nextStep;
+    document.querySelectorAll('[data-settings-step-panel]').forEach(panel => {
+        panel.classList.toggle('active', Number(panel.dataset.settingsStepPanel) === nextStep);
+    });
+    document.querySelectorAll('[data-settings-step-button]').forEach(button => {
+        button.classList.toggle('active', Number(button.dataset.settingsStepButton) === nextStep);
+    });
+
+    const prev = document.getElementById('settings-wizard-prev');
+    const next = document.getElementById('settings-wizard-next');
+    if (prev) prev.disabled = nextStep === 0;
+    if (next) next.textContent = nextStep === SETTINGS_WIZARD_STEP_COUNT - 1 ? t('settingsWizardFinish') : t('settingsWizardNext');
+
+    if (options.scroll !== false) {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+        document.querySelector('main')?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }
+}
+
+function showNextSettingsWizardStep() {
+    if (settingsWizardStep >= SETTINGS_WIZARD_STEP_COUNT - 1) {
+        saveSettings();
+        return;
+    }
+    showSettingsWizardStep(settingsWizardStep + 1);
+}
+
+function showPreviousSettingsWizardStep() {
+    showSettingsWizardStep(settingsWizardStep - 1);
+}
+
 async function loadSettings() {
     try {
         const data = await api('/api/settings');
         populateSettingsForm(data);
         applyThemeSettings(data);
+        showSettingsWizardStep(settingsWizardStep, { scroll: false });
         setStatus(t('settingsLoaded'));
 
         await Promise.allSettled([
@@ -87,6 +125,12 @@ function populateSettingsForm(data) {
     for (const [elId, key] of Object.entries(fields)) {
         const el = document.getElementById(elId);
         if (el && data[key] !== undefined) el.value = data[key];
+    }
+
+    defaultAutoApprovalSystemPrompt = data.auto_approval_system_prompt_default || data.auto_approval_system_prompt || '';
+    const approvalPrompt = document.getElementById('setting-auto-approval-system-prompt');
+    if (approvalPrompt) {
+        approvalPrompt.value = data.auto_approval_system_prompt || defaultAutoApprovalSystemPrompt;
     }
 
     const checkboxFields = {
@@ -427,6 +471,7 @@ async function saveSettings() {
         proxy_upstream_timeout_seconds: parseInt(document.getElementById('setting-proxy-upstream-timeout')?.value, 10) || 120,
         proxy_retry_attempts: parseInt(document.getElementById('setting-proxy-retry-attempts')?.value, 10) || 0,
         proxy_retry_backoff_ms: parseInt(document.getElementById('setting-proxy-retry-backoff-ms')?.value, 10) || 250,
+        auto_approval_system_prompt: document.getElementById('setting-auto-approval-system-prompt')?.value || defaultAutoApprovalSystemPrompt,
         ...readStartupSettingsFromForm(),
         theme_preset: document.getElementById('setting-theme-preset')?.value || 'dark',
         theme_custom: readThemeCustomFromForm(),
@@ -460,6 +505,12 @@ async function saveSettings() {
     } catch (err) {
         showToast(t('saveFailed') + err.message, 'error');
     }
+}
+
+function restoreAutoApprovalPromptDefault() {
+    const el = document.getElementById('setting-auto-approval-system-prompt');
+    if (el) el.value = defaultAutoApprovalSystemPrompt;
+    showToast(t('autoApprovalPromptRestored'), 'success');
 }
 
 async function resetSettings() {
@@ -793,6 +844,7 @@ function renderDetectResults(data) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    showSettingsWizardStep(0, { scroll: false });
     api('/api/settings')
         .then(applyThemeSettings)
         .catch(() => {});

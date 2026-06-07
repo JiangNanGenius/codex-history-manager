@@ -262,6 +262,18 @@ class MediaProxyHelperTest(unittest.TestCase):
         self.assertFalse(result["required"])
         self.assertTrue(result["approved"])
 
+    def test_media_approval_default_mode_does_not_block_without_reviewer(self):
+        result = evaluate_media_approval(
+            {"id": "image-main"},
+            MEDIA_KIND_IMAGE,
+            "submit",
+            "/images/generations",
+        )
+
+        self.assertTrue(result["required"])
+        self.assertTrue(result["approved"])
+        self.assertIn("implicit_default_no_reviewer", result["decision"]["policy_overrides"])
+
     def test_media_approval_uses_injected_reviewer(self):
         calls = []
 

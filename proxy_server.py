@@ -276,6 +276,7 @@ def _resolve_provider_route_for_model(
             "success": True,
             "provider": provider,
             "upstream_model": upstream_model,
+            "api_format": _route_api_format(provider, upstream_model),
             "route_type": "direct",
             "route_explanation": explanation,
             "request_capabilities": (classification or {}).get("capabilities", ["text"]),
@@ -341,6 +342,7 @@ def _resolve_provider_route_for_model(
         "success": True,
         "provider": selected,
         "upstream_model": upstream_model,
+        "api_format": _route_api_format(selected, upstream_model),
         "route_type": "amr",
         "amr_decision": decision,
         "route_explanation": explanation,
@@ -368,12 +370,23 @@ def _find_enabled_provider_by_id(providers: List[Dict[str, Any]], provider_id: s
 
 
 def _provider_has_enabled_model(provider: Dict[str, Any], model_id: str) -> bool:
+    return _find_enabled_model(provider, model_id) is not None
+
+
+def _find_enabled_model(provider: Dict[str, Any], model_id: str) -> Optional[Dict[str, Any]]:
     for model in provider.get("models", []):
         if not isinstance(model, dict):
             continue
         if model.get("enabled", True) and str(model.get("id") or "") == model_id:
-            return True
-    return False
+            return model
+    return None
+
+
+def _route_api_format(provider: Dict[str, Any], upstream_model: str = "") -> str:
+    model = _find_enabled_model(provider, str(upstream_model or ""))
+    if model and model.get("api_format"):
+        return str(model.get("api_format"))
+    return _provider_api_format(provider)
 
 
 def _provider_alias_source_matches(provider: Dict[str, Any], model_id_lower: str) -> bool:
@@ -1122,11 +1135,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         # 替换 model ID 为上游可用的格式
-        if provider.get("api_format") == "anthropic":
+        api_format = str(route.get("api_format") or _provider_api_format(provider))
+        if api_format == "anthropic":
             _send_error(
                 self,
                 400,
                 "Anthropic providers are supported through /v1/responses; /v1/chat/completions requires a separate Chat response adapter.",
+                "unsupported_api_format",
+            )
+            return
+        if api_format == "openai_responses":
+            _send_error(
+                self,
+                400,
+                "This model is configured for the Responses interface. Use /v1/responses or change the model interface to Chat.",
                 "unsupported_api_format",
             )
             return
@@ -1314,7 +1336,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             _send_error(self, 502, f"Provider '{provider.get('id')}' has no base_url configured.", "provider_misconfigured")
             return
 
-        api_format = _provider_api_format(provider)
+        api_format = str(route.get("api_format") or _provider_api_format(provider))
         if api_format == "anthropic":
             self._handle_responses_anthropic(
                 request_json,

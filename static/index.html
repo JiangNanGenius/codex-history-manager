@@ -454,14 +454,62 @@
 
         <!-- Settings Page -->
         <div id="page-settings" class="page p-6 space-y-6">
-            <div class="card">
+            <div class="card settings-wizard-shell">
+                <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-[0.18em] text-accent-300" data-i18n="settingsWizardKicker">设置向导</p>
+                        <h2 class="text-2xl font-bold text-white mt-1" data-i18n="settingsWizardTitle">按步骤完成设置</h2>
+                        <p class="text-sm text-dark-400 mt-2 max-w-2xl" data-i18n="settingsWizardDesc">从自动检测开始，依次补路径、供应商、路由、图片/视频兜底、用量提醒和启动选项；以后也能直接回来修改任一步。</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="saveSettings()" class="btn btn-primary" data-i18n="saveSettings">保存设置</button>
+                        <button onclick="resetSettings()" class="btn btn-danger" data-i18n="resetDefaults">恢复默认</button>
+                    </div>
+                </div>
+                <div id="settings-wizard-steps" class="settings-wizard-steps mt-5" aria-label="Settings wizard steps">
+                    <button type="button" class="settings-wizard-step active" data-settings-step-button="0" onclick="showSettingsWizardStep(0)">
+                        <span class="settings-wizard-index">1</span>
+                        <span data-i18n="settingsWizardDetect">自动检测</span>
+                    </button>
+                    <button type="button" class="settings-wizard-step" data-settings-step-button="1" onclick="showSettingsWizardStep(1)">
+                        <span class="settings-wizard-index">2</span>
+                        <span data-i18n="settingsWizardBasics">路径与偏好</span>
+                    </button>
+                    <button type="button" class="settings-wizard-step" data-settings-step-button="2" onclick="showSettingsWizardStep(2)">
+                        <span class="settings-wizard-index">3</span>
+                        <span data-i18n="settingsWizardProviders">供应商与模型</span>
+                    </button>
+                    <button type="button" class="settings-wizard-step" data-settings-step-button="3" onclick="showSettingsWizardStep(3)">
+                        <span class="settings-wizard-index">4</span>
+                        <span data-i18n="settingsWizardRouting">路由与媒体</span>
+                    </button>
+                    <button type="button" class="settings-wizard-step" data-settings-step-button="4" onclick="showSettingsWizardStep(4)">
+                        <span class="settings-wizard-index">5</span>
+                        <span data-i18n="settingsWizardCost">用量与提醒</span>
+                    </button>
+                    <button type="button" class="settings-wizard-step" data-settings-step-button="5" onclick="showSettingsWizardStep(5)">
+                        <span class="settings-wizard-index">6</span>
+                        <span data-i18n="settingsWizardStartup">启动与审批</span>
+                    </button>
+                    <button type="button" class="settings-wizard-step" data-settings-step-button="6" onclick="showSettingsWizardStep(6)">
+                        <span class="settings-wizard-index">7</span>
+                        <span data-i18n="settingsWizardCleanup">整理与来源</span>
+                    </button>
+                    <button type="button" class="settings-wizard-step" data-settings-step-button="7" onclick="showSettingsWizardStep(7)">
+                        <span class="settings-wizard-index">8</span>
+                        <span data-i18n="settingsWizardFinishStep">保存检查</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="card settings-step-panel active" data-settings-step-panel="0">
                 <h3 class="card-title" data-i18n="autoDetectedPaths">Auto-Detected Paths</h3>
                 <div class="mt-3">
                     <button onclick="runAutoDetect()" class="btn btn-secondary mb-4" data-i18n="reDetect">Re-Detect All Paths</button>
                     <div id="detect-results" class="space-y-3"></div>
                 </div>
             </div>
-            <div class="card">
+            <div class="card settings-step-panel" data-settings-step-panel="1">
                 <h3 class="card-title" data-i18n="configuration">基础设置</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div>
@@ -637,13 +685,56 @@
                     </div>
                 </div>
             </div>
-            <div class="card">
+            <div class="card settings-step-panel" data-settings-step-panel="2">
+                <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                    <div>
+                        <h3 class="card-title" data-i18n="wizardProviderGuideTitle">添加供应商和模型</h3>
+                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardProviderGuideDesc">先导入一个预设，再补供应商地址、密钥和模型。一个供应商可以放多个不同能力的模型。</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="navigateTo('quick-setup')" class="btn btn-primary text-xs" data-i18n="wizardProviderGuidePrimary">打开快速设置</button>
+                        <button onclick="navigateTo('providers')" class="btn btn-secondary text-xs" data-i18n="wizardProviderGuideSecondary">管理供应商</button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointDefaults">缺少端口、访问标识、超时等信息时，会优先使用安全默认值。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointModels">每个模型都可以单独标记文本、视觉、工具、图片、视频和长上下文能力。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointLater">以后修改时直接回到供应商页，不需要重跑整个向导。</div>
+                </div>
+            </div>
+            <div class="card settings-step-panel" data-settings-step-panel="3">
+                <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                    <div>
+                        <h3 class="card-title" data-i18n="wizardRoutingGuideTitle">设置路由和图片/视频兜底</h3>
+                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardRoutingGuideDesc">后台调整模型顺序后，会在当前会话结束后切到新的选择；图片/视频可指定全局兜底供应商。</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="navigateTo('providers')" class="btn btn-primary text-xs" data-i18n="wizardProviderGuideSecondary">管理供应商</button>
+                        <button onclick="navigateTo('diagnostics')" class="btn btn-secondary text-xs" data-i18n="navDiagnostics">检查与恢复</button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointOrder">模型轮换按当前顺序选择，健康状态异常时会优先避开。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointMedia">纯文本代理不会被标成“全部不支持”，而是提示配置媒体供应商。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointNative">纯原生代理要确认图片/视频接口是否也经过同一个供应商地址。</div>
+                </div>
+            </div>
+            <div class="card settings-step-panel" data-settings-step-panel="4">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h3 class="card-title" data-i18n="costCurrencyTitle">Cost & Currency</h3>
                         <p class="text-xs text-dark-500 mt-1" data-i18n="costCurrencyDesc">可手动设置汇率；在线汇率暂时关闭，避免不确定结果。</p>
                     </div>
                     <button onclick="saveCurrencySettings()" class="btn btn-secondary text-xs" data-i18n="saveCurrency">Save Currency</button>
+                </div>
+                <div class="mt-5 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4">
+                    <h4 class="text-sm font-semibold text-amber-100" data-i18n="wizardAlertsGuideTitle">用量、额度和余额提醒</h4>
+                    <p class="text-sm text-amber-100/80 mt-2" data-i18n="wizardAlertsGuideDesc">Token 用量以 Codex 输出记录为准；额度和余额只有在能确认来源时才开启。</p>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointUsage">有 Codex 事件时优先使用事件；没有时只显示可确认的本地记录。</div>
+                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointQuota">额度需要官方接口、内置脚本或你导入的脚本。</div>
+                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointBalance">余额优先用官方扣费；没有价格时不估算费用。</div>
+                    </div>
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 mt-4">
                     <div>
@@ -686,7 +777,7 @@
                     </div>
                 </div>
             </div>
-            <div class="card">
+            <div class="card settings-step-panel" data-settings-step-panel="5">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h3 class="card-title" data-i18n="startupElevation">Startup & Elevation</h3>
@@ -739,8 +830,19 @@
                     </div>
                 </div>
                 <pre id="startup-preview-result" class="preview-code mt-4" data-i18n="noPreviewYet">No preview yet.</pre>
+                <div class="mt-5 border-t border-dark-800 pt-5">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <h4 class="text-sm font-semibold text-dark-100" data-i18n="autoApprovalPromptTitle">自动审批规则</h4>
+                            <p class="text-xs text-dark-500 mt-1" data-i18n="autoApprovalPromptDesc">这里可以调整本地助手的判断规则，用来决定低风险操作是否自动继续；敏感内容会先隐藏。</p>
+                        </div>
+                        <button onclick="restoreAutoApprovalPromptDefault()" class="btn btn-secondary text-xs" data-i18n="restoreDefaultPrompt">恢复默认</button>
+                    </div>
+                    <textarea id="setting-auto-approval-system-prompt" class="input mt-3 w-full font-mono min-h-[170px]" rows="8" spellcheck="false"></textarea>
+                    <p class="text-xs text-dark-500 mt-2" data-i18n="autoApprovalPromptHint">建议保留：高风险停下来问你，低风险再自动继续。</p>
+                </div>
             </div>
-            <div class="card">
+            <div class="card settings-step-panel" data-settings-step-panel="6">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <h3 class="card-title" data-i18n="storageCleanup">Storage & Cleanup</h3>
                     <div class="flex flex-wrap gap-2">
@@ -774,10 +876,37 @@
                     <div id="uninstall-cleanup-targets" class="mt-3 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-1"></div>
                     <div id="uninstall-cleanup-result" class="mt-3"></div>
                 </div>
+                <div class="mt-5 border-t border-dark-800 pt-5">
+                    <h4 class="text-sm font-semibold text-dark-200" data-i18n="sourceInfoTitle">项目来源</h4>
+                    <p class="text-xs text-dark-500 mt-1" data-i18n="sourceInfoDesc">本软件来自公开仓库，下载、反馈和查看更新都可以从这里进入。</p>
+                    <a href="https://github.com/JiangNanGenius/Codex-Enhance-Manager" target="_blank" rel="noopener noreferrer" class="inline-flex items-center mt-3 text-sm font-semibold text-accent-300 hover:text-accent-200">
+                        GitHub: JiangNanGenius/Codex-Enhance-Manager
+                    </a>
+                </div>
             </div>
-            <div class="flex gap-3">
-                <button onclick="saveSettings()" class="btn btn-primary" data-i18n="saveSettings">Save Settings</button>
-                <button onclick="resetSettings()" class="btn btn-danger" data-i18n="resetDefaults">Reset to Defaults</button>
+            <div class="card settings-step-panel" data-settings-step-panel="7">
+                <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                    <div>
+                        <h3 class="card-title" data-i18n="wizardFinishGuideTitle">保存前检查</h3>
+                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardFinishGuideDesc">确认路径、供应商、路由和提醒都能理解后再保存；缺项可以先用默认值。</p>
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-primary text-xs" data-i18n="saveSettings">保存设置</button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSave">保存只写入本应用配置，影响 Codex 的操作会单独确认。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSource">项目来源和更新入口在整理与来源步骤中。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointReturn">后续修改可直接跳到任意步骤。</div>
+                </div>
+            </div>
+            <div class="card settings-wizard-actions">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <p class="text-sm text-dark-400" data-i18n="settingsWizardSaveHint">每一步都可以先预览或调整，最后点击保存设置。</p>
+                    <div class="flex flex-wrap gap-2">
+                        <button id="settings-wizard-prev" onclick="showPreviousSettingsWizardStep()" class="btn btn-secondary" data-i18n="settingsWizardPrevious">上一步</button>
+                        <button id="settings-wizard-next" onclick="showNextSettingsWizardStep()" class="btn btn-secondary" data-i18n="settingsWizardNext">下一步</button>
+                        <button onclick="saveSettings()" class="btn btn-primary" data-i18n="saveSettings">保存设置</button>
+                    </div>
+                </div>
             </div>
         </div>
     </main>

@@ -3,7 +3,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from providers import ProviderRegistry, REDACTED_VALUE, normalize_provider, is_secret_key, validate_provider
+from providers import (
+    ProviderRegistry,
+    REDACTED_VALUE,
+    build_catalog_preview_from_providers,
+    normalize_provider,
+    is_secret_key,
+    validate_provider,
+)
 
 
 class ProviderRegistryTest(unittest.TestCase):
@@ -237,6 +244,32 @@ class ProviderRegistryTest(unittest.TestCase):
 
         self.assertEqual(provider["api_format"], "anthropic")
 
+    def test_model_api_format_and_native_approval_are_model_level_settings(self):
+        provider = normalize_provider({
+            "display_name": "Mixed Interface",
+            "short_alias": "mixif",
+            "api_format": "openai_responses",
+            "catalog_visibility": "selected_models",
+            "models": [
+                {"id": "chat-model", "api_format": "openai_chat", "native_approval": False, "selected": True},
+                {"id": "responses-model", "api_format": "openai_responses", "native_approval": True, "selected": True},
+            ],
+        })
+
+        chat_model, responses_model = provider["models"]
+        self.assertEqual(chat_model["api_format"], "openai_chat")
+        self.assertFalse(chat_model["native_approval"])
+        self.assertEqual(responses_model["api_format"], "openai_responses")
+        self.assertTrue(responses_model["native_approval"])
+        self.assertTrue(responses_model["capability_overrides"]["native_approval"])
+
+        preview = build_catalog_preview_from_providers([provider])
+        entries = {entry["upstream_model_id"]: entry for entry in preview["entries"]}
+        self.assertEqual(entries["chat-model"]["api_format"], "openai_chat")
+        self.assertEqual(entries["chat-model"]["api_format_source"], "model")
+        self.assertEqual(entries["responses-model"]["api_format"], "openai_responses")
+        self.assertTrue(entries["responses-model"]["capabilities"]["native_approval"])
+
     def test_model_alias_and_regex_rewrite_schema_is_normalized(self):
         provider = normalize_provider({
             "display_name": "Alias Provider",
@@ -320,7 +353,7 @@ class ProviderRegistryTest(unittest.TestCase):
         self.assertEqual(profile["retry_attempts"], 3)
         self.assertEqual(profile["retry_backoff_ms"], 750)
 
-    def test_approval_profile_defaults_to_manual(self):
+    def test_approval_profile_defaults_to_auto_approve(self):
         provider = normalize_provider({
             "display_name": "Approval Default",
             "short_alias": "approval",
@@ -328,10 +361,24 @@ class ProviderRegistryTest(unittest.TestCase):
         })
 
         profile = provider["approval_profile"]
-        self.assertEqual(profile["mode"], "manual_only")
+        self.assertEqual(profile["mode"], "proxy_auto_approve")
+        self.assertEqual(profile["mode_source"], "default")
         self.assertFalse(profile["official_guardian"])
-        self.assertFalse(profile["proxy_auto_approve"])
+        self.assertTrue(profile["proxy_auto_approve"])
         self.assertEqual(profile["on_review_error"], "decline")
+
+    def test_approval_profile_can_stay_manual_when_explicit(self):
+        provider = normalize_provider({
+            "display_name": "Approval Manual",
+            "short_alias": "manual",
+            "approval_profile": {"mode": "manual_only"},
+            "models": [{"id": "model-a"}],
+        })
+
+        profile = provider["approval_profile"]
+        self.assertEqual(profile["mode"], "manual_only")
+        self.assertEqual(profile["mode_source"], "explicit")
+        self.assertFalse(profile["proxy_auto_approve"])
 
     def test_approval_profile_supports_proxy_auto_approve(self):
         provider = normalize_provider({
@@ -349,6 +396,7 @@ class ProviderRegistryTest(unittest.TestCase):
 
         profile = provider["approval_profile"]
         self.assertEqual(profile["mode"], "proxy_auto_approve")
+        self.assertEqual(profile["mode_source"], "explicit")
         self.assertTrue(profile["proxy_auto_approve"])
         self.assertEqual(profile["reviewer_model"], "qwen/qwen3-coder-plus")
         self.assertEqual(profile["allowed_actions"], ["exec", "network"])
@@ -452,9 +500,23 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertIn("sora-2", model_ids)
             self.assertIn("sora-2-pro", model_ids)
 
-    def test_codex_api_key_mixin_preset_enables_image_passthrough(self):
+    def test_local_proxy_media_bridge_preset_enables_image_passthrough(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            preset = next((p for p in registry.list_presets()["presets"] if p["preset_id"] == "codex-api-key-mixin"), None)
+            self.assertIsNotNone(preset)
+            visible_text = " ".join([
+                preset.get("name", ""),
+                preset.get("description", ""),
+                preset.get("provider", {}).get("display_name", ""),
+                preset.get("provider", {}).get("caveat", ""),
+                preset.get("provider", {}).get("notes", ""),
+            ])
+            self.assertNotIn("Code++", visible_text)
+            self.assertNotIn("Mix-in", visible_text)
+            self.assertNotIn("mix-in", visible_text)
+            self.assertNotIn("混入", visible_text)
+
             provider = registry.import_preset("codex-api-key-mixin")
 
             self.assertEqual(provider["api_format"], "openai_responses")

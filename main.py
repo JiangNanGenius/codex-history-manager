@@ -63,10 +63,10 @@ desktop_api = None
 
 class DesktopApi:
     def show_monitor(self):
-        _show_monitor(self)
+        return _show_monitor()
 
     def hide_monitor(self):
-        _hide_monitor()
+        return _hide_monitor()
 
     def show_main(self):
         if main_window is not None:
@@ -133,23 +133,28 @@ def _hide_to_tray(window):
 
 
 def _show_monitor(api=None):
-    global monitor_window
     try:
         if monitor_window is None:
-            monitor_window = _create_monitor_window(api or desktop_api or DesktopApi())
-        if monitor_window is not None:
-            monitor_window.show()
-            monitor_window.restore()
-    except Exception:
-        pass
+            return {
+                "success": False,
+                "error": "Monitor window is not ready. Please restart the desktop app.",
+            }
+        monitor_window.show()
+        monitor_window.restore()
+        _resize_monitor(MONITOR_WINDOW_WIDTH, MONITOR_WINDOW_EXPANDED_HEIGHT)
+        return {"success": True}
+    except Exception as exc:
+        traceback.print_exc()
+        return {"success": False, "error": str(exc)}
 
 
 def _hide_monitor():
     try:
         if monitor_window is not None:
             monitor_window.hide()
-    except Exception:
-        pass
+        return {"success": True}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
 
 
 def _resize_monitor(width: int, height: int) -> dict[str, int]:
@@ -217,6 +222,14 @@ def _exit_app(window):
     """
     global allow_exit
     allow_exit = True
+    # Some tray/WebView callbacks can block during shutdown on Windows. Arm a
+    # short hard-exit fallback before best-effort cleanup so Exit always exits.
+    try:
+        killer = threading.Timer(1.2, lambda: os._exit(0))
+        killer.daemon = True
+        killer.start()
+    except Exception:
+        pass
     try:
         if tray_icon is not None:
             tray_icon.stop()
@@ -378,7 +391,7 @@ def _create_monitor_window(api):
         on_top=True,
         transparent=False,
         background_color=WEBVIEW_MONITOR_BACKGROUND,
-        hidden=False,
+        hidden=True,
         focus=False,
         text_select=False,
     )
@@ -467,7 +480,7 @@ def main():
       - 若 Flask 启动超时（如端口被占用），打印错误并 sys.exit(1)，
         避免用户看到空白窗口。
     """
-    global main_window, desktop_api
+    global main_window, monitor_window, desktop_api
     # 启动 Flask 后台线程
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
@@ -480,9 +493,15 @@ def main():
     # 创建 PyWebView 窗口（内嵌 Edge WebView2）
     desktop_api = DesktopApi()
     window = _create_main_window(desktop_api)
+    monitor_window = _create_monitor_window(desktop_api)
     main_window = window
     _setup_tray(window)
-    webview.start(gui="edgechromium")
+    try:
+        webview.start(gui="edgechromium")
+    finally:
+        # If the WebView loop returns without going through the tray Exit item,
+        # ensure background tray/Flask threads do not keep a ghost process alive.
+        _exit_app(window)
 
 
 if __name__ == "__main__":

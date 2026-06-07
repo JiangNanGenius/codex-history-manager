@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from app_paths import LEGACY_CONFIG_FILE, app_data_path, ensure_app_dirs
+from approval_broker import DEFAULT_AUTO_APPROVAL_SYSTEM_PROMPT, normalize_auto_approval_system_prompt
 from auto_detect import (
     detect_archived_dir,
     detect_codex_db,
@@ -50,6 +51,7 @@ DEFAULT_CONFIG = {
     "proxy_upstream_timeout_seconds": 120,
     "proxy_retry_attempts": 0,
     "proxy_retry_backoff_ms": 250,
+    "auto_approval_system_prompt": DEFAULT_AUTO_APPROVAL_SYSTEM_PROMPT,
     "startup_enabled": False,
     "startup_mode": "disabled",
     "startup_auto_elevate": False,
@@ -262,6 +264,9 @@ class Config:
             self._data["proxy_retry_backoff_ms"] = min(max(int(self._data.get("proxy_retry_backoff_ms", 250)), 0), 30000)
         except (TypeError, ValueError):
             self._data["proxy_retry_backoff_ms"] = 250
+        self._data["auto_approval_system_prompt"] = normalize_auto_approval_system_prompt(
+            self._data.get("auto_approval_system_prompt")
+        )
 
     def _auto_detect_if_needed(self):
         """Auto-fill Codex paths only when the user has not configured them."""

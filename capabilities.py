@@ -17,6 +17,7 @@ CAPABILITY_DEFAULTS: Dict[str, bool] = {
     "models": True,
     "balance": False,
     "quota": False,
+    "native_approval": False,
 }
 
 

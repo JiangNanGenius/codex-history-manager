@@ -22,6 +22,7 @@ from responses_adapter import chat_completions_url, responses_url
 
 
 ProviderSupplier = Callable[[], Any]
+PromptSupplier = Callable[[], Any]
 
 SUPPORTED_TEXT_FORMATS = {
     "openai_chat",
@@ -44,8 +45,9 @@ class AutoApprovalModelReviewer:
     is used only if it can handle text review requests.
     """
 
-    def __init__(self, provider_supplier: ProviderSupplier):
+    def __init__(self, provider_supplier: ProviderSupplier, system_prompt_supplier: Optional[PromptSupplier] = None):
         self.provider_supplier = provider_supplier
+        self.system_prompt_supplier = system_prompt_supplier
 
     def review(self, action: Dict[str, Any], profile: Dict[str, Any], provider: Dict[str, Any]) -> Any:
         providers = self._load_providers()
@@ -57,6 +59,7 @@ class AutoApprovalModelReviewer:
                 "reviewer_provider_id": reviewer_provider.get("id", ""),
                 "reviewer_api_format": reviewer_provider.get("api_format", ""),
             },
+            system_prompt=self._system_prompt(),
         )
         request_body = self._build_request_body(prompt, profile, reviewer_provider, reviewer_model)
         response_json = self._post_json(
@@ -76,6 +79,15 @@ class AutoApprovalModelReviewer:
         if not isinstance(supplied, list):
             return []
         return [item for item in supplied if isinstance(item, dict)]
+
+    def _system_prompt(self) -> str:
+        if self.system_prompt_supplier is None:
+            return ""
+        try:
+            value = self.system_prompt_supplier()
+        except Exception:
+            return ""
+        return str(value or "")
 
     def _resolve_reviewer_provider(
         self,

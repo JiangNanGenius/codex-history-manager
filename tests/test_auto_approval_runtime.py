@@ -79,6 +79,36 @@ class AutoApprovalRuntimeTest(unittest.TestCase):
         self.assertNotIn("prompt", json.dumps(body).lower())
         self.assertIn("Allowed", result)
 
+    def test_reviewer_uses_user_custom_system_prompt(self):
+        providers = [{
+            "id": "qwen",
+            "short_alias": "qwen",
+            "enabled": True,
+            "api_format": "openai_chat",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "api_key": "sk-test",
+            "capabilities": {"text": True},
+            "models": [{"id": "qwen3-coder-plus", "enabled": True}],
+        }]
+        opener = FakeOpener({
+            "choices": [{
+                "message": {
+                    "content": "{\"decision\":\"accept\",\"risk_level\":\"low\",\"reason\":\"Allowed.\"}"
+                }
+            }]
+        })
+
+        with patch("auto_approval_runtime.urllib.request.build_opener", return_value=opener):
+            AutoApprovalModelReviewer(lambda: providers, lambda: "Custom reviewer rules. Return JSON only.").review(
+                self._action(),
+                self._profile(),
+                {"id": "image-main"},
+            )
+
+        request, _timeout = opener.calls[0]
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["messages"][0]["content"], "Custom reviewer rules. Return JSON only.")
+
     def test_responses_reviewer_uses_source_verified_message_items(self):
         providers = [{
             "id": "openai",

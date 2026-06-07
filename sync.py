@@ -126,14 +126,14 @@ def _decode_tasklist_output(stdout: bytes) -> str:
     return stdout.decode("utf-8", errors="replace")
 
 
-def _find_pids_by_image(image_name: str) -> List[int]:
+def _find_pids_by_image(image_name: str, timeout: int = 10) -> List[int]:
     """Find PIDs by image name using tasklist."""
     pids = []
     try:
         import subprocess
         result = subprocess.run(
             ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
-            capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW
+            capture_output=True, timeout=timeout, creationflags=CREATE_NO_WINDOW
         )
         output = _decode_tasklist_output(result.stdout)
         for line in output.strip().splitlines():
@@ -148,7 +148,7 @@ def _find_pids_by_image(image_name: str) -> List[int]:
     return pids
 
 
-def _find_node_codex_pids() -> List[int]:
+def _find_node_codex_pids(timeout: int = 10) -> List[int]:
     """
     查找运行 Codex 的 node.exe 进程 PID。
 
@@ -179,7 +179,7 @@ def _find_node_codex_pids() -> List[int]:
         )
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd],
-            capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW
+            capture_output=True, timeout=timeout, creationflags=CREATE_NO_WINDOW
         )
         output = _decode_tasklist_output(result.stdout)
         lines = output.strip().splitlines()
@@ -198,7 +198,7 @@ def _find_node_codex_pids() -> List[int]:
     return pids
 
 
-def is_codex_running() -> Tuple[bool, List[int]]:
+def is_codex_running(timeout: int = 3) -> Tuple[bool, List[int]]:
     """
     检查 Codex 进程是否在运行。
 
@@ -216,9 +216,10 @@ def is_codex_running() -> Tuple[bool, List[int]]:
         (是否运行中, [PID列表])
     """
     pids = []
+    safe_timeout = max(int(timeout or 3), 1)
     for image_name in CODEX_PROCESS_NAMES:
-        pids.extend(_find_pids_by_image(image_name))
-    pids.extend(_find_node_codex_pids())
+        pids.extend(_find_pids_by_image(image_name, timeout=safe_timeout))
+    pids.extend(_find_node_codex_pids(timeout=safe_timeout))
     # Deduplicate：dict.fromkeys 保持顺序去重，Python 3.7+ 有序性保证
     unique_pids = list(dict.fromkeys(pids))
     return len(unique_pids) > 0, unique_pids
@@ -229,7 +230,7 @@ def kill_codex() -> Tuple[bool, str]:
     终止 Codex 进程
     返回 (是否成功, 消息)
     """
-    running, pids = is_codex_running()
+    running, pids = is_codex_running(timeout=10)
     if not running:
         return True, "Codex 未在运行"
 
@@ -244,7 +245,7 @@ def kill_codex() -> Tuple[bool, str]:
             )
         time.sleep(1)
         # 验证是否已关闭
-        still_running, _ = is_codex_running()
+        still_running, _ = is_codex_running(timeout=10)
         if still_running:
             return False, f"未能关闭 Codex (PID: {pids})"
         return True, f"已关闭 Codex (PID: {pids})"

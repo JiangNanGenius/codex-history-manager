@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from codex_approval_bridge import COMMAND_APPROVAL_METHOD
@@ -8,7 +9,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
     def _app(self):
         with (
             patch("app.Config") as MockConfig,
-            patch("app.CodexDB"),
+            patch("app.CodexDB") as MockDB,
             patch("app.BackupManager"),
             patch("app.TokenStats"),
             patch("app.ProviderRegistry"),
@@ -25,6 +26,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             config.is_write_locked.return_value = False
             config.write_lock_reason.return_value = ""
             MockConfig.return_value = config
+            MockDB.return_value.get_provider_distribution.return_value = []
 
             from app import create_app
 
@@ -71,6 +73,20 @@ class CodexIntegrationApiTest(unittest.TestCase):
         data = response.get_json()
         self.assertFalse(data["success"])
         self.assertIn("Unsupported Codex approval method", data["error"])
+
+    def test_sync_status_uses_available_config_loader(self):
+        app = self._app()
+        with (
+            patch("app.resolve_codex_home", return_value=Path("C:/Users/demo/.codex")),
+            patch("app._load_config_toml", return_value={"model_provider": "openai", "model": "gpt-5"}),
+            patch("app.is_codex_running", return_value=(False, [])),
+        ):
+            response = app.test_client().get("/api/sync/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["current_provider"], "openai")
+        self.assertEqual(data["current_model"], "gpt-5")
 
 
 if __name__ == "__main__":

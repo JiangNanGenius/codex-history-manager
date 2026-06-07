@@ -7,6 +7,7 @@ whose payload type is `token_count`; recent files place request-level usage at
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -18,23 +19,34 @@ from reader import iter_jsonl_lines
 
 READ_CACHE_KEYS = (
     "cached_input_tokens",
+    "cachedInputTokens",
     "cache_read_input_tokens",
+    "cacheReadInputTokens",
     "cache_read_tokens",
+    "cacheReadTokens",
     "cached_tokens",
+    "cachedTokens",
     "cachedContentTokenCount",
 )
 WRITE_CACHE_KEYS = (
     "cache_creation_input_tokens",
+    "cacheCreationInputTokens",
     "cache_creation_tokens",
+    "cacheCreationTokens",
     "cache_write_tokens",
+    "cacheWriteTokens",
     "cache_written_tokens",
+    "cacheWrittenTokens",
     "cache_create_input_tokens",
+    "cacheCreateInputTokens",
 )
-INPUT_KEYS = ("input_tokens", "prompt_tokens", "promptTokenCount")
-OUTPUT_KEYS = ("output_tokens", "completion_tokens", "candidatesTokenCount")
-TOTAL_KEYS = ("total_tokens", "totalTokenCount")
-REASONING_KEYS = ("reasoning_output_tokens", "reasoning_tokens")
-DETAIL_KEYS = ("input_tokens_details", "prompt_tokens_details")
+INPUT_KEYS = ("input_tokens", "inputTokens", "prompt_tokens", "promptTokens", "promptTokenCount")
+OUTPUT_KEYS = ("output_tokens", "outputTokens", "completion_tokens", "completionTokens", "candidatesTokenCount")
+TOTAL_KEYS = ("total_tokens", "totalTokens", "totalTokenCount", "used_tokens", "usedTokens", "tokens_used", "tokensUsed", "used")
+REASONING_KEYS = ("reasoning_output_tokens", "reasoningOutputTokens", "reasoning_tokens", "reasoningTokens")
+DETAIL_KEYS = ("input_tokens_details", "inputTokensDetails", "prompt_tokens_details", "promptTokensDetails")
+CONTEXT_WINDOW_KEYS = ("model_context_window", "modelContextWindow", "context_window", "contextWindow", "context_limit", "contextLimit", "limit")
+CONTEXT_USED_KEYS = ("context_used", "contextUsed", "used_tokens", "usedTokens", "used")
 
 
 def parse_token_usage_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -57,6 +69,10 @@ def parse_token_usage_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     result["cache_creation_tokens"] = cache_creation
     result["cache_total_tokens"] = cache_read + cache_creation
     result["cache_field_seen"] = read_seen or creation_seen
+    result["context_window"] = _first_int(usage, CONTEXT_WINDOW_KEYS)
+    result["context_used_tokens"] = _first_int(usage, CONTEXT_USED_KEYS)
+    if result["context_used_tokens"] <= 0:
+        result["context_used_tokens"] = result["total_tokens"]
     return result
 
 
@@ -64,6 +80,7 @@ def read_rollout_usage(
     path: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
+    tail_bytes: int = 0,
 ) -> Dict[str, Any]:
     """Read cache usage from a single rollout/jsonl file."""
     result = _empty_rollout_result(path)
@@ -75,7 +92,8 @@ def read_rollout_usage(
     end_ts = _parse_datetime_to_unix(end, end_of_day=True)
 
     try:
-        for obj in iter_jsonl_lines(path):
+        iterator = _iter_jsonl_tail(path, tail_bytes) if tail_bytes and tail_bytes > 0 else iter_jsonl_lines(path)
+        for obj in iterator:
             result["events_seen"] += 1
             if obj.get("type") != "event_msg":
                 continue
@@ -91,6 +109,7 @@ def read_rollout_usage(
             if usage["cache_field_seen"]:
                 result["cache_field_events"] += 1
             _add_usage(result, usage)
+            _remember_latest_context(result, usage, event_ts)
     except Exception as exc:
         result["error"] = str(exc)
 
@@ -103,6 +122,7 @@ def read_rollout_usage_many(
     paths: Iterable[str],
     start: Optional[str] = None,
     end: Optional[str] = None,
+    tail_bytes: int = 0,
 ) -> Dict[str, Any]:
     """Aggregate cache usage across many rollout files."""
     result = _empty_aggregate_result()
@@ -113,12 +133,16 @@ def read_rollout_usage_many(
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
-        file_result = read_rollout_usage(normalized, start=start, end=end)
+        file_result = read_rollout_usage(normalized, start=start, end=end, tail_bytes=tail_bytes)
         result["rollout_files_scanned"] += 1
         result["rollout_events_seen"] += int(file_result.get("events_seen", 0) or 0)
         result["rollout_token_count_events"] += int(file_result.get("token_count_events", 0) or 0)
         result["rollout_cache_field_events"] += int(file_result.get("cache_field_events", 0) or 0)
         _add_usage(result, file_result)
+        _remember_latest_context(result, {
+            "context_window": file_result.get("latest_context_window") or file_result.get("context_window"),
+            "context_used_tokens": file_result.get("latest_context_used_tokens") or file_result.get("context_used_tokens"),
+        }, file_result.get("latest_context_at"))
 
         source = {
             "path": normalized,
@@ -126,6 +150,8 @@ def read_rollout_usage_many(
             "cache_read_tokens": int(file_result.get("cache_read_tokens", 0) or 0),
             "cache_creation_tokens": int(file_result.get("cache_creation_tokens", 0) or 0),
             "cache_total_tokens": int(file_result.get("cache_total_tokens", 0) or 0),
+            "latest_context_window": int(file_result.get("latest_context_window", 0) or 0),
+            "latest_context_used_tokens": int(file_result.get("latest_context_used_tokens", 0) or 0),
         }
         if file_result.get("error"):
             source["error"] = str(file_result["error"])
@@ -181,6 +207,7 @@ def get_codex_rollout_cache_stats(
     start: Optional[str] = None,
     end: Optional[str] = None,
     limit: int = 5000,
+    tail_bytes: int = 0,
 ) -> Dict[str, Any]:
     """Return API-ready cache stats sourced from Codex rollout files."""
     paths = discover_rollout_paths(
@@ -190,7 +217,7 @@ def get_codex_rollout_cache_stats(
         start=start,
         end=end,
     )
-    aggregate = read_rollout_usage_many(paths, start=start, end=end)
+    aggregate = read_rollout_usage_many(paths, start=start, end=end, tail_bytes=tail_bytes)
     aggregate["rollout_paths_discovered"] = len(paths)
     aggregate["cache_note"] = (
         "Codex rollout token_count events were scanned for cache read/write usage."
@@ -198,6 +225,26 @@ def get_codex_rollout_cache_stats(
         else "No Codex rollout cache read/write fields were found."
     )
     return aggregate
+
+
+def _iter_jsonl_tail(path: str, tail_bytes: int) -> Iterable[Dict[str, Any]]:
+    """Yield JSONL objects from the end of a large rollout file."""
+    size = os.path.getsize(path)
+    start = max(size - max(int(tail_bytes or 0), 0), 0)
+    with open(path, "rb") as f:
+        f.seek(start)
+        if start > 0:
+            f.readline()
+        for raw_line in f:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                yield obj
 
 
 def _empty_usage() -> Dict[str, Any]:
@@ -210,6 +257,8 @@ def _empty_usage() -> Dict[str, Any]:
         "cache_creation_tokens": 0,
         "cache_total_tokens": 0,
         "cache_field_seen": False,
+        "context_window": 0,
+        "context_used_tokens": 0,
     }
 
 
@@ -236,6 +285,9 @@ def _empty_aggregate_result() -> Dict[str, Any]:
         "rollout_cache_field_events": 0,
         "rollout_usage_sources": [],
         "errors": [],
+        "latest_context_window": 0,
+        "latest_context_used_tokens": 0,
+        "latest_context_at": None,
     })
     return result
 
@@ -243,25 +295,34 @@ def _empty_aggregate_result() -> Dict[str, Any]:
 def _pick_usage_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     info = payload.get("info")
     if isinstance(info, dict):
-        last_usage = info.get("last_token_usage")
+        last_usage = info.get("last_token_usage") or info.get("lastTokenUsage") or info.get("lastUsage")
         if isinstance(last_usage, dict):
-            return last_usage
+            return _with_context_fields(last_usage, info)
 
-    for key in ("last_token_usage", "usage", "token_usage", "usageMetadata"):
+    for key in ("last_token_usage", "lastTokenUsage", "lastUsage", "usage", "token_usage", "tokenUsage", "usageMetadata"):
         value = payload.get(key)
         if isinstance(value, dict):
-            return value
+            return _with_context_fields(value, payload)
 
     if isinstance(info, dict):
-        total_usage = info.get("total_token_usage")
+        total_usage = info.get("total_token_usage") or info.get("totalTokenUsage")
         if isinstance(total_usage, dict):
-            return total_usage
+            return _with_context_fields(total_usage, info)
 
     response = payload.get("response")
     if isinstance(response, dict) and isinstance(response.get("usage"), dict):
-        return response["usage"]
+        return _with_context_fields(response["usage"], payload)
 
-    return payload if _looks_like_usage(payload) else {}
+    return _with_context_fields(payload, payload) if _looks_like_usage(payload) else {}
+
+
+def _with_context_fields(usage: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy sibling context fields into the selected usage object."""
+    merged = dict(usage)
+    for key in CONTEXT_WINDOW_KEYS + CONTEXT_USED_KEYS:
+        if key not in merged and key in source:
+            merged[key] = source[key]
+    return merged
 
 
 def _looks_like_usage(value: Dict[str, Any]) -> bool:
@@ -285,6 +346,19 @@ def _add_usage(target: Dict[str, Any], usage: Dict[str, Any]) -> None:
     target["cache_total_tokens"] = int(target.get("cache_read_tokens", 0) or 0) + int(
         target.get("cache_creation_tokens", 0) or 0
     )
+
+
+def _remember_latest_context(target: Dict[str, Any], usage: Dict[str, Any], event_ts: Optional[int]) -> None:
+    context_window = int(usage.get("context_window", 0) or 0)
+    context_used = int(usage.get("context_used_tokens", 0) or 0)
+    if context_window <= 0 and context_used <= 0:
+        return
+    previous_ts = target.get("latest_context_at")
+    if previous_ts is not None and event_ts is not None and event_ts < previous_ts:
+        return
+    target["latest_context_window"] = context_window
+    target["latest_context_used_tokens"] = context_used
+    target["latest_context_at"] = event_ts
 
 
 def _cache_read_tokens(usage: Dict[str, Any]) -> Tuple[int, bool]:

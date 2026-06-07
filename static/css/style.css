@@ -831,6 +831,89 @@ tbody tr:hover::before {
   box-shadow: 0 0 12px rgba(59,130,246,0.25);
 }
 
+.settings-wizard-shell {
+  background:
+    radial-gradient(circle at 10% 10%, rgba(59, 130, 246, 0.18), transparent 26rem),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(2, 6, 23, 0.78));
+}
+
+.settings-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.6rem;
+}
+
+.settings-wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 3rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(51, 65, 85, 0.7);
+  border-radius: 0.9rem;
+  background: rgba(15, 23, 42, 0.58);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--transition-fast), border-color var(--transition-base), color var(--transition-base), background var(--transition-base), box-shadow var(--transition-base);
+}
+
+.settings-wizard-step:hover,
+.settings-wizard-step.active {
+  transform: translateY(-2px);
+  border-color: var(--border-hover);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(15, 23, 42, 0.72));
+  color: var(--text-primary);
+  box-shadow: var(--shadow-glow);
+}
+
+.settings-wizard-index {
+  width: 1.7rem;
+  height: 1.7rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, 0.18);
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  font-size: 0.76rem;
+  flex: 0 0 auto;
+}
+
+.settings-step-panel {
+  display: none;
+}
+
+.settings-step-panel.active {
+  display: block;
+  animation: fadeInUp var(--transition-slow) both;
+}
+
+.settings-wizard-actions {
+  position: sticky;
+  bottom: 1rem;
+  z-index: 5;
+  background: rgba(15, 23, 42, 0.9);
+}
+
+@media (max-width: 900px) {
+  .settings-wizard-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .settings-wizard-steps {
+    grid-template-columns: 1fr;
+  }
+  .settings-wizard-actions {
+    position: static;
+  }
+}
+
 .provider-list-item {
   width: 100%;
   padding: 0.75rem;

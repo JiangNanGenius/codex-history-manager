@@ -41,6 +41,17 @@ class ConfigThemeTest(unittest.TestCase):
         self.assertEqual(cfg._data["startup_mode"], "disabled")
         self.assertFalse(cfg._data["startup_auto_elevate"])
 
+    def test_auto_approval_prompt_default_is_restored_when_blank(self):
+        cfg = Config.__new__(Config)
+        cfg._data = {"auto_approval_system_prompt": ""}
+
+        cfg._normalize_storage_defaults()
+
+        self.assertEqual(
+            cfg._data["auto_approval_system_prompt"],
+            DEFAULT_CONFIG["auto_approval_system_prompt"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

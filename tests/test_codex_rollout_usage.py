@@ -131,6 +131,21 @@ class CodexRolloutUsageTest(unittest.TestCase):
                 6,
                 0,
             ),
+            (
+                {
+                    "type": "token_count",
+                    "lastTokenUsage": {
+                        "inputTokens": 100,
+                        "outputTokens": 20,
+                        "totalTokens": 120,
+                        "cachedInputTokens": 45,
+                        "cacheCreationInputTokens": 5,
+                    },
+                    "modelContextWindow": 200000,
+                },
+                45,
+                5,
+            ),
         ]
 
         for payload, expected_read, expected_creation in cases:
@@ -139,6 +154,27 @@ class CodexRolloutUsageTest(unittest.TestCase):
                 self.assertEqual(usage["cache_read_tokens"], expected_read)
                 self.assertEqual(usage["cache_creation_tokens"], expected_creation)
                 self.assertTrue(usage["cache_field_seen"])
+
+    def test_reads_camel_case_usage_and_context(self):
+        usage = parse_token_usage_from_payload({
+            "type": "token_count",
+            "info": {
+                "lastTokenUsage": {
+                    "inputTokens": 32,
+                    "outputTokens": 8,
+                    "totalTokens": 40,
+                    "cachedInputTokens": 12,
+                },
+                "modelContextWindow": 128000,
+            },
+        })
+
+        self.assertEqual(usage["input_tokens"], 32)
+        self.assertEqual(usage["output_tokens"], 8)
+        self.assertEqual(usage["total_tokens"], 40)
+        self.assertEqual(usage["cache_read_tokens"], 12)
+        self.assertEqual(usage["context_window"], 128000)
+        self.assertEqual(usage["context_used_tokens"], 40)
 
     def test_applies_time_filter_to_token_count_events(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -234,6 +270,29 @@ class CodexRolloutUsageTest(unittest.TestCase):
             self.assertEqual(stats["rollout_paths_discovered"], 1)
             self.assertEqual(stats["cache_read_tokens"], 11)
 
+    def test_tail_scan_reads_recent_token_count_without_full_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "rollout.jsonl"
+            path.write_text(
+                json.dumps({
+                    "timestamp": "2026-06-07T11:00:00Z",
+                    "type": "event_msg",
+                    "payload": {"type": "token_count", "last_token_usage": {"cached_input_tokens": 99}},
+                }) + "\n" +
+                ("x" * 5000) + "\n" +
+                json.dumps({
+                    "timestamp": "2026-06-07T12:00:00Z",
+                    "type": "event_msg",
+                    "payload": {"type": "token_count", "last_token_usage": {"cached_input_tokens": 7}},
+                }) + "\n",
+                encoding="utf-8",
+            )
+
+            stats = read_rollout_usage(str(path), tail_bytes=1024)
+
+            self.assertTrue(stats["cache_supported"])
+            self.assertEqual(stats["cache_read_tokens"], 7)
+
     def test_merge_cache_usage_sources_keeps_source_fields(self):
         data = {}
         _merge_cache_usage_sources(
@@ -260,6 +319,7 @@ class CodexRolloutUsageTest(unittest.TestCase):
         )
 
         self.assertTrue(data["cache_supported"])
+        self.assertFalse(data["codex_rollout_usage_supported"])
         self.assertEqual(data["cache_read_tokens"], 10)
         self.assertEqual(data["cache_creation_tokens"], 2)
         self.assertEqual(data["cache_total_tokens"], 12)
@@ -271,6 +331,31 @@ class CodexRolloutUsageTest(unittest.TestCase):
         self.assertEqual(data["cache_tables"], [{"table": "proxy_request_logs"}])
         self.assertEqual(data["cc_switch_cache_strategy"], "usage_daily_rollups")
         self.assertTrue(data["cc_switch_cache_rollup_used"])
+
+    def test_merge_cache_usage_sources_uses_rollout_total_as_source_of_truth(self):
+        data = {"total_tokens": 999, "data_source": "codex_db"}
+        _merge_cache_usage_sources(
+            data,
+            {
+                "cache_supported": True,
+                "input_tokens": 100,
+                "output_tokens": 25,
+                "total_tokens": 125,
+                "rollout_token_count_events": 2,
+                "latest_context_window": 200000,
+                "latest_context_used_tokens": 125,
+            },
+            None,
+            use_rollout_total=True,
+        )
+
+        self.assertEqual(data["codex_db_total_tokens"], 999)
+        self.assertTrue(data["codex_rollout_usage_supported"])
+        self.assertEqual(data["total_tokens"], 125)
+        self.assertEqual(data["input_tokens"], 100)
+        self.assertEqual(data["output_tokens"], 25)
+        self.assertEqual(data["data_source"], "codex_rollout")
+        self.assertEqual(data["codex_rollout_latest_context_window"], 200000)
 
     def test_merge_cache_usage_sources_uses_cc_switch_when_rollout_missing(self):
         data = {}
@@ -306,7 +391,7 @@ class CodexRolloutUsageTest(unittest.TestCase):
         badges = {badge["id"]: badge for badge in data["usage_source_badges"]}
         self.assertEqual(set(badges), {"codex_db", "codex_rollout", "local_proxy", "cc_switch_db"})
         self.assertTrue(badges["codex_db"]["active"])
-        self.assertIn("collapsed total tokens", badges["codex_db"]["tooltip"])
+        self.assertIn("compatibility fallback", badges["codex_db"]["tooltip"])
         self.assertIn("cache read/write details require", badges["codex_db"]["tooltip"])
         self.assertTrue(badges["codex_rollout"]["active"])
         self.assertEqual(badges["local_proxy"]["status"], "running")

@@ -58,6 +58,15 @@ class ApprovalBrokerTest(unittest.TestCase):
         self.assertTrue(user_payload["user_enabled"])
         self.assertEqual(user_payload["action"]["kind"], "permissions")
 
+    def test_build_prompt_accepts_custom_system_prompt(self):
+        prompt = build_auto_approval_prompt(
+            {"kind": "permissions", "permissions": {"filesystem": "workspace-write"}},
+            {"mode": "proxy_auto_approve"},
+            system_prompt="Custom reviewer rules. Return JSON only.",
+        )
+
+        self.assertEqual(prompt["messages"][0]["content"], "Custom reviewer rules. Return JSON only.")
+
     def test_parse_accept_alias_and_decline_high_risk_by_policy(self):
         decision = parse_approval_decision(
             {

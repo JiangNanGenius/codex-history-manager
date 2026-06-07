@@ -538,13 +538,26 @@ def _provider_health_check_headers(provider: Dict[str, Any]) -> Dict[str, str]:
             continue
         headers[key] = value
 
-    user_agent = str(provider.get("user_agent") or configured_headers.get("User-Agent") or "").strip()
+    configured_user_agent = ""
+    for key, value in configured_headers.items():
+        if isinstance(key, str) and key.lower() == "user-agent":
+            configured_user_agent = str(value or "").strip()
+            break
+
+    user_agent = str(provider.get("user_agent") or configured_user_agent or "").strip()
     if user_agent:
+        for key in list(headers):
+            if key.lower() == "user-agent":
+                headers.pop(key, None)
         headers["User-Agent"] = user_agent
-    elif "User-Agent" not in headers:
+    elif not _has_header(headers, "User-Agent"):
         headers["User-Agent"] = "Codex-Enhance-Manager-HealthCheck/1.0"
 
     return headers
+
+
+def _has_header(headers: Dict[str, str], name: str) -> bool:
+    return any(str(key).lower() == name.lower() for key in headers)
 
 
 def _check_provider_payload_connectivity(provider: Dict[str, Any], provider_id: str, timeout: int = 10) -> Dict[str, Any]:

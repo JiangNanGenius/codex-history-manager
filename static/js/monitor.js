@@ -19,6 +19,7 @@ const monitorCopy = {
         sourceLocal: '本地复用记录',
         sourceOverlap: '来源可能重叠',
         contextLength: '上下文长度',
+        contextUsage: '上下文',
         contextUnavailable: '上下文长度: 暂未匹配模型列表',
         tokenReached: 'Token 已达到',
         compactTitle: '折叠',
@@ -40,6 +41,7 @@ const monitorCopy = {
         sourceLocal: 'Local reuse history',
         sourceOverlap: 'sources may overlap',
         contextLength: 'Context length',
+        contextUsage: 'Context',
         contextUnavailable: 'Context length: model list not matched yet',
         tokenReached: 'Token reached',
         compactTitle: 'Collapse',
@@ -200,9 +202,15 @@ function render(value, threshold, mode, data) {
     cacheEl.textContent = formatCacheLine(data);
     cacheEl.title = cacheEl.textContent;
     const contextWindow = Number(data.current_context_window || 0);
-    contextEl.textContent = contextWindow
-        ? `${mt('contextLength')}: ${formatCompact(contextWindow)} · ${data.current_model || '-'}`
-        : mt('contextUnavailable');
+    const contextUsed = Number(data.current_context_used_tokens || 0);
+    if (contextWindow && contextUsed) {
+        const contextPct = Math.min(Math.max((contextUsed / contextWindow) * 100, 0), 100);
+        contextEl.textContent = `${mt('contextUsage')}: ${formatCompact(contextUsed)} / ${formatCompact(contextWindow)} (${contextPct.toFixed(1)}%)`;
+    } else {
+        contextEl.textContent = contextWindow
+            ? `${mt('contextLength')}: ${formatCompact(contextWindow)} · ${data.current_model || '-'}`
+            : mt('contextUnavailable');
+    }
 
     document.querySelector('.value-row').style.display = fields.tokens ? 'flex' : 'none';
     progressEl.style.display = fields.progress ? 'block' : 'none';

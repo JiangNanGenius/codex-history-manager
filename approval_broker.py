@@ -19,6 +19,16 @@ from providers import REDACTED_VALUE, is_secret_key, normalize_approval_profile
 
 BROKER_SCHEMA_VERSION = 1
 
+DEFAULT_AUTO_APPROVAL_SYSTEM_PROMPT = (
+    "You are the Auto Approval Broker for Codex actions. The user enabled "
+    "this mode in local software settings. Review only the provided "
+    "redacted action metadata and return strict JSON only. Prefer an "
+    "explicit accept or decline decision. Use ask_user only when the policy "
+    "requires manual escalation. Decline actions that expose credentials, "
+    "damage files outside the intended workspace, disable security controls, "
+    "or exfiltrate private data."
+)
+
 ACTION_KINDS = {
     "command",
     "file_change",
@@ -151,6 +161,7 @@ def build_auto_approval_prompt(
     raw_action: Any,
     provider_or_profile: Any,
     context: Optional[Dict[str, Any]] = None,
+    system_prompt: str = "",
 ) -> Dict[str, Any]:
     """Build the strict-JSON model prompt for the Auto Approval broker."""
     profile = _profile_from(provider_or_profile)
@@ -169,15 +180,7 @@ def build_auto_approval_prompt(
         "context": context,
         "expected_response_schema": expected_decision_schema(),
     }
-    system_prompt = (
-        "You are the Auto Approval Broker for Codex actions. The user enabled "
-        "this mode in local software settings. Review only the provided "
-        "redacted action metadata and return strict JSON only. Prefer an "
-        "explicit accept or decline decision. Use ask_user only when the policy "
-        "requires manual escalation. Decline actions that expose credentials, "
-        "damage files outside the intended workspace, disable security controls, "
-        "or exfiltrate private data."
-    )
+    system_prompt = normalize_auto_approval_system_prompt(system_prompt)
     return {
         "schema_version": BROKER_SCHEMA_VERSION,
         "prompt_template_id": profile.get("prompt_template_id") or "codex_guardian_compatible",
@@ -195,6 +198,14 @@ def build_auto_approval_prompt(
         "max_retries": profile.get("max_retries"),
         "source_notes": SOURCE_NOTES,
     }
+
+
+def normalize_auto_approval_system_prompt(value: Any) -> str:
+    """Return a safe reviewer system prompt, falling back to the default."""
+    prompt = str(value or "").strip()
+    if not prompt:
+        return DEFAULT_AUTO_APPROVAL_SYSTEM_PROMPT
+    return _safe_short(prompt, 8000)
 
 
 def expected_decision_schema() -> Dict[str, Any]:

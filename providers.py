@@ -803,12 +803,25 @@ def normalize_model(data: Dict[str, Any]) -> Dict[str, Any]:
     capabilities = normalize_capabilities(data.get("capabilities"))
     capability_overrides = model_capability_overrides(data)
     context_window = int(data.get("context_window") or data.get("context") or 0)
+    api_format = str(data.get("api_format") or data.get("interface") or "").strip()
+    if api_format not in API_FORMATS:
+        api_format = ""
+    native_approval_raw = (
+        data.get("native_approval")
+        if "native_approval" in data
+        else data.get("supports_native_approval", capability_overrides.get("native_approval", False))
+    )
+    native_approval = bool(native_approval_raw)
+    if "native_approval" in data or "supports_native_approval" in data or native_approval:
+        capability_overrides["native_approval"] = native_approval
     return {
         "id": model_id,
         "display_name": str(data.get("display_name") or model_id).strip(),
         "enabled": bool(data.get("enabled", True)),
         "selected": bool(data.get("selected", False)),
         "context_window": max(context_window, 0),
+        "api_format": api_format,
+        "native_approval": native_approval,
         "capabilities": capabilities,
         "capability_overrides": capability_overrides,
         "native_currency": normalize_currency(data.get("native_currency") or ""),
@@ -891,14 +904,19 @@ def normalize_alias_patterns(value: Any) -> List[Dict[str, Any]]:
 def normalize_approval_profile(data: Any) -> Dict[str, Any]:
     raw = data if isinstance(data, dict) else {}
     raw_mode = str(raw.get("mode") or "").strip()
+    mode_source = "explicit" if raw_mode else "default"
     if not raw_mode:
         if raw.get("proxy_auto_approve") or raw.get("auto_approve") or raw.get("model_prompt_fallback"):
             raw_mode = "proxy_auto_approve"
+            mode_source = "legacy"
         elif raw.get("official_guardian"):
             raw_mode = "official_guardian"
+            mode_source = "legacy"
         else:
-            raw_mode = "manual_only"
-    mode = raw_mode if raw_mode in APPROVAL_MODES else "manual_only"
+            raw_mode = "proxy_auto_approve"
+    mode = raw_mode if raw_mode in APPROVAL_MODES else "proxy_auto_approve"
+    if raw_mode not in APPROVAL_MODES:
+        mode_source = "default"
     allowed_actions = normalize_string_list(raw.get("allowed_actions"))
     if not allowed_actions:
         allowed_actions = ["exec", "apply_patch", "network", "permissions", "mcp_tool"]
@@ -919,6 +937,7 @@ def normalize_approval_profile(data: Any) -> Dict[str, Any]:
         decision_schema_version = 1
     return {
         "mode": mode,
+        "mode_source": mode_source,
         "official_guardian": mode == "official_guardian",
         "proxy_auto_approve": mode == "proxy_auto_approve",
         "reviewer_model": str(raw.get("reviewer_model") or "").strip(),
@@ -1318,7 +1337,10 @@ def _catalog_entry(provider: Dict[str, Any], model: Dict[str, Any], is_focused: 
         "provider_alias": alias,
         "provider_display_name": provider.get("display_name"),
         "upstream_model_id": upstream_model_id,
-        "api_format": provider.get("api_format"),
+        "api_format": model.get("api_format") or provider.get("api_format"),
+        "provider_api_format": provider.get("api_format"),
+        "model_api_format": model.get("api_format") or "",
+        "api_format_source": "model" if model.get("api_format") else "provider",
         "responses_profile": provider.get("responses_profile", {}),
         "context_window": model.get("context_window", 0),
         "capabilities": merge_provider_model_capabilities(provider, model),
@@ -1335,7 +1357,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
         "preset_id": "openai-compatible-responses",
         "name": "OpenAI-compatible Responses",
         "category": "text",
-        "description": "Generic Responses-compatible gateway. Fill in base URL and API key.",
+        "description": "Generic OpenAI-compatible provider. Fill in the provider URL and key.",
         "provider": {
             "id": "openai-compatible",
             "display_name": "OpenAI-compatible Responses",
@@ -1362,7 +1384,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
                 "partial_compatibility": False,
                 "requires_adapter": False,
                 "verified_docs_url": "https://platform.openai.com/docs/api-reference/responses",
-                "compatibility_notes": "Generic OpenAI Responses-compatible profile.",
+                "compatibility_notes": "Generic OpenAI-compatible setup. Verify tools and media support before daily use.",
                 "unsupported_fields": [],
             },
             "models": [
@@ -1500,7 +1522,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
         "preset_id": "custom-openai-responses",
         "name": "Custom OpenAI Responses",
         "category": "text",
-        "description": "Responses-compatible custom provider.",
+        "description": "Custom OpenAI-compatible provider.",
         "provider": {
             "id": "custom-responses",
             "display_name": "Custom Responses Provider",
@@ -1517,7 +1539,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
                 "domestic_responses": False,
                 "partial_compatibility": False,
                 "requires_adapter": False,
-                "compatibility_notes": "Custom Responses-compatible provider; verify exact feature support before enabling tools/compact/media.",
+                "compatibility_notes": "Custom OpenAI-compatible provider. Verify tools, compact mode, and media support before daily use.",
                 "unsupported_fields": [],
             },
             "models": [{"id": "custom-responses-model", "display_name": "Custom Responses Model", "selected": True, "context_window": 128000}],
@@ -1527,12 +1549,12 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
     },
     {
         "preset_id": "codex-api-key-mixin",
-        "name": "Codex Native + API Key Mix-in",
+        "name": "Local Proxy Media Bridge",
         "category": "media",
-        "description": "Keep official Codex OAuth while adding a provider API key through the local proxy. Responses text plus OpenAI-compatible image pass-through.",
+        "description": "Use one local proxy provider for text and OpenAI-compatible image generation, with account settings kept separate from provider keys.",
         "provider": {
             "id": "codex-api-key-mixin",
-            "display_name": "Codex Native + API Key Mix-in",
+            "display_name": "Local Proxy Media Bridge",
             "kind": "custom",
             "short_alias": "mix",
             "base_url": "https://your-custom-gateway.example.com/v1",
@@ -1554,7 +1576,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
                 "domestic_responses": False,
                 "partial_compatibility": False,
                 "requires_adapter": False,
-                "compatibility_notes": "Mix-in mode: Codex can stay logged in with official OAuth while local proxy forwards provider-key requests. Verify upstream Responses/tools support before enabling production routing.",
+                "compatibility_notes": "Use this when the provider can handle text requests and optional image generation through the same local proxy. Verify tools and media support before daily use.",
                 "unsupported_fields": [],
             },
             "media_profile": {
@@ -1572,8 +1594,8 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             ],
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
-            "caveat": "混入 API key 模式：本应用只写 Codex config.toml 的本地代理 provider，不修改 auth.json；图片生成需要上游兼容 /v1/images/*。",
-            "notes": "类似 Code++ 的 mix-in API key 工作流：保留官方账号态，把第三方 key 放在本地代理层。",
+            "caveat": "本地代理增强：不会改登录文件；如需生成图片，请确认供应商支持 OpenAI 兼容的图片接口。",
+            "notes": "适合把文本模型和图片模型放在同一个本地代理里；如果上游没有图片接口，可在图片/视频设置里启用全局兜底。",
         },
     },
     {
@@ -1998,7 +2020,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
                 "domestic_responses": False,
                 "partial_compatibility": False,
                 "requires_adapter": False,
-                "compatibility_notes": "Custom Responses-compatible provider; verify exact feature support before enabling tools/compact/media.",
+                "compatibility_notes": "Custom OpenAI-compatible provider. Verify tools, compact mode, and media support before daily use.",
                 "unsupported_fields": [],
             },
             "models": [

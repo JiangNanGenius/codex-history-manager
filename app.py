@@ -34,7 +34,7 @@ from typing import Any, Dict
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from config import Config, CONFIG_FILE
+from config import Config, CONFIG_FILE, DEFAULT_CONFIG
 from db import CodexDB
 from reader import read_messages, export_to_markdown, export_to_text, get_file_size_mb
 from backup import BackupManager
@@ -105,7 +105,8 @@ def create_app() -> Flask:
     token_stats = TokenStats(config.get("db_path"))
     provider_registry = ProviderRegistry(config.get("provider_store_path", ""))
     auto_approval_reviewer = AutoApprovalModelReviewer(
-        lambda: provider_registry.list_providers(include_secrets=True).get("providers", [])
+        lambda: provider_registry.list_providers(include_secrets=True).get("providers", []),
+        lambda: config.get("auto_approval_system_prompt", DEFAULT_CONFIG["auto_approval_system_prompt"]),
     )
     proxy_server = LocalProxyServer(
         port=config.get("proxy_port", 8080),
@@ -346,7 +347,11 @@ def create_app() -> Flask:
             end = request.args.get("end", "")
             granularity = request.args.get("granularity", "total")
             rollout_scan_fallback = str(request.args.get("rollout_scan_fallback", "")).lower() in {"1", "true", "yes"}
-            rollout_limit = _clamp_int(request.args.get("rollout_limit", 200), 200, 1, 1000)
+            rollout_total_source = str(request.args.get("rollout_total_source", "")).lower() in {"1", "true", "yes"}
+            default_rollout_limit = 200 if rollout_total_source or rollout_scan_fallback else 25
+            rollout_limit = _clamp_int(request.args.get("rollout_limit", default_rollout_limit), default_rollout_limit, 1, 1000)
+            default_tail_bytes = 0 if rollout_total_source else 262_144
+            rollout_tail_bytes = _clamp_int(request.args.get("rollout_tail_bytes", default_tail_bytes), default_tail_bytes, 0, 8_388_608)
             data = token_stats.get_current_stats(
                 start=start,
                 end=end,
@@ -358,9 +363,12 @@ def create_app() -> Flask:
                 start=start,
                 end=end,
                 limit=rollout_limit,
+                tail_bytes=rollout_tail_bytes,
             )
             data["codex_rollout_scan_fallback"] = rollout_scan_fallback
             data["codex_rollout_scan_limit"] = rollout_limit
+            data["codex_rollout_tail_bytes"] = rollout_tail_bytes
+            data["codex_rollout_total_source_requested"] = rollout_total_source
             cc_switch_db_path = config.get("cc_switch_db_path", "")
             data["cc_switch_db_configured"] = bool(cc_switch_db_path)
             data["cc_switch_db_path"] = cc_switch_db_path
@@ -375,9 +383,13 @@ def create_app() -> Flask:
                 data["cache_note"] = (
                     "未配置代理缓存数据库；缓存统计需要请求经过代理数据源，官方 API 和自定义 API 都可被统计。"
                 )
-            _merge_cache_usage_sources(data, rollout_cache_data, cc_cache_data)
+            _merge_cache_usage_sources(data, rollout_cache_data, cc_cache_data, use_rollout_total=rollout_total_source)
             _attach_usage_source_summary(data, proxy_server.status())
             data.update(_resolve_current_context_window(config, provider_registry))
+            if data.get("codex_rollout_latest_context_window"):
+                data["current_context_window"] = data["codex_rollout_latest_context_window"]
+                data["current_context_used_tokens"] = data["codex_rollout_latest_context_used_tokens"]
+                data["current_context_source"] = "codex_rollout"
             return jsonify(data)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -496,9 +508,9 @@ def create_app() -> Flask:
         """获取同步状态（provider 分布等）"""
         try:
             codex_home = resolve_codex_home()
-            config_data = load_config_toml(str(codex_home / "config.toml"))
+            config_data = _load_config_toml(str(codex_home / "config.toml"))
             provider_dist = db.get_provider_distribution()
-            running, pids = is_codex_running()
+            running, pids = is_codex_running(timeout=1)
 
             return jsonify({
                 "current_provider": config_data.get("model_provider", ""),
@@ -516,7 +528,7 @@ def create_app() -> Flask:
     def codex_status():
         """获取 Codex 进程状态"""
         try:
-            running, pids = is_codex_running()
+            running, pids = is_codex_running(timeout=1)
             return jsonify({"running": running, "pids": pids})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -595,7 +607,9 @@ def create_app() -> Flask:
     def get_settings():
         """读取设置"""
         try:
-            return jsonify(redact_currency_settings(config.get_all()))
+            settings = redact_currency_settings(config.get_all())
+            settings["auto_approval_system_prompt_default"] = DEFAULT_CONFIG["auto_approval_system_prompt"]
+            return jsonify(settings)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -2048,14 +2062,37 @@ def _merge_cache_usage_sources(
     data: Dict[str, Any],
     rollout_cache_data: Dict[str, Any] | None,
     cc_cache_data: Dict[str, Any] | None,
+    use_rollout_total: bool = False,
 ) -> None:
     rollout_cache_data = rollout_cache_data or {}
     cc_cache_data = cc_cache_data or {}
 
+    rollout_events = _safe_int(rollout_cache_data.get("rollout_token_count_events"))
+    rollout_input = _safe_int(rollout_cache_data.get("input_tokens"))
+    rollout_output = _safe_int(rollout_cache_data.get("output_tokens"))
+    rollout_reasoning = _safe_int(rollout_cache_data.get("reasoning_tokens"))
+    rollout_total = _safe_int(rollout_cache_data.get("total_tokens"))
     rollout_read = _safe_int(rollout_cache_data.get("cache_read_tokens"))
     rollout_creation = _safe_int(rollout_cache_data.get("cache_creation_tokens"))
     cc_read = _safe_int(cc_cache_data.get("cache_read_tokens"))
     cc_creation = _safe_int(cc_cache_data.get("cache_creation_tokens"))
+
+    data["codex_db_total_tokens"] = _safe_int(data.get("total_tokens"))
+    data["codex_rollout_usage_supported"] = rollout_events > 0 and rollout_total > 0
+    data["codex_rollout_input_tokens"] = rollout_input
+    data["codex_rollout_output_tokens"] = rollout_output
+    data["codex_rollout_reasoning_tokens"] = rollout_reasoning
+    data["codex_rollout_total_tokens"] = rollout_total
+    data["codex_rollout_latest_context_window"] = _safe_int(rollout_cache_data.get("latest_context_window"))
+    data["codex_rollout_latest_context_used_tokens"] = _safe_int(rollout_cache_data.get("latest_context_used_tokens"))
+    data["codex_rollout_latest_context_at"] = rollout_cache_data.get("latest_context_at")
+    if use_rollout_total and data["codex_rollout_usage_supported"]:
+        data["input_tokens"] = rollout_input
+        data["output_tokens"] = rollout_output
+        data["reasoning_tokens"] = rollout_reasoning
+        data["total_tokens"] = rollout_total
+        data["data_source"] = "codex_rollout"
+        data["realtime_note"] = "Codex rollout token_count events are used as the usage source of truth when available."
 
     data["codex_rollout_cache_supported"] = bool(rollout_cache_data.get("cache_supported"))
     data["codex_rollout_cache_read_tokens"] = rollout_read
@@ -2063,7 +2100,7 @@ def _merge_cache_usage_sources(
     data["codex_rollout_cache_total_tokens"] = rollout_read + rollout_creation
     data["codex_rollout_files_scanned"] = _safe_int(rollout_cache_data.get("rollout_files_scanned"))
     data["codex_rollout_paths_discovered"] = _safe_int(rollout_cache_data.get("rollout_paths_discovered"))
-    data["codex_rollout_token_count_events"] = _safe_int(rollout_cache_data.get("rollout_token_count_events"))
+    data["codex_rollout_token_count_events"] = rollout_events
     data["codex_rollout_cache_field_events"] = _safe_int(rollout_cache_data.get("rollout_cache_field_events"))
     data["codex_rollout_usage_sources"] = rollout_cache_data.get("rollout_usage_sources", [])
     data["codex_rollout_cache_note"] = rollout_cache_data.get("cache_note", "")
@@ -2136,7 +2173,7 @@ def _attach_usage_source_summary(data: Dict[str, Any], proxy_status: Dict[str, A
             "active": True,
             "kind": "total_tokens",
             "tooltip": (
-                "Codex DB threads.tokens_used stores collapsed total tokens only; "
+                "Codex DB threads.tokens_used remains the compatibility fallback for total tokens; "
                 "cache read/write details require Codex rollout or proxy/CC Switch sources."
             ),
         },
@@ -2144,14 +2181,14 @@ def _attach_usage_source_summary(data: Dict[str, Any], proxy_status: Dict[str, A
             "id": "codex_rollout",
             "label": "Codex rollout",
             "badge": "rollout",
-            "status": "active" if data.get("codex_rollout_cache_supported") else (
+            "status": "active" if data.get("codex_rollout_usage_supported") or data.get("codex_rollout_cache_supported") else (
                 "available" if rollout_discovered else "missing"
             ),
-            "active": bool(data.get("codex_rollout_cache_supported")),
-            "kind": "cache_tokens",
+            "active": bool(data.get("codex_rollout_usage_supported") or data.get("codex_rollout_cache_supported")),
+            "kind": "codex_output_usage",
             "tooltip": (
                 f"Scanned {rollout_scanned} of {rollout_discovered} discovered rollout files. "
-                "Reads token_count events and maps cached_input_tokens to cache read tokens."
+                "Reads token_count events for total, input/output, cache, and context usage when available."
             ),
         },
         {
