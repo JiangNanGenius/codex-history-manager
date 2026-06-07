@@ -51,7 +51,7 @@ function renderAmrPage() {
         <div class="animate-in">
         <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
             <div>
-                <h2 class="text-2xl font-semibold text-white">Adaptive Model Rotation</h2>
+                <h2 class="text-2xl font-semibold text-white">Adaptive Model Rotation / 自适应模型轮转</h2>
                 <p class="text-sm text-dark-400 mt-1">Configure local rotation groups and simulate capability/context routing before exposing them through Codex.</p>
             </div>
             <div class="enhance-status-strip">

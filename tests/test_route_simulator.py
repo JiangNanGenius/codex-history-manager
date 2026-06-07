@@ -4,6 +4,7 @@ from app import (
     _normalize_route_capabilities,
     _route_candidate_matches_model,
     _route_candidate_status,
+    _selected_provider_models_to_amr_candidates,
 )
 
 
@@ -67,6 +68,45 @@ class RouteSimulatorHelpersTest(unittest.TestCase):
         self.assertTrue(rows[1]["capability_match"])
         self.assertTrue(rows[1]["context_match"])
         self.assertTrue(rows[1]["model_match"])
+
+    def test_selected_provider_models_to_amr_candidates_filters_and_merges_caps(self):
+        provider = {
+            "id": "provider-1",
+            "enabled": True,
+            "capabilities": {"text": True, "vision": False, "tools": True},
+            "models": [
+                {
+                    "id": "text",
+                    "selected": True,
+                    "enabled": True,
+                    "context_window": "128000",
+                    "capabilities": {"vision": True},
+                },
+                {"id": "unselected", "selected": False, "enabled": True},
+                {"id": "disabled", "selected": True, "enabled": False},
+            ],
+        }
+
+        candidates = _selected_provider_models_to_amr_candidates(provider, 2)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["id"], "provider-1/text")
+        self.assertEqual(candidates[0]["priority"], 2)
+        self.assertEqual(candidates[0]["context_window"], 128000)
+        self.assertTrue(candidates[0]["capabilities"]["text"])
+        self.assertTrue(candidates[0]["capabilities"]["vision"])
+        self.assertTrue(candidates[0]["capabilities"]["tools"])
+
+    def test_selected_provider_models_to_amr_candidates_skips_disabled_provider(self):
+        provider = {
+            "id": "provider-1",
+            "enabled": False,
+            "models": [{"id": "text", "selected": True, "enabled": True}],
+        }
+
+        candidates = _selected_provider_models_to_amr_candidates(provider, 2)
+
+        self.assertEqual(candidates, [])
 
 
 if __name__ == "__main__":

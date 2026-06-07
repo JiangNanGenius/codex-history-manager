@@ -268,6 +268,71 @@ class TestBuildFromProviders:
 
 # ─────────────── Route Integration ───────────────
 
+class TestAddCandidatesToGroup:
+    def test_add_candidates_to_group_creates_default_group(self, tmp_path):
+        reg = AMRRegistry(str(tmp_path / "amr.json"))
+
+        group = reg.add_candidates_to_group("default", [
+            {
+                "provider_id": "p1",
+                "model_id": "m1",
+                "priority": 2,
+                "context_window": 1000,
+                "capabilities": {"text": True},
+            },
+        ])
+
+        assert group["id"] == "default"
+        assert group["display_name"] == "Default Group"
+        assert group["upserted_count"] == 1
+        assert len(group["candidates"]) == 1
+        assert group["candidates"][0]["id"] == "p1/m1"
+
+    def test_add_candidates_to_group_upserts_existing_candidate(self, tmp_path):
+        reg = AMRRegistry(str(tmp_path / "amr.json"))
+        reg.create_group({
+            "id": "default",
+            "display_name": "Default Group",
+            "candidates": [
+                {
+                    "id": "p1/m1",
+                    "provider_id": "p1",
+                    "model_id": "m1",
+                    "priority": 2,
+                    "context_window": 1000,
+                    "capabilities": {"text": True, "vision": False},
+                },
+            ],
+        })
+
+        group = reg.add_candidates_to_group("default", [
+            {
+                "id": "p1/m1",
+                "provider_id": "p1",
+                "model_id": "m1",
+                "priority": 1,
+                "context_window": 2000,
+                "capabilities": {"text": True, "vision": True},
+            },
+            {
+                "provider_id": "p2",
+                "model_id": "m2",
+                "priority": 3,
+                "context_window": 500,
+                "capabilities": {"text": True},
+            },
+        ])
+
+        assert group["upserted_count"] == 2
+        assert len(group["candidates"]) == 2
+        updated = next(c for c in group["candidates"] if c["id"] == "p1/m1")
+        added = next(c for c in group["candidates"] if c["id"] == "p2/m2")
+        assert updated["priority"] == 1
+        assert updated["context_window"] == 2000
+        assert updated["capabilities"]["vision"] is True
+        assert added["priority"] == 3
+
+
 class TestRouteIntegration:
     def test_route_success(self, tmp_path):
         """正常路由应按 priority 选择 winner。"""

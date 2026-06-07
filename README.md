@@ -45,7 +45,7 @@ The project is intentionally local-first: provider settings, backups, request-lo
 | History and usage | Browse sessions, inspect heavy conversations, read Codex DB totals, and add cache read/write usage from rollout events, proxy logs, and compatible proxy DBs. |
 | Provider setup | Manage provider presets with `short_alias`, region, currency, custom headers, `User-Agent`, approval profile, media profile, quota template, and catalog visibility. |
 | Unified Model Catalog | Preview and filter Codex-visible model IDs such as `qwen/qwen3-coder-plus` by provider, capability, context window, cost hint, currency, visibility, focus, and AMR entries. |
-| Adaptive Model Rotation | Edit local rotation groups, candidate priorities, capabilities, context limits, provider/model IDs, and run read-only route previews. |
+| Adaptive Model Rotation | Edit local rotation groups, bulk-add selected provider models, tune candidate priorities/capabilities/context limits, and run read-only route previews. |
 | Local proxy | Run an independent localhost proxy with occupied-port backoff, provider network policy, timeout/retry policy, Auto Approval broker settings, route diagnostics, metadata-only request logs, and OpenAI-compatible routes. |
 | Protocol adapters | Convert verified Responses, Chat, Anthropic Messages, tools, images, SSE events, and domestic Responses profiles only where behavior is sourced. |
 | Cost and currency | Estimate input/output/cache/reasoning/media cost, preserve per-request FX snapshots, support manual FX overrides, and keep online FX blocked until verified. |
@@ -58,9 +58,9 @@ The app is organized as an operational console rather than a marketing dashboard
 
 - **Overview**: health, current paths, guardrails, and high-signal status.
 - **Token Dashboard**: Codex totals, cache read/write, request-log summaries, cost snapshots, and floating token monitor controls.
-- **Providers**: preset-first setup, focused editing, section-local testing, status strips, custom `User-Agent`, Auto Approval, media mode controls, visibility policy, and read-only Route Simulator.
+- **Providers**: preset-first setup, focused editing, section-local testing, status strips, custom `User-Agent`, Auto Approval, media mode controls, visibility policy, selected-model AMR import, and read-only Route Simulator.
 - **Unified Model Catalog**: filtered preview before writing anything into Codex.
-- **Adaptive Model Rotation**: group and candidate editor with saved-state route preview.
+- **Adaptive Model Rotation**: group and candidate editor with selected-model import and saved-state route preview.
 - **Local Proxy**: start/stop/status, actual bound port, route explanations, and log retention.
 - **Settings**: storage paths, theme editor, import/export, startup/elevation controls, safe cleanup, uninstall cleanup, currency settings, and monitor field customization.
 - **Diagnostics and Recovery**: redacted diagnostics, exchange-rate status, approval/sandbox audit, backup/restore, rollback, and move repair.

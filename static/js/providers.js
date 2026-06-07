@@ -467,6 +467,7 @@ function renderProviderEditor(provider) {
                     <button data-bulk-action="select_vision" onclick="runBulkModelAction('select_vision')" class="btn btn-secondary text-xs">只选 Vision</button>
                     <button data-bulk-action="select_high_context" onclick="runBulkModelAction('select_high_context')" class="btn btn-secondary text-xs">只选高上下文</button>
                     <button data-bulk-action="select_low_cost" onclick="runBulkModelAction('select_low_cost')" class="btn btn-secondary text-xs">只选低成本</button>
+                    <button data-bulk-action="add_selected_to_amr" onclick="addSelectedModelsToAmr()" class="btn btn-secondary text-xs">加入 AMR</button>
                 </div>
                 <div id="bulk-action-error" class="hidden mt-2 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2"></div>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
@@ -1565,6 +1566,55 @@ async function runBulkModelAction(action) {
     } catch (err) {
         if (errorEl) {
             errorEl.textContent = '批量操作失败：' + (err.message || '网络错误，请检查连接');
+            errorEl.classList.remove('hidden');
+        }
+        document.querySelectorAll('[data-bulk-action]').forEach(btn => { btn.disabled = false; });
+    }
+}
+
+async function addSelectedModelsToAmr() {
+    const provider = getSelectedProvider();
+    if (!provider) return;
+    const errorEl = document.getElementById('bulk-action-error');
+    if (errorEl) errorEl.classList.add('hidden');
+
+    if (!provider.enabled) {
+        if (errorEl) {
+            errorEl.textContent = '加入 AMR 失败：provider 当前未启用';
+            errorEl.classList.remove('hidden');
+        }
+        return;
+    }
+    const selectedCount = (provider.models || [])
+        .filter(model => model && model.selected && model.enabled !== false)
+        .length;
+    if (!selectedCount) {
+        if (errorEl) {
+            errorEl.textContent = '加入 AMR 失败：没有已选中的启用模型';
+            errorEl.classList.remove('hidden');
+        }
+        return;
+    }
+
+    document.querySelectorAll('[data-bulk-action]').forEach(btn => { btn.disabled = true; });
+    try {
+        const result = await api('/api/providers/' + encodeURIComponent(provider.id) + '/amr/add-selected', {
+            method: 'POST',
+            body: JSON.stringify({ group_id: 'default' }),
+        });
+        await refreshCatalogPreview();
+        renderProvidersPage();
+        setTimeout(() => {
+            const btn = document.querySelector('[data-bulk-action="add_selected_to_amr"]');
+            if (btn) {
+                btn.classList.add('btn-success-flash');
+                setTimeout(() => btn.classList.remove('btn-success-flash'), 1200);
+            }
+        }, 60);
+        showToast(`已加入 ${result.added_count || selectedCount} 个模型到 AMR`, 'success', 1800);
+    } catch (err) {
+        if (errorEl) {
+            errorEl.textContent = '加入 AMR 失败：' + (err.message || '网络错误，请检查连接');
             errorEl.classList.remove('hidden');
         }
         document.querySelectorAll('[data-bulk-action]').forEach(btn => { btn.disabled = false; });

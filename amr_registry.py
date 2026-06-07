@@ -363,6 +363,49 @@ class AMRRegistry:
         self._save_store(store)
         return copy.deepcopy(default_group)
 
+    def add_candidates_to_group(
+        self,
+        group_id: str,
+        candidates: List[Dict[str, Any]],
+        display_name: str = "",
+    ) -> Dict[str, Any]:
+        """Upsert candidates into a local AMR group, creating the group if needed."""
+        target_group_id = str(group_id or "default").strip() or "default"
+        normalized_new = [normalize_candidate(c) for c in candidates if isinstance(c, dict)]
+        store = self._load_store()
+        groups = store.setdefault("groups", [])
+        group = self._find_group(store, target_group_id)
+        if not group:
+            group = normalize_group({
+                "id": target_group_id,
+                "display_name": display_name or ("Default Group" if target_group_id == "default" else target_group_id),
+                "candidates": [],
+            })
+            group["created_at"] = now_iso()
+            groups.append(group)
+
+        existing_by_id = {}
+        for candidate in group.get("candidates", []):
+            if not isinstance(candidate, dict):
+                continue
+            normalized = normalize_candidate(candidate)
+            existing_by_id[normalized["id"]] = normalized
+        for candidate in normalized_new:
+            existing_by_id[candidate["id"]] = candidate
+
+        group["candidates"] = list(existing_by_id.values())
+        group["updated_at"] = now_iso()
+        normalized_group = normalize_group(group)
+        normalized_group["id"] = target_group_id
+        for idx, item in enumerate(groups):
+            if item.get("id") == target_group_id:
+                groups[idx] = normalized_group
+                break
+        self._save_store(store)
+        result = copy.deepcopy(normalized_group)
+        result["upserted_count"] = len(normalized_new)
+        return result
+
     def to_rotation_engine(self) -> AdaptiveModelRotation:
         """
         将当前持久化 group 转换为 AdaptiveModelRotation 引擎实例。

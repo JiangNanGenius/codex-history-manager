@@ -42,7 +42,7 @@ from sync import full_sync, is_codex_running, kill_codex, start_codex, resolve_c
 from auto_detect import detect_all
 from token_stats import TokenStats
 from codex_rollout_usage import get_codex_rollout_cache_stats
-from providers import ProviderRegistry, DEFAULT_STORE_PATH
+from providers import ProviderRegistry, DEFAULT_STORE_PATH, normalize_capabilities
 from amr_registry import AMRRegistry
 from codex_config import (
     CodexConfigManager,
@@ -1141,6 +1141,50 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/providers/<provider_id>/amr/add-selected", methods=["POST"])
+    def add_selected_provider_models_to_amr(provider_id):
+        """Add selected provider models into a local AMR group."""
+        try:
+            _refresh_provider_registry_path()
+            body = request.get_json(silent=True) or {}
+            group_id = str(body.get("group_id") or "default").strip() or "default"
+
+            providers_data = provider_registry.list_providers(include_secrets=False)
+            provider = next(
+                (p for p in providers_data.get("providers", []) if p.get("id") == provider_id),
+                None,
+            )
+            if not provider:
+                return jsonify({"success": False, "error": "Provider not found"}), 404
+
+            default_priority = 1 if provider.get("catalog_visibility") == "always_visible" else 2
+            priority = _clamp_int(body.get("priority", default_priority), default_priority, 1, 100)
+            candidates = _selected_provider_models_to_amr_candidates(provider, priority)
+            if not candidates:
+                return jsonify({
+                    "success": False,
+                    "error": "No selected enabled models found",
+                    "group_id": group_id,
+                    "added_count": 0,
+                }), 400
+
+            group = amr_registry.add_candidates_to_group(
+                group_id,
+                candidates,
+                "Default Group" if group_id == "default" else group_id,
+            )
+            return jsonify({
+                "success": True,
+                "group": group,
+                "group_id": group.get("id", group_id),
+                "added_count": len(candidates),
+                "upserted_count": group.get("upserted_count", len(candidates)),
+            })
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
     @app.route("/api/providers/<provider_id>/visibility", methods=["POST"])
     def set_provider_visibility_api(provider_id):
         """设置 provider 的 catalog visibility。"""
@@ -1777,6 +1821,35 @@ def create_app() -> Flask:
             return jsonify({"error": str(e)}), 500
 
     return app
+
+
+def _selected_provider_models_to_amr_candidates(provider: Dict[str, Any], priority: int) -> list[Dict[str, Any]]:
+    if not provider.get("enabled", True):
+        return []
+    provider_id = str(provider.get("id") or "").strip()
+    provider_caps = provider.get("capabilities") if isinstance(provider.get("capabilities"), dict) else {}
+    candidates: list[Dict[str, Any]] = []
+    for model in provider.get("models", []):
+        if not isinstance(model, dict):
+            continue
+        if not model.get("enabled", True) or not model.get("selected", False):
+            continue
+        model_id = str(model.get("id") or "").strip()
+        if not provider_id or not model_id:
+            continue
+        model_caps = model.get("capabilities") if isinstance(model.get("capabilities"), dict) else {}
+        merged_caps = dict(provider_caps)
+        merged_caps.update(model_caps)
+        candidates.append({
+            "id": f"{provider_id}/{model_id}",
+            "provider_id": provider_id,
+            "model_id": model_id,
+            "priority": int(priority),
+            "enabled": True,
+            "context_window": _clamp_int(model.get("context_window", 0), 0, 0, 10_000_000),
+            "capabilities": normalize_capabilities(merged_caps),
+        })
+    return candidates
 
 
 def _clamp_int(value, default: int, minimum: int, maximum: int) -> int:
