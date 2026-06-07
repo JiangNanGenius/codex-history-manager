@@ -1166,8 +1166,9 @@ def create_app() -> Flask:
         try:
             _refresh_provider_registry_path()
             body = request.get_json(silent=True) or {}
-            capability = body.get("capability", "text")
-            model = body.get("model", "")
+            required_capabilities = _normalize_route_capabilities(body)
+            required_context = _clamp_int(body.get("required_context", 0), 0, 0, 10_000_000)
+            model_filter = str(body.get("model") or "").strip()
 
             providers_data = provider_registry.list_providers(include_secrets=False)
             candidates = []
@@ -1175,23 +1176,49 @@ def create_app() -> Flask:
                 if not p.get("enabled"):
                     continue
                 caps = p.get("capabilities", {})
+                alias = str(p.get("short_alias") or p.get("id") or "").strip()
                 for m in p.get("models", []):
                     if not m.get("enabled", True):
                         continue
+                    model_id = str(m.get("id") or "").strip()
+                    model_caps = m.get("capabilities") if isinstance(m.get("capabilities"), dict) else {}
+                    merged_caps = {
+                        "text": model_caps.get("text", caps.get("text", True)),
+                        "vision": model_caps.get("vision", caps.get("vision", False)),
+                        "tools": model_caps.get("tools", caps.get("tools", False)),
+                        "reasoning": model_caps.get("reasoning", caps.get("reasoning", False)),
+                        "images": model_caps.get("images", caps.get("images", False)),
+                        "videos": model_caps.get("videos", caps.get("videos", False)),
+                    }
                     candidates.append({
-                        "id": f"{p['id']}/{m['id']}",
+                        "id": f"{p['id']}/{model_id}",
                         "provider_id": p["id"],
-                        "model_id": m["id"],
+                        "provider_display_name": p.get("display_name", ""),
+                        "short_alias": alias,
+                        "model_id": model_id,
+                        "codex_model_id": f"{alias}/{model_id}" if alias and model_id else model_id,
+                        "display_name": m.get("display_name") or model_id,
                         "priority": 1 if p.get("catalog_visibility") == "always_visible" else 2,
-                        "capabilities": {
-                            "text": caps.get("text", True),
-                            "vision": caps.get("vision", False),
-                            "tools": caps.get("tools", False),
-                            "reasoning": caps.get("reasoning", False),
-                            "images": caps.get("images", False),
-                            "videos": caps.get("videos", False),
-                        },
+                        "capabilities": merged_caps,
                         "context_window": m.get("context_window", 0),
+                    })
+
+            unfiltered_candidates = candidates
+            if model_filter:
+                candidates = [c for c in candidates if _route_candidate_matches_model(c, model_filter)]
+                if not candidates:
+                    return jsonify({
+                        "success": False,
+                        "error": "No candidate matched requested model filter",
+                        "model_filter": model_filter,
+                        "required_capabilities": sorted(required_capabilities),
+                        "required_context": required_context,
+                        "candidate_count": len(unfiltered_candidates),
+                        "candidate_status": _route_candidate_status(unfiltered_candidates, required_capabilities, required_context, model_filter),
+                        "explanation": [
+                            f"Model filter '{model_filter}' did not match provider/model ids, aliases, or Codex-visible ids.",
+                            "No network request was made.",
+                        ],
                     })
 
             from model_rotation import AdaptiveModelRotation
@@ -1203,8 +1230,16 @@ def create_app() -> Flask:
 
             decision = amr.route(
                 group_id="default",
-                required_capabilities={capability},
+                required_capabilities=required_capabilities,
+                required_context=required_context,
             )
+            decision["required_capabilities"] = sorted(required_capabilities)
+            decision["required_context"] = required_context
+            decision["model_filter"] = model_filter
+            decision["candidate_count"] = len(candidates)
+            decision["candidate_status"] = _route_candidate_status(candidates, required_capabilities, required_context, model_filter)
+            decision.setdefault("explanation", [])
+            decision["explanation"].append("Simulation only; no provider request or Codex config write was performed.")
             return jsonify(decision)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1739,6 +1774,66 @@ def _clamp_int(value, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return min(max(parsed, minimum), maximum)
+
+
+def _normalize_route_capabilities(body: Dict[str, Any]) -> set[str]:
+    raw = body.get("capabilities")
+    if raw is None:
+        raw = body.get("capability", "text")
+    if isinstance(raw, str):
+        parts = [item.strip().lower() for item in re.split(r"[,|\s]+", raw) if item.strip()]
+    elif isinstance(raw, list):
+        parts = [str(item).strip().lower() for item in raw if str(item).strip()]
+    else:
+        parts = []
+    allowed = {"text", "vision", "tools", "reasoning", "images", "videos"}
+    capabilities = {item for item in parts if item in allowed}
+    return capabilities or {"text"}
+
+
+def _route_candidate_matches_model(candidate: Dict[str, Any], model_filter: str) -> bool:
+    needle = str(model_filter or "").strip().lower()
+    if not needle:
+        return True
+    aliases = {
+        str(candidate.get("id") or ""),
+        str(candidate.get("model_id") or ""),
+        str(candidate.get("codex_model_id") or ""),
+        str(candidate.get("display_name") or ""),
+        f"{candidate.get('provider_id')}/{candidate.get('model_id')}",
+        f"{candidate.get('short_alias')}/{candidate.get('model_id')}",
+    }
+    return any(needle == alias.lower() for alias in aliases if alias)
+
+
+def _route_candidate_status(
+    candidates: list[Dict[str, Any]],
+    required_capabilities: set[str],
+    required_context: int,
+    model_filter: str = "",
+) -> list[Dict[str, Any]]:
+    rows = []
+    for candidate in candidates:
+        caps = candidate.get("capabilities") if isinstance(candidate.get("capabilities"), dict) else {}
+        missing = sorted(cap for cap in required_capabilities if not caps.get(cap, False))
+        context_window = _safe_int(candidate.get("context_window"))
+        model_match = _route_candidate_matches_model(candidate, model_filter)
+        context_match = required_context <= 0 or context_window >= required_context
+        rows.append({
+            "candidate_id": candidate.get("id", ""),
+            "provider_id": candidate.get("provider_id", ""),
+            "model_id": candidate.get("model_id", ""),
+            "codex_model_id": candidate.get("codex_model_id", ""),
+            "priority": candidate.get("priority", 100),
+            "context_window": context_window,
+            "capabilities": caps,
+            "missing_capabilities": missing,
+            "capability_match": not missing,
+            "context_match": context_match,
+            "model_match": model_match,
+            "available": not missing and context_match and model_match,
+        })
+    return rows
 
 
 def _merge_cache_usage_sources(

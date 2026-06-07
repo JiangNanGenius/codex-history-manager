@@ -165,7 +165,7 @@ function renderEnhanceOverview() {
                     ${renderStepRow('Provider Registry', '本地 JSON registry、schema version、CRUD、preset import、secret redaction。', true)}
                     ${renderStepRow('Unified Model Catalog Preview', '常驻显示、选中模型、focus provider 的最终 catalog 预览。', true)}
                     ${renderStepRow('Codex Config Diff Preview', '预留入口；真实写入前必须有 diff、backup、rollback。', false)}
-                    ${renderStepRow('Route Simulator', '预留 AMR/media route explanation 面板，后续接真实 router。', false)}
+                    ${renderStepRow('Route Simulator', 'Read-only AMR capability/context simulation with route explanation.', true)}
                 </div>
             </div>
             <div class="card">
@@ -596,27 +596,48 @@ function renderCatalogEntry(entry) {
 
 function renderRouteSimulatorShell() {
     /**
-     * 渲染 Route Simulator 外壳（右侧栏）。
-     * 当前为占位 UI，真实 AMR 路由逻辑由后端 /api/model-rotation/simulate 提供。
-     * capability 下拉框覆盖 text/vision/images/videos/tools 五种常见场景。
+     * Render the real read-only route simulator backed by /api/model-rotation/simulate.
      */
+    const preview = providerState.catalogPreview || { entries: [] };
+    const datalistEntries = Array.from(new Set((preview.entries || []).flatMap(entry => [
+        entry.codex_model_id,
+        entry.upstream_model_id,
+    ]).filter(Boolean))).slice(0, 80);
     return `
         <div class="card">
-            <h3 class="card-title">Route Simulator</h3>
-            <div class="text-xs text-dark-500 mt-1">Shell for UMC/AMR/media route explanations. Real adapter logic will be implemented after source/doc verification.</div>
-            <div class="grid grid-cols-2 gap-3 mt-3">
-                <select id="route-sim-capability" class="input">
-                    <option value="text">Text</option>
-                    <option value="vision">Vision Input</option>
-                    <option value="images">Image Generation</option>
-                    <option value="videos">Video Generation</option>
-                    <option value="tools">Tools</option>
-                </select>
-                <input id="route-sim-model" class="input" placeholder="model or group id">
+            <div class="flex items-center justify-between gap-3">
+                <h3 class="card-title">Route Simulator</h3>
+                <span class="text-xs text-emerald-300">read-only</span>
             </div>
-            <button onclick="runRouteSimulatorShell()" class="btn btn-secondary text-xs mt-3">Simulate</button>
-            <pre id="route-sim-result" class="preview-code mt-3">No simulation yet.</pre>
+            <div class="text-xs text-dark-500 mt-1">Simulates AMR capability/context routing from the current provider registry. No upstream request or Codex write is performed.</div>
+            <div class="grid grid-cols-2 gap-2 mt-3">
+                ${renderRouteCapabilityToggle('route-sim-cap-text', 'text', true)}
+                ${renderRouteCapabilityToggle('route-sim-cap-vision', 'vision', false)}
+                ${renderRouteCapabilityToggle('route-sim-cap-tools', 'tools', false)}
+                ${renderRouteCapabilityToggle('route-sim-cap-reasoning', 'reasoning', false)}
+                ${renderRouteCapabilityToggle('route-sim-cap-images', 'images', false)}
+                ${renderRouteCapabilityToggle('route-sim-cap-videos', 'videos', false)}
+            </div>
+            <div class="grid grid-cols-1 gap-3 mt-3">
+                <input id="route-sim-model" class="input" list="route-sim-model-options" placeholder="optional model id, provider/model, or catalog id">
+                <datalist id="route-sim-model-options">
+                    ${datalistEntries.map(value => `<option value="${escapeAttr(value)}"></option>`).join('')}
+                </datalist>
+                <input id="route-sim-context" type="number" min="0" step="1000" class="input" placeholder="required context tokens">
+            </div>
+            <button onclick="runRouteSimulatorShell()" class="btn btn-secondary text-xs mt-3">Simulate Route</button>
+            <div id="route-sim-result" class="preview-code mt-3">No simulation yet.</div>
         </div>
+    `;
+}
+
+function renderRouteCapabilityToggle(id, capability, checked) {
+    return `
+        <label class="flex items-center gap-2 text-xs cursor-pointer bg-dark-900/60 border border-dark-700 rounded-md px-2 py-2">
+            <input id="${escapeAttr(id)}" data-route-capability="${escapeAttr(capability)}" type="checkbox"
+                class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${checked ? 'checked' : ''}>
+            <span>${escapeHtml(capability)}</span>
+        </label>
     `;
 }
 
@@ -824,19 +845,66 @@ async function runRouteSimulatorShell() {
      *   - 错误降级：若后端返回错误，将错误消息直接显示在结果面板，
      *     而非弹 Toast，避免打断用户操作流。
      */
-    const capability = document.getElementById('route-sim-capability')?.value || 'text';
+    let capabilities = Array.from(document.querySelectorAll('[data-route-capability]:checked'))
+        .map(el => el.getAttribute('data-route-capability'))
+        .filter(Boolean);
+    if (!capabilities.length) capabilities = ['text'];
     const model = document.getElementById('route-sim-model')?.value || '';
+    const requiredContext = parseInt(document.getElementById('route-sim-context')?.value, 10) || 0;
     const result = document.getElementById('route-sim-result');
     if (!result) return;
     try {
         const decision = await api('/api/model-rotation/simulate', {
             method: 'POST',
-            body: JSON.stringify({ capability, model }),
+            body: JSON.stringify({ capabilities, model, required_context: requiredContext }),
         });
-        result.textContent = JSON.stringify(decision, null, 2);
+        result.innerHTML = renderRouteSimulationResult(decision);
     } catch (err) {
         result.textContent = 'Simulation failed: ' + err.message;
     }
+}
+
+function renderRouteSimulationResult(decision) {
+    const statusClass = decision.success ? 'text-emerald-300' : 'text-red-300';
+    const title = decision.success
+        ? `${decision.provider_id || ''}/${decision.model_id || ''}`
+        : (decision.error || 'No route available');
+    const candidateRows = (decision.candidate_status || []).slice(0, 8).map(row => {
+        const missingCapabilities = row.missing_capabilities || [];
+        const flags = [
+            row.capability_match ? 'caps ok' : `missing ${missingCapabilities.join(', ') || 'capability'}`,
+            row.context_match ? 'ctx ok' : 'ctx too small',
+            row.model_match ? 'model ok' : 'model filtered',
+        ];
+        return `
+            <div class="grid grid-cols-[1fr_auto] gap-2 py-2 border-b border-dark-800 last:border-b-0">
+                <div class="min-w-0">
+                    <div class="font-mono text-xs text-dark-100 break-all">${escapeHtml(row.codex_model_id || row.candidate_id)}</div>
+                    <div class="text-xs text-dark-500">p${escapeHtml(row.priority)} · ctx ${formatCount(row.context_window || 0)} · ${escapeHtml(flags.join(' · '))}</div>
+                </div>
+                <span class="text-xs ${row.available ? 'text-emerald-300' : 'text-amber-300'}">${row.available ? 'available' : 'blocked'}</span>
+            </div>
+        `;
+    }).join('');
+    return `
+        <div class="space-y-3">
+            <div>
+                <div class="text-xs ${statusClass}">${decision.success ? 'Route selected' : 'Route unavailable'}</div>
+                <div class="font-mono text-sm text-dark-100 break-all">${escapeHtml(title)}</div>
+                <div class="text-xs text-dark-500 mt-1">
+                    capabilities: ${escapeHtml((decision.required_capabilities || []).join(', ') || 'text')}
+                    · context: ${escapeHtml(decision.required_context || 0)}
+                    · candidates: ${escapeHtml(decision.candidate_count || 0)}
+                </div>
+            </div>
+            <div class="rounded-md border border-dark-800 bg-dark-950/50 px-3 py-2">
+                ${(decision.explanation || []).map(line => `<div class="text-xs text-dark-300 py-0.5">${escapeHtml(line)}</div>`).join('') || '<div class="text-xs text-dark-500">No explanation returned.</div>'}
+            </div>
+            <div class="rounded-md border border-dark-800 bg-dark-950/40 px-3 py-1">
+                ${candidateRows || '<div class="text-xs text-dark-500 py-2">No candidate status returned.</div>'}
+            </div>
+        </div>
+    `;
 }
 
 async function exportProviderBundle() {

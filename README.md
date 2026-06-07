@@ -57,7 +57,7 @@ The app is organized as an operational console rather than a marketing dashboard
 
 - **Overview**: health, current paths, guardrails, and high-signal status.
 - **Token Dashboard**: Codex totals, cache read/write, request-log summaries, cost snapshots, and floating token monitor controls.
-- **Providers**: preset-first setup, focused editing, section-local testing, status strips, custom `User-Agent`, and visibility policy.
+- **Providers**: preset-first setup, focused editing, section-local testing, status strips, custom `User-Agent`, visibility policy, and read-only Route Simulator.
 - **Unified Model Catalog**: preview before writing anything into Codex.
 - **Local Proxy**: start/stop/status, actual bound port, route explanations, and log retention.
 - **Settings**: storage paths, theme editor, import/export, startup/elevation controls, safe cleanup, uninstall cleanup, currency settings, and monitor field customization.
