@@ -60,6 +60,11 @@ AUTH_MODES = {
     "official_oauth",
     "no_auth",
 }
+APPROVAL_MODES = {
+    "manual_only",
+    "official_guardian",
+    "proxy_auto_approve",
+}
 
 # Token-based matching to avoid false positives like "monkey" or "tokenize"
 # 设计说明：使用分词后匹配，而非简单子串包含，避免 "monkey" 被误判为 secret。
@@ -697,6 +702,7 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         "headers": headers,
         "user_agent": user_agent,
         "capabilities": normalize_capabilities(raw.get("capabilities")),
+        "approval_profile": normalize_approval_profile(raw.get("approval_profile")),
         "responses_profile": normalize_responses_profile(raw.get("responses_profile")),
         "media_profile": normalize_media_profile(raw.get("media_profile")),
         "models": [normalize_model(m) for m in raw.get("models", []) if isinstance(m, dict)],
@@ -833,6 +839,54 @@ def normalize_string_map(value: Any) -> Dict[str, str]:
         if key_str and item_str:
             normalized[key_str] = item_str
     return normalized
+
+
+def normalize_approval_profile(data: Any) -> Dict[str, Any]:
+    raw = data if isinstance(data, dict) else {}
+    raw_mode = str(raw.get("mode") or "").strip()
+    if not raw_mode:
+        if raw.get("proxy_auto_approve") or raw.get("auto_approve") or raw.get("model_prompt_fallback"):
+            raw_mode = "proxy_auto_approve"
+        elif raw.get("official_guardian"):
+            raw_mode = "official_guardian"
+        else:
+            raw_mode = "manual_only"
+    mode = raw_mode if raw_mode in APPROVAL_MODES else "manual_only"
+    allowed_actions = normalize_string_list(raw.get("allowed_actions"))
+    if not allowed_actions:
+        allowed_actions = ["exec", "apply_patch", "network", "permissions", "mcp_tool"]
+    on_review_error = str(raw.get("on_review_error") or "decline").strip()
+    if on_review_error not in {"decline", "ask_user", "allow"}:
+        on_review_error = "decline"
+    try:
+        timeout_ms = int(raw.get("timeout_ms") or 90000)
+    except (TypeError, ValueError):
+        timeout_ms = 90000
+    try:
+        max_retries = int(raw.get("max_retries") or 1)
+    except (TypeError, ValueError):
+        max_retries = 1
+    try:
+        decision_schema_version = int(raw.get("decision_schema_version") or 1)
+    except (TypeError, ValueError):
+        decision_schema_version = 1
+    return {
+        "mode": mode,
+        "official_guardian": mode == "official_guardian",
+        "proxy_auto_approve": mode == "proxy_auto_approve",
+        "reviewer_model": str(raw.get("reviewer_model") or "").strip(),
+        "prompt_template_id": str(raw.get("prompt_template_id") or "codex_guardian_compatible").strip(),
+        "decision_schema_version": max(decision_schema_version, 1),
+        "risk_policy": str(raw.get("risk_policy") or "codex_guardian_compatible").strip(),
+        "allowed_actions": allowed_actions,
+        "require_structured_json": bool(raw.get("require_structured_json", True)),
+        "auto_accept_low_risk": bool(raw.get("auto_accept_low_risk", True)),
+        "auto_decline_high_risk": bool(raw.get("auto_decline_high_risk", True)),
+        "on_review_error": on_review_error,
+        "timeout_ms": max(timeout_ms, 1000),
+        "max_retries": max(max_retries, 0),
+        "audit_decisions": bool(raw.get("audit_decisions", True)),
+    }
 
 
 def normalize_media_profile(data: Any) -> Dict[str, Any]:

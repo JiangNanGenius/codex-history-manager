@@ -108,6 +108,41 @@ class ProviderRegistryTest(unittest.TestCase):
         self.assertEqual(provider["media_profile"]["image_model_overrides"]["cover-art"], "gpt-image-1.5")
         self.assertEqual(provider["media_profile"]["video_model_overrides"]["storyboard"], "sora-2")
 
+    def test_approval_profile_defaults_to_manual(self):
+        provider = normalize_provider({
+            "display_name": "Approval Default",
+            "short_alias": "approval",
+            "models": [{"id": "model-a"}],
+        })
+
+        profile = provider["approval_profile"]
+        self.assertEqual(profile["mode"], "manual_only")
+        self.assertFalse(profile["official_guardian"])
+        self.assertFalse(profile["proxy_auto_approve"])
+        self.assertEqual(profile["on_review_error"], "decline")
+
+    def test_approval_profile_supports_proxy_auto_approve(self):
+        provider = normalize_provider({
+            "display_name": "Approval Broker",
+            "short_alias": "broker",
+            "approval_profile": {
+                "mode": "proxy_auto_approve",
+                "reviewer_model": "qwen/qwen3-coder-plus",
+                "allowed_actions": ["exec", "network"],
+                "timeout_ms": "30000",
+                "max_retries": "2",
+            },
+            "models": [{"id": "qwen3-coder-plus"}],
+        })
+
+        profile = provider["approval_profile"]
+        self.assertEqual(profile["mode"], "proxy_auto_approve")
+        self.assertTrue(profile["proxy_auto_approve"])
+        self.assertEqual(profile["reviewer_model"], "qwen/qwen3-coder-plus")
+        self.assertEqual(profile["allowed_actions"], ["exec", "network"])
+        self.assertEqual(profile["timeout_ms"], 30000)
+        self.assertEqual(profile["max_retries"], 2)
+
     def test_secret_key_word_boundary(self):
         # Should match true secrets
         self.assertTrue(is_secret_key("api_key"))

@@ -303,6 +303,8 @@ function renderProvidersPage() {
     `;
     if (typeof triggerStaggerAnimations === 'function') triggerStaggerAnimations(root);
     if (typeof attachRippleToButtons === 'function') attachRippleToButtons(root);
+    syncApprovalModeControls();
+    syncMediaModeControls();
 }
 
 function renderProviderListItem(provider) {
@@ -376,6 +378,9 @@ function renderProviderEditor(provider) {
         m.context_window || 0,
         m.selected ? 'selected' : '',
     ].join('|')).join('\n');
+    const approvalProfile = provider.approval_profile || {};
+    const mediaProfile = provider.media_profile || {};
+    const showMediaAsyncFields = shouldShowMediaAsyncFields(mediaProfile, provider.api_format);
 
     return `
         <div class="card">
@@ -401,7 +406,7 @@ function renderProviderEditor(provider) {
                     'openai_compatible',
                     'anthropic',
                     'custom',
-                ])}
+                ], 'syncMediaModeControls(true)')}
                 ${renderInput('provider-country-region', 'Country / Region', provider.country_region)}
                 ${renderInput('provider-native-currency', 'Native Currency', provider.native_currency)}
                 ${renderSelect('provider-visibility', 'Catalog Visibility', provider.catalog_visibility, [
@@ -465,18 +470,34 @@ function renderProviderEditor(provider) {
                     ${renderInput('responses-docs-url', 'Responses Docs URL', provider.responses_profile && provider.responses_profile.verified_docs_url)}
                     ${renderInput('responses-unsupported', 'Unsupported Fields', provider.responses_profile && (provider.responses_profile.unsupported_fields || []).join(', '))}
                 </div>
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
-                    ${renderCapabilityToggle('media-default-image', 'Default Image Provider', provider.media_profile.default_image_provider)}
-                    ${renderCapabilityToggle('media-default-video', 'Default Video Provider', provider.media_profile.default_video_provider)}
-                    ${renderCapabilityToggle('media-openai-compatible', 'OpenAI-compatible Media', provider.media_profile.openai_compatible_media)}
-                    ${renderCapabilityToggle('media-adapter-required', 'Adapter Required', provider.media_profile.adapter_required)}
-                    ${renderCapabilityToggle('media-async-submit', 'Async Submit', provider.media_profile.async_submit)}
-                    ${renderCapabilityToggle('media-poll-required', 'Poll Required', provider.media_profile.poll_required)}
-                    ${renderCapabilityToggle('media-cancel-supported', 'Cancel Supported', provider.media_profile.cancel_supported)}
+                ${renderApprovalModeSegment(approvalProfile)}
+                <div id="approval-auto-fields" class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 ${approvalModeFromProfile(approvalProfile) === 'proxy_auto_approve' ? '' : 'hidden'}">
+                    ${renderInput('approval-reviewer-model', 'Reviewer Model', approvalProfile.reviewer_model || '')}
+                    ${renderInput('approval-allowed-actions', 'Allowed Actions', (approvalProfile.allowed_actions || []).join(', '))}
+                    ${renderSelect('approval-error-policy', 'Review Error Policy', approvalProfile.on_review_error || 'decline', [
+                        'decline',
+                        'ask_user',
+                        'allow',
+                    ])}
+                    ${renderInput('approval-timeout-ms', 'Timeout ms', approvalProfile.timeout_ms || 90000, 'number')}
+                    ${renderInput('approval-max-retries', 'Max Retries', approvalProfile.max_retries || 1, 'number')}
+                    ${renderCapabilityToggle('approval-audit-decisions', 'Audit Decisions', approvalProfile.audit_decisions !== false)}
+                    ${renderCapabilityToggle('approval-auto-accept-low-risk', 'Auto Accept Low Risk', approvalProfile.auto_accept_low_risk !== false)}
+                    ${renderCapabilityToggle('approval-auto-decline-high-risk', 'Auto Decline High Risk', approvalProfile.auto_decline_high_risk !== false)}
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4">
+                    ${renderCapabilityToggle('media-default-image', 'Default Image Provider', mediaProfile.default_image_provider)}
+                    ${renderCapabilityToggle('media-default-video', 'Default Video Provider', mediaProfile.default_video_provider)}
+                </div>
+                ${renderMediaModeSegment(mediaProfile)}
+                <div id="media-async-fields" class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4 ${showMediaAsyncFields ? '' : 'hidden'}">
+                    ${renderCapabilityToggle('media-async-submit', 'Async Submit', mediaProfile.async_submit)}
+                    ${renderCapabilityToggle('media-poll-required', 'Poll Required', mediaProfile.poll_required)}
+                    ${renderCapabilityToggle('media-cancel-supported', 'Cancel Supported', mediaProfile.cancel_supported)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderTextarea('media-image-overrides-json', 'Image Model Overrides JSON', JSON.stringify(provider.media_profile.image_model_overrides || {}, null, 2), 5)}
-                    ${renderTextarea('media-video-overrides-json', 'Video Model Overrides JSON', JSON.stringify(provider.media_profile.video_model_overrides || {}, null, 2), 5)}
+                    ${renderTextarea('media-image-overrides-json', 'Image Model Overrides JSON', JSON.stringify(mediaProfile.image_model_overrides || {}, null, 2), 5)}
+                    ${renderTextarea('media-video-overrides-json', 'Video Model Overrides JSON', JSON.stringify(mediaProfile.video_model_overrides || {}, null, 2), 5)}
                 </div>
                 <div class="mt-4">
                     ${renderTextarea('provider-quota-json', 'Quota Check JSON', JSON.stringify(provider.quota_check || {}, null, 2), 8)}
@@ -929,6 +950,9 @@ function readProviderForm(existing) {
         const videoModelOverrides = JSON.parse(document.getElementById('media-video-overrides-json')?.value || '{}');
         const quotaCheck = JSON.parse(document.getElementById('provider-quota-json')?.value || '{}');
         const models = parseModelsText(document.getElementById('provider-models-text')?.value || '');
+        const approvalMode = getSelectedApprovalMode();
+        const mediaMode = getSelectedMediaMode();
+        const mediaAsyncVisible = !document.getElementById('media-async-fields')?.classList.contains('hidden');
         return {
             ...existing,
             display_name: document.getElementById('provider-display-name')?.value || '',
@@ -955,15 +979,32 @@ function readProviderForm(existing) {
                 images: document.getElementById('cap-images')?.checked || false,
                 videos: document.getElementById('cap-videos')?.checked || false,
             },
+            approval_profile: {
+                ...(existing.approval_profile || {}),
+                mode: approvalMode,
+                official_guardian: approvalMode === 'official_guardian',
+                proxy_auto_approve: approvalMode === 'proxy_auto_approve',
+                reviewer_model: document.getElementById('approval-reviewer-model')?.value || '',
+                allowed_actions: String(document.getElementById('approval-allowed-actions')?.value || '')
+                    .split(',')
+                    .map(item => item.trim())
+                    .filter(Boolean),
+                on_review_error: document.getElementById('approval-error-policy')?.value || 'decline',
+                timeout_ms: parseInt(document.getElementById('approval-timeout-ms')?.value || '90000', 10) || 90000,
+                max_retries: parseInt(document.getElementById('approval-max-retries')?.value || '1', 10) || 1,
+                audit_decisions: document.getElementById('approval-audit-decisions')?.checked !== false,
+                auto_accept_low_risk: document.getElementById('approval-auto-accept-low-risk')?.checked !== false,
+                auto_decline_high_risk: document.getElementById('approval-auto-decline-high-risk')?.checked !== false,
+            },
             media_profile: {
                 ...existing.media_profile,
                 default_image_provider: document.getElementById('media-default-image')?.checked || false,
                 default_video_provider: document.getElementById('media-default-video')?.checked || false,
-                openai_compatible_media: document.getElementById('media-openai-compatible')?.checked || false,
-                adapter_required: document.getElementById('media-adapter-required')?.checked || false,
-                async_submit: document.getElementById('media-async-submit')?.checked || false,
-                poll_required: document.getElementById('media-poll-required')?.checked || false,
-                cancel_supported: document.getElementById('media-cancel-supported')?.checked || false,
+                openai_compatible_media: mediaMode === 'openai_compatible',
+                adapter_required: mediaMode === 'adapter_required',
+                async_submit: mediaAsyncVisible && (document.getElementById('media-async-submit')?.checked || false),
+                poll_required: mediaAsyncVisible && (document.getElementById('media-poll-required')?.checked || false),
+                cancel_supported: mediaAsyncVisible && (document.getElementById('media-cancel-supported')?.checked || false),
                 image_model_overrides: imageModelOverrides,
                 video_model_overrides: videoModelOverrides,
             },
@@ -1044,11 +1085,12 @@ function renderTextarea(id, label, value, rows = 4) {
     `;
 }
 
-function renderSelect(id, label, value, options) {
+function renderSelect(id, label, value, options, onchange = '') {
+    const changeAttr = onchange ? ` onchange="${escapeAttr(onchange)}"` : '';
     return `
         <div>
             <label class="text-xs text-dark-400">${escapeHtml(label)}</label>
-            <select id="${escapeAttr(id)}" class="input mt-1 w-full">
+            <select id="${escapeAttr(id)}" class="input mt-1 w-full"${changeAttr}>
                 ${options.map(option => `<option value="${escapeAttr(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
             </select>
         </div>
@@ -1062,6 +1104,126 @@ function renderCapabilityToggle(id, label, checked) {
             <span>${escapeHtml(label)}</span>
         </label>
     `;
+}
+
+function approvalModeFromProfile(profile) {
+    const mode = profile && profile.mode;
+    if (mode === 'official_guardian' || mode === 'proxy_auto_approve' || mode === 'manual_only') return mode;
+    if (profile && profile.proxy_auto_approve) return 'proxy_auto_approve';
+    if (profile && profile.official_guardian) return 'official_guardian';
+    return 'manual_only';
+}
+
+function renderApprovalModeSegment(profile) {
+    const mode = approvalModeFromProfile(profile || {});
+    const options = [
+        ['manual_only', 'Manual', 'User decides'],
+        ['official_guardian', 'Official Guardian', 'Codex native'],
+        ['proxy_auto_approve', 'Auto Approval', 'Proxy broker'],
+    ];
+    return `
+        <div class="approval-mode-field mt-4">
+            <div class="text-xs text-dark-400 mb-2">Approval Mode</div>
+            <div class="segmented-control" role="radiogroup" aria-label="Approval Mode">
+                ${options.map(([value, label, hint]) => `
+                    <label class="segmented-option ${mode === value ? 'active' : ''}">
+                        <input
+                            type="radio"
+                            name="approval-mode"
+                            value="${escapeAttr(value)}"
+                            onchange="syncApprovalModeControls()"
+                            ${mode === value ? 'checked' : ''}
+                        >
+                        <span class="segmented-label">${escapeHtml(label)}</span>
+                        <span class="segmented-hint">${escapeHtml(hint)}</span>
+                    </label>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function getSelectedApprovalMode() {
+    return document.querySelector('input[name="approval-mode"]:checked')?.value || 'manual_only';
+}
+
+function syncApprovalModeControls() {
+    const selectedMode = getSelectedApprovalMode();
+    document.querySelectorAll('.approval-mode-field .segmented-option').forEach(option => {
+        const input = option.querySelector('input[name="approval-mode"]');
+        option.classList.toggle('active', Boolean(input && input.value === selectedMode));
+    });
+    const autoFields = document.getElementById('approval-auto-fields');
+    if (autoFields) autoFields.classList.toggle('hidden', selectedMode !== 'proxy_auto_approve');
+}
+
+function mediaModeFromProfile(profile) {
+    if (profile && profile.adapter_required) return 'adapter_required';
+    if (profile && profile.openai_compatible_media) return 'openai_compatible';
+    return 'disabled';
+}
+
+function shouldShowMediaAsyncFields(profile, apiFormat) {
+    const mode = mediaModeFromProfile(profile || {});
+    return mode === 'adapter_required'
+        || String(apiFormat || '') === 'openai_videos'
+        || Boolean(profile && (profile.async_submit || profile.poll_required || profile.cancel_supported));
+}
+
+function renderMediaModeSegment(profile) {
+    const mode = mediaModeFromProfile(profile || {});
+    const options = [
+        ['openai_compatible', 'OpenAI-compatible', 'Direct pass-through'],
+        ['adapter_required', 'Adapter required', 'Vendor adapter'],
+        ['disabled', 'Disabled', 'No media route'],
+    ];
+    return `
+        <div class="media-mode-field mt-4">
+            <div class="text-xs text-dark-400 mb-2">Media Mode</div>
+            <div class="segmented-control" role="radiogroup" aria-label="Media Mode">
+                ${options.map(([value, label, hint]) => `
+                    <label class="segmented-option ${mode === value ? 'active' : ''}">
+                        <input
+                            type="radio"
+                            name="media-mode"
+                            value="${escapeAttr(value)}"
+                            onchange="syncMediaModeControls(true)"
+                            ${mode === value ? 'checked' : ''}
+                        >
+                        <span class="segmented-label">${escapeHtml(label)}</span>
+                        <span class="segmented-hint">${escapeHtml(hint)}</span>
+                    </label>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function getSelectedMediaMode() {
+    return document.querySelector('input[name="media-mode"]:checked')?.value || 'disabled';
+}
+
+function syncMediaModeControls(clearHiddenAsync = false) {
+    const selectedMode = getSelectedMediaMode();
+    document.querySelectorAll('.media-mode-field .segmented-option').forEach(option => {
+        const input = option.querySelector('input[name="media-mode"]');
+        option.classList.toggle('active', Boolean(input && input.value === selectedMode));
+    });
+    const asyncFields = document.getElementById('media-async-fields');
+    if (!asyncFields) return;
+    const apiFormat = document.getElementById('provider-api-format')?.value || '';
+    const hasExistingAsync = ['media-async-submit', 'media-poll-required', 'media-cancel-supported']
+        .some(id => document.getElementById(id)?.checked);
+    const showAsync = selectedMode === 'adapter_required'
+        || apiFormat === 'openai_videos'
+        || (!clearHiddenAsync && hasExistingAsync);
+    asyncFields.classList.toggle('hidden', !showAsync);
+    if (!showAsync) {
+        ['media-async-submit', 'media-poll-required', 'media-cancel-supported'].forEach(id => {
+            const checkbox = document.getElementById(id);
+            if (checkbox) checkbox.checked = false;
+        });
+    }
 }
 
 /**

@@ -43,9 +43,9 @@ The project is intentionally local-first: provider settings, backups, request-lo
 | Area | Current state |
 | --- | --- |
 | History and usage | Browse sessions, inspect heavy conversations, read Codex DB totals, and add cache read/write usage from rollout events, proxy logs, and compatible proxy DBs. |
-| Provider setup | Manage provider presets with `short_alias`, region, currency, custom headers, `User-Agent`, media profile, quota template, and catalog visibility. |
+| Provider setup | Manage provider presets with `short_alias`, region, currency, custom headers, `User-Agent`, approval profile, media profile, quota template, and catalog visibility. |
 | Unified Model Catalog | Preview Codex-visible model IDs such as `qwen/qwen3-coder-plus` from always-visible, selected, focused-provider, and AMR entries. |
-| Local proxy | Run an independent localhost proxy with automatic occupied-port backoff, route diagnostics, metadata-only request logs, and OpenAI-compatible route scaffolding. |
+| Local proxy | Run an independent localhost proxy with automatic occupied-port backoff, Auto Approval broker settings, route diagnostics, metadata-only request logs, and OpenAI-compatible route scaffolding. |
 | Protocol adapters | Convert verified Responses, Chat, Anthropic Messages, tools, images, SSE events, and domestic Responses profiles only where behavior is sourced. |
 | Cost and currency | Estimate input/output/cache/reasoning/media cost, preserve per-request FX snapshots, support manual FX overrides, and keep online FX blocked until verified. |
 | Config recovery | Preview Codex config diffs, audit approval/sandbox settings, create backups, restore config/auth, preserve official login state, and repair moved session/project metadata. |
@@ -57,7 +57,7 @@ The app is organized as an operational console rather than a marketing dashboard
 
 - **Overview**: health, current paths, guardrails, and high-signal status.
 - **Token Dashboard**: Codex totals, cache read/write, request-log summaries, cost snapshots, and floating token monitor controls.
-- **Providers**: preset-first setup, focused editing, section-local testing, status strips, custom `User-Agent`, visibility policy, and read-only Route Simulator.
+- **Providers**: preset-first setup, focused editing, section-local testing, status strips, custom `User-Agent`, Auto Approval, media mode controls, visibility policy, and read-only Route Simulator.
 - **Unified Model Catalog**: preview before writing anything into Codex.
 - **Local Proxy**: start/stop/status, actual bound port, route explanations, and log retention.
 - **Settings**: storage paths, theme editor, import/export, startup/elevation controls, safe cleanup, uninstall cleanup, currency settings, and monitor field customization.
@@ -69,6 +69,7 @@ The app is organized as an operational console rather than a marketing dashboard
 | --- | --- |
 | Codex auth/config/model catalog/process writes | Read-only checks, dry-runs, and previews are allowed in this Codex window. Real mutation testing must be performed manually by the user. |
 | Windows startup/elevation writes | Status and preview are safe to run here. Creating/removing Startup folder entries or Task Scheduler jobs requires typed confirmation and manual user testing. |
+| Auto Approval broker | When enabled by the user, the local proxy may automatically review and answer Codex approval requests through the configured model. Response payloads must match source-verified Codex app-server JSON-RPC shapes. |
 | Protocol conversion | No guessed adapters. Responses, Chat, Anthropic, SSE, tool, media, and domestic provider differences must be verified from official docs/source or explicit source analysis. |
 | Secrets | API keys, bearer tokens, and sensitive headers are redacted in diagnostics and request logs. |
 | Request logs | Local proxy logs are metadata-only. They do not store prompts, request bodies, raw headers, or raw upstream responses. |
