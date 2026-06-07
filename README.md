@@ -45,7 +45,7 @@ The project is intentionally local-first: provider settings, backups, request-lo
 | History and usage | Browse sessions, inspect heavy conversations, read Codex DB totals, and add cache read/write usage from rollout events, proxy logs, and compatible proxy DBs. |
 | Provider setup | Manage provider presets with `short_alias`, region, currency, custom headers, `User-Agent`, approval profile, media profile, quota template, and catalog visibility. |
 | Unified Model Catalog | Preview Codex-visible model IDs such as `qwen/qwen3-coder-plus` from always-visible, selected, focused-provider, and AMR entries. |
-| Local proxy | Run an independent localhost proxy with occupied-port backoff, timeout/retry policy, Auto Approval broker settings, route diagnostics, metadata-only request logs, and OpenAI-compatible routes. |
+| Local proxy | Run an independent localhost proxy with occupied-port backoff, provider network policy, timeout/retry policy, Auto Approval broker settings, route diagnostics, metadata-only request logs, and OpenAI-compatible routes. |
 | Protocol adapters | Convert verified Responses, Chat, Anthropic Messages, tools, images, SSE events, and domestic Responses profiles only where behavior is sourced. |
 | Cost and currency | Estimate input/output/cache/reasoning/media cost, preserve per-request FX snapshots, support manual FX overrides, and keep online FX blocked until verified. |
 | Config recovery | Preview Codex config diffs, audit approval/sandbox settings, create backups, restore config/auth, preserve official login state, and repair moved session/project metadata. |

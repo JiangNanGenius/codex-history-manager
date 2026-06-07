@@ -705,6 +705,7 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         "approval_profile": normalize_approval_profile(raw.get("approval_profile")),
         "responses_profile": normalize_responses_profile(raw.get("responses_profile")),
         "media_profile": normalize_media_profile(raw.get("media_profile")),
+        "proxy_profile": normalize_proxy_profile(raw.get("proxy_profile") or raw.get("proxy")),
         "models": [normalize_model(m) for m in raw.get("models", []) if isinstance(m, dict)],
         "aliases": raw.get("aliases") if isinstance(raw.get("aliases"), list) else [],
         "health_check": raw.get("health_check") if isinstance(raw.get("health_check"), dict) else {},
@@ -905,6 +906,42 @@ def normalize_media_profile(data: Any) -> Dict[str, Any]:
         "image_model_overrides": normalize_string_map(raw.get("image_model_overrides") or raw.get("image_overrides")),
         "video_model_overrides": normalize_string_map(raw.get("video_model_overrides") or raw.get("video_overrides")),
     }
+
+
+def normalize_proxy_profile(data: Any) -> Dict[str, Any]:
+    raw = data if isinstance(data, dict) else {}
+    try:
+        timeout_seconds = int(raw.get("upstream_timeout_seconds") or raw.get("timeout_seconds") or 0)
+    except (TypeError, ValueError):
+        timeout_seconds = 0
+    try:
+        retry_attempts = int(raw.get("retry_attempts") or raw.get("max_retries") or 0)
+    except (TypeError, ValueError):
+        retry_attempts = 0
+    try:
+        retry_backoff_ms = int(raw.get("retry_backoff_ms") or 0)
+    except (TypeError, ValueError):
+        retry_backoff_ms = 0
+    bypass = raw.get("bypass_system_proxy", raw.get("proxy_bypass", True))
+    return {
+        "bypass_system_proxy": _coerce_bool(bypass, True),
+        "upstream_timeout_seconds": min(max(timeout_seconds, 0), 3600),
+        "retry_attempts": min(max(retry_attempts, 0), 5),
+        "retry_backoff_ms": min(max(retry_backoff_ms, 0), 30000),
+    }
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def normalize_string_list(value: Any) -> List[str]:

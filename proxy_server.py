@@ -382,6 +382,14 @@ def _provider_retry_policy(provider: Dict[str, Any]) -> Dict[str, int]:
     }
 
 
+def _provider_bypass_system_proxy(provider: Dict[str, Any]) -> bool:
+    profile = _provider_proxy_profile(provider)
+    value = provider.get("bypass_system_proxy")
+    if value is None:
+        value = profile.get("bypass_system_proxy", profile.get("proxy_bypass", True))
+    return _coerce_bool(value, True)
+
+
 def _upstream_request_for_provider(
     provider: Dict[str, Any],
     method: str,
@@ -400,6 +408,7 @@ def _upstream_request_for_provider(
         stream=stream,
         retry_attempts=retry_policy["retry_attempts"],
         retry_backoff_ms=retry_policy["retry_backoff_ms"],
+        bypass_system_proxy=_provider_bypass_system_proxy(provider),
     )
 
 
@@ -412,13 +421,15 @@ def _upstream_request(
     stream: bool = False,
     retry_attempts: Optional[int] = None,
     retry_backoff_ms: Optional[int] = None,
+    bypass_system_proxy: bool = True,
 ) -> urllib.request.addinfourl:
     """
     执行上游 HTTP 请求。
 
     工程权衡：
       - 使用 urllib 而非 requests：避免第三方依赖，标准库足够。
-      - 禁用系统代理：防止 Windows IE 代理设置干扰本地到上游直连。
+      - 默认禁用系统代理：防止 Windows IE 代理设置干扰本地到上游直连。
+        Provider 可显式关闭 bypass，以使用系统代理。
       - stream=True 时不读取完整响应体：返回 addinfourl 对象，供调用方
         逐 chunk 读取。
 
@@ -450,9 +461,11 @@ def _upstream_request(
         if stream:
             req.add_header("Accept", "text/event-stream")
 
-        # 禁用系统代理，确保直连上游
-        proxy_handler = urllib.request.ProxyHandler({})
-        opener = urllib.request.build_opener(proxy_handler)
+        # 默认禁用系统代理，确保直连上游；provider 可选择使用系统代理。
+        if _coerce_bool(bypass_system_proxy, True):
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        else:
+            opener = urllib.request.build_opener()
         try:
             return opener.open(req, timeout=timeout_value)
         except urllib.error.HTTPError as exc:
@@ -571,6 +584,19 @@ def _positive_int(value: Any, default: int, minimum: int = 0, maximum: int = 2_1
     except (TypeError, ValueError):
         result = default
     return min(max(result, minimum), maximum)
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _send_error(self: BaseHTTPRequestHandler, status: int, message: str, error_type: str = "proxy_error") -> None:

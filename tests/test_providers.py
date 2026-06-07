@@ -108,6 +108,25 @@ class ProviderRegistryTest(unittest.TestCase):
         self.assertEqual(provider["media_profile"]["image_model_overrides"]["cover-art"], "gpt-image-1.5")
         self.assertEqual(provider["media_profile"]["video_model_overrides"]["storyboard"], "sora-2")
 
+    def test_proxy_profile_preserves_bypass_and_network_policy(self):
+        provider = normalize_provider({
+            "display_name": "Proxy Profile",
+            "short_alias": "proxy",
+            "proxy_profile": {
+                "bypass_system_proxy": "false",
+                "upstream_timeout_seconds": "45",
+                "retry_attempts": "3",
+                "retry_backoff_ms": "750",
+            },
+            "models": [{"id": "model-a"}],
+        })
+
+        profile = provider["proxy_profile"]
+        self.assertFalse(profile["bypass_system_proxy"])
+        self.assertEqual(profile["upstream_timeout_seconds"], 45)
+        self.assertEqual(profile["retry_attempts"], 3)
+        self.assertEqual(profile["retry_backoff_ms"], 750)
+
     def test_approval_profile_defaults_to_manual(self):
         provider = normalize_provider({
             "display_name": "Approval Default",

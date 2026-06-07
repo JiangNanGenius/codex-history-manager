@@ -239,6 +239,24 @@ class UpstreamRequestTest(unittest.TestCase):
         self.assertIsInstance(handler, urllib.request.ProxyHandler)
 
     @patch("proxy_server.urllib.request.build_opener")
+    def test_can_use_system_proxy_when_bypass_disabled(self, mock_build_opener):
+        mock_opener = MagicMock()
+        mock_resp = MagicMock()
+        mock_opener.open.return_value = mock_resp
+        mock_build_opener.return_value = mock_opener
+
+        result = _upstream_request(
+            "POST",
+            "https://api.test/v1/chat/completions",
+            {},
+            b"{}",
+            bypass_system_proxy=False,
+        )
+
+        self.assertIs(result, mock_resp)
+        mock_build_opener.assert_called_once_with()
+
+    @patch("proxy_server.urllib.request.build_opener")
     def test_stream_adds_accept_header(self, mock_build_opener):
         mock_opener = MagicMock()
         mock_resp = MagicMock()
@@ -269,6 +287,7 @@ class UpstreamRequestTest(unittest.TestCase):
         _set_upstream_policy(timeout_seconds=120, retry_attempts=0, retry_backoff_ms=250)
         provider = {
             "proxy_profile": {
+                "bypass_system_proxy": False,
                 "upstream_timeout_seconds": 9,
                 "retry_attempts": 2,
                 "retry_backoff_ms": 5,
@@ -284,6 +303,7 @@ class UpstreamRequestTest(unittest.TestCase):
         self.assertEqual(kwargs["timeout"], 9)
         self.assertEqual(kwargs["retry_attempts"], 2)
         self.assertEqual(kwargs["retry_backoff_ms"], 5)
+        self.assertFalse(kwargs["bypass_system_proxy"])
 
 
 class LocalProxyServerTest(unittest.TestCase):

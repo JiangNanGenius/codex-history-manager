@@ -380,6 +380,7 @@ function renderProviderEditor(provider) {
     ].join('|')).join('\n');
     const approvalProfile = provider.approval_profile || {};
     const mediaProfile = provider.media_profile || {};
+    const proxyProfile = provider.proxy_profile || {};
     const showMediaAsyncFields = shouldShowMediaAsyncFields(mediaProfile, provider.api_format);
 
     return `
@@ -443,6 +444,15 @@ function renderProviderEditor(provider) {
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                     ${renderTextarea('provider-headers-json', 'Headers JSON', JSON.stringify(provider.headers || {}, null, 2), 7)}
                     ${renderTextarea('provider-models-text', 'Models (id|display|context|selected)', modelsText, 7)}
+                </div>
+                <div class="mt-4">
+                    <div class="text-xs text-dark-400 mb-2">Proxy Network Policy</div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        ${renderCapabilityToggle('proxy-bypass-system-proxy', 'Bypass System Proxy', proxyProfile.bypass_system_proxy !== false)}
+                        ${renderInput('proxy-upstream-timeout', 'Upstream Timeout Seconds (0 = global)', proxyProfile.upstream_timeout_seconds || 0, 'number')}
+                        ${renderInput('proxy-retry-attempts', 'Retry Attempts (0 = global)', proxyProfile.retry_attempts || 0, 'number')}
+                        ${renderInput('proxy-retry-backoff-ms', 'Retry Backoff ms (0 = global)', proxyProfile.retry_backoff_ms || 0, 'number')}
+                    </div>
                 </div>
                 <div class="flex flex-wrap gap-2 mt-3">
                     <button data-bulk-action="select_all" onclick="runBulkModelAction('select_all')" class="btn btn-secondary text-xs">全选</button>
@@ -995,6 +1005,13 @@ function readProviderForm(existing) {
                 audit_decisions: document.getElementById('approval-audit-decisions')?.checked !== false,
                 auto_accept_low_risk: document.getElementById('approval-auto-accept-low-risk')?.checked !== false,
                 auto_decline_high_risk: document.getElementById('approval-auto-decline-high-risk')?.checked !== false,
+            },
+            proxy_profile: {
+                ...(existing.proxy_profile || {}),
+                bypass_system_proxy: document.getElementById('proxy-bypass-system-proxy')?.checked !== false,
+                upstream_timeout_seconds: parseInt(document.getElementById('proxy-upstream-timeout')?.value || '0', 10) || 0,
+                retry_attempts: parseInt(document.getElementById('proxy-retry-attempts')?.value || '0', 10) || 0,
+                retry_backoff_ms: parseInt(document.getElementById('proxy-retry-backoff-ms')?.value || '0', 10) || 0,
             },
             media_profile: {
                 ...existing.media_profile,

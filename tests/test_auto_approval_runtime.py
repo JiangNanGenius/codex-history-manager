@@ -117,6 +117,34 @@ class AutoApprovalRuntimeTest(unittest.TestCase):
         self.assertEqual(body["store"], False)
         self.assertIn("decision", result)
 
+    def test_reviewer_can_use_system_proxy_from_provider_profile(self):
+        providers = [{
+            "id": "qwen",
+            "short_alias": "qwen",
+            "enabled": True,
+            "api_format": "openai_chat",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "capabilities": {"text": True},
+            "proxy_profile": {"bypass_system_proxy": False},
+            "models": [{"id": "qwen3-coder-plus", "enabled": True}],
+        }]
+        opener = FakeOpener({
+            "choices": [{
+                "message": {
+                    "content": "{\"decision\":\"accept\",\"risk_level\":\"low\",\"reason\":\"Allowed.\"}"
+                }
+            }]
+        })
+
+        with patch("auto_approval_runtime.urllib.request.build_opener", return_value=opener) as build_opener:
+            AutoApprovalModelReviewer(lambda: providers).review(
+                self._action(),
+                self._profile(),
+                {"id": "image-main"},
+            )
+
+        build_opener.assert_called_once_with()
+
     def test_anthropic_reviewer_uses_messages_api_headers(self):
         providers = [{
             "id": "anthropic",

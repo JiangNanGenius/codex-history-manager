@@ -65,6 +65,7 @@ class AutoApprovalModelReviewer:
             request_body,
             timeout_seconds=self._timeout_seconds(profile),
             max_retries=self._max_retries(profile),
+            bypass_system_proxy=self._bypass_system_proxy(reviewer_provider),
         )
         return self._extract_decision_payload(response_json)
 
@@ -225,6 +226,7 @@ class AutoApprovalModelReviewer:
         body: Dict[str, Any],
         timeout_seconds: int,
         max_retries: int,
+        bypass_system_proxy: bool = True,
     ) -> Dict[str, Any]:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         last_error: Optional[BaseException] = None
@@ -232,7 +234,10 @@ class AutoApprovalModelReviewer:
             request = urllib.request.Request(url, data=payload, method="POST")
             for key, value in headers.items():
                 request.add_header(key, value)
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            if self._coerce_bool(bypass_system_proxy, True):
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            else:
+                opener = urllib.request.build_opener()
             try:
                 response = opener.open(request, timeout=timeout_seconds)
                 response_body = response.read()
@@ -329,6 +334,27 @@ class AutoApprovalModelReviewer:
     def _api_format(self, provider: Dict[str, Any]) -> str:
         api_format = str(provider.get("api_format") or "openai_responses")
         return api_format if api_format in SUPPORTED_TEXT_FORMATS else api_format
+
+    def _bypass_system_proxy(self, provider: Dict[str, Any]) -> bool:
+        profile = provider.get("proxy_profile")
+        if not isinstance(profile, dict):
+            profile = provider.get("proxy") if isinstance(provider.get("proxy"), dict) else {}
+        value = provider.get("bypass_system_proxy")
+        if value is None:
+            value = profile.get("bypass_system_proxy", profile.get("proxy_bypass", True))
+        return self._coerce_bool(value, True)
+
+    def _coerce_bool(self, value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return default
 
     def _has_header(self, headers: Dict[str, str], name: str) -> bool:
         target = name.lower()
