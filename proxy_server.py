@@ -52,6 +52,16 @@ from domestic_responses import (
     assess_domestic_responses_request,
     format_domestic_unsupported_reason,
 )
+from media_proxy import (
+    canonical_media_path,
+    extract_json_model,
+    is_media_proxy_path,
+    media_endpoint_url,
+    media_forwarding_status,
+    media_kind_for_path,
+    prepare_media_body,
+    resolve_media_provider,
+)
 from responses_adapter import (
     ChatSseToResponsesConverter,
     chat_completion_to_response,
@@ -356,6 +366,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if is_models_proxy_path(path):
             self._handle_models()
             return
+        if is_media_proxy_path(path):
+            self._handle_media(body=b"", method="GET")
+            return
+        _send_error(self, 404, "Not found", "not_found")
+
+    def do_DELETE(self) -> None:
+        path = self.path.split("?", 1)[0]
+        if is_media_proxy_path(path):
+            self._handle_media(body=b"", method="DELETE")
+            return
         _send_error(self, 404, "Not found", "not_found")
 
     def do_POST(self) -> None:
@@ -379,6 +399,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         if is_chat_completions_proxy_path(path):
             self._handle_chat_completions(body)
+            return
+        if is_media_proxy_path(path):
+            self._handle_media(body, method="POST")
             return
 
         _send_error(self, 404, "Not found", "not_found")
@@ -501,6 +524,62 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._forward_stream(upstream_resp)
         else:
             self._forward_non_streaming(upstream_resp)
+
+    def _handle_media(self, body: bytes, method: str = "POST") -> None:
+        """Forward OpenAI-compatible image/video requests to the media provider."""
+        path = self.path.split("?", 1)[0]
+        media_kind = media_kind_for_path(path)
+        canonical_path = canonical_media_path(path)
+        content_type = self.headers.get("Content-Type", "")
+        model_id = extract_json_model(body, content_type)
+        provider = resolve_media_provider(_load_providers_with_secrets(), media_kind, model_id=model_id)
+        if not provider:
+            _send_error(
+                self,
+                404,
+                f"No enabled {media_kind or 'media'} provider found. Configure a default media provider or use provider/model.",
+                "media_provider_not_found",
+            )
+            return
+
+        status = media_forwarding_status(provider, media_kind)
+        if not status.get("can_forward"):
+            _send_error(self, 400, str(status.get("message") or "Media provider cannot be forwarded"), str(status.get("error_type") or "media_unsupported"))
+            return
+
+        base_url = provider.get("base_url", "").rstrip("/")
+        if not base_url:
+            _send_error(self, 502, f"Provider '{provider.get('id')}' has no base_url configured.", "provider_misconfigured")
+            return
+
+        upstream_body = prepare_media_body(body, content_type, provider) if body else None
+        upstream_url = media_endpoint_url(base_url, canonical_path)
+        headers = _build_upstream_headers(provider)
+        if content_type:
+            headers["Content-Type"] = content_type
+
+        try:
+            upstream_resp = _upstream_request(
+                method,
+                upstream_url,
+                headers,
+                body=upstream_body,
+                stream=False,
+            )
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="replace") if e.fp else "{}"
+            self.send_response(e.code)
+            for header_key, header_value in e.headers.items():
+                if header_key.lower() in ("content-type", "content-length"):
+                    self.send_header(header_key, header_value)
+            self.end_headers()
+            self.wfile.write(error_body.encode("utf-8"))
+            return
+        except (urllib.error.URLError, socket.timeout, OSError) as e:
+            _send_error(self, 502, f"Media upstream connection failed: {e}", "upstream_error")
+            return
+
+        self._forward_non_streaming(upstream_resp)
 
     def _handle_responses(self, body: bytes, compact: bool = False) -> None:
         """

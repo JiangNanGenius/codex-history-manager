@@ -435,6 +435,157 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(headers.get("Content-Type"), "text/event-stream; charset=utf-8")
         self.assertIn(b"data:", body)
 
+    @patch("proxy_server._upstream_request")
+    def test_image_generation_uses_default_media_provider(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "text-main",
+                    "short_alias": "txt",
+                    "display_name": "Text Provider",
+                    "enabled": True,
+                    "base_url": "https://text.example.test/v1",
+                    "api_key": "sk-text",
+                    "capabilities": {"text": True, "images": False},
+                    "models": [{"id": "gpt-5", "enabled": True}],
+                },
+                {
+                    "id": "image-main",
+                    "short_alias": "img",
+                    "display_name": "Image Provider",
+                    "enabled": True,
+                    "base_url": "https://image.example.test/v1",
+                    "api_format": "openai_images",
+                    "api_key": "sk-image",
+                    "user_agent": "ImageUA/1.0",
+                    "capabilities": {"images": True},
+                    "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+                    "models": [{"id": "gpt-image-1", "enabled": True, "capabilities": {"images": True}}],
+                },
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"created": 1, "data": [{"url": "https://example.test/a.png"}]}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/images/generations",
+            body={"model": "img/gpt-image-1", "prompt": "test image"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body.decode())["data"][0]["url"], "https://example.test/a.png")
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://image.example.test/v1/images/generations")
+        self.assertEqual(args[0][2]["User-Agent"], "ImageUA/1.0")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "gpt-image-1")
+
+    @patch("proxy_server._upstream_request")
+    def test_video_create_uses_default_video_provider(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "video-main",
+                    "short_alias": "vid",
+                    "display_name": "Video Provider",
+                    "enabled": True,
+                    "base_url": "https://video.example.test/v1",
+                    "api_format": "openai_videos",
+                    "api_key": "sk-video",
+                    "capabilities": {"videos": True},
+                    "media_profile": {"default_video_provider": True, "openai_compatible_media": True},
+                    "models": [{"id": "sora-2", "enabled": True, "capabilities": {"videos": True}}],
+                },
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"id": "video_1", "object": "video", "status": "queued"}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/videos",
+            body={"model": "sora-2", "prompt": "test video"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body.decode())["id"], "video_1")
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://video.example.test/v1/videos")
+
+    @patch("proxy_server._upstream_request")
+    def test_video_retrieve_uses_default_video_provider(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "video-main",
+                    "short_alias": "vid",
+                    "display_name": "Video Provider",
+                    "enabled": True,
+                    "base_url": "https://video.example.test/v1",
+                    "api_format": "openai_videos",
+                    "api_key": "sk-video",
+                    "capabilities": {"videos": True},
+                    "media_profile": {"default_video_provider": True, "openai_compatible_media": True},
+                    "models": [{"id": "sora-2", "enabled": True, "capabilities": {"videos": True}}],
+                },
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"id": "video_1", "object": "video", "status": "completed"}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler("/v1/videos/video_1", method="GET")
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body.decode())["status"], "completed")
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][0], "GET")
+        self.assertEqual(args[0][1], "https://video.example.test/v1/videos/video_1")
+
+    def test_adapter_required_media_provider_returns_clear_error(self):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "ark",
+                    "short_alias": "ark",
+                    "display_name": "Ark",
+                    "enabled": True,
+                    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+                    "api_key": "sk-ark",
+                    "capabilities": {"videos": True},
+                    "media_profile": {"default_video_provider": True, "adapter_required": True, "openai_compatible_media": False},
+                    "models": [{"id": "seedance", "enabled": True, "capabilities": {"videos": True}}],
+                }
+            ]
+        })
+
+        handler, raw = self._make_handler(
+            "/v1/videos",
+            body={"model": "seedance", "prompt": "test video"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 400)
+        response_json = json.loads(body.decode())
+        self.assertEqual(response_json["error"]["type"], "media_adapter_required")
+        self.assertIn("Vendor media payload conversion is not implemented yet", response_json["error"]["message"])
+
     def test_models_list(self):
         handler, raw = self._make_handler("/v1/models", method="GET")
         status, headers, body = self._parse_response(raw)

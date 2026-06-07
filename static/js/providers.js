@@ -467,7 +467,11 @@ function renderProviderEditor(provider) {
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
                     ${renderCapabilityToggle('media-default-image', 'Default Image Provider', provider.media_profile.default_image_provider)}
                     ${renderCapabilityToggle('media-default-video', 'Default Video Provider', provider.media_profile.default_video_provider)}
+                    ${renderCapabilityToggle('media-openai-compatible', 'OpenAI-compatible Media', provider.media_profile.openai_compatible_media)}
                     ${renderCapabilityToggle('media-adapter-required', 'Adapter Required', provider.media_profile.adapter_required)}
+                    ${renderCapabilityToggle('media-async-submit', 'Async Submit', provider.media_profile.async_submit)}
+                    ${renderCapabilityToggle('media-poll-required', 'Poll Required', provider.media_profile.poll_required)}
+                    ${renderCapabilityToggle('media-cancel-supported', 'Cancel Supported', provider.media_profile.cancel_supported)}
                 </div>
             </details>
 
@@ -847,7 +851,11 @@ function readProviderForm(existing) {
                 ...existing.media_profile,
                 default_image_provider: document.getElementById('media-default-image')?.checked || false,
                 default_video_provider: document.getElementById('media-default-video')?.checked || false,
+                openai_compatible_media: document.getElementById('media-openai-compatible')?.checked || false,
                 adapter_required: document.getElementById('media-adapter-required')?.checked || false,
+                async_submit: document.getElementById('media-async-submit')?.checked || false,
+                poll_required: document.getElementById('media-poll-required')?.checked || false,
+                cancel_supported: document.getElementById('media-cancel-supported')?.checked || false,
             },
             responses_profile: {
                 ...(existing.responses_profile || {}),

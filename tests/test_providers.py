@@ -159,6 +159,37 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(provider["country_region"], "CN")
             self.assertEqual(provider["caveat"], "DeepSeek 官方 API 使用 Chat Completions 格式，不支持原生 Responses API。")
 
+    def test_openai_compatible_images_preset_schema_and_import(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.import_preset("openai-compatible-images")
+
+            self.assertEqual(provider["api_format"], "openai_images")
+            self.assertTrue(provider["capabilities"]["images"])
+            self.assertFalse(provider["capabilities"]["text"])
+            self.assertTrue(provider["media_profile"]["default_image_provider"])
+            self.assertTrue(provider["media_profile"]["openai_compatible_media"])
+            self.assertFalse(provider["media_profile"]["adapter_required"])
+            model_ids = [m["id"] for m in provider["models"]]
+            self.assertIn("gpt-image-1.5", model_ids)
+            self.assertIn("dall-e-3", model_ids)
+
+    def test_openai_compatible_videos_preset_schema_and_import(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.import_preset("openai-compatible-videos")
+
+            self.assertEqual(provider["api_format"], "openai_videos")
+            self.assertTrue(provider["capabilities"]["videos"])
+            self.assertFalse(provider["capabilities"]["text"])
+            self.assertTrue(provider["media_profile"]["default_video_provider"])
+            self.assertTrue(provider["media_profile"]["openai_compatible_media"])
+            self.assertTrue(provider["media_profile"]["async_submit"])
+            self.assertTrue(provider["media_profile"]["poll_required"])
+            model_ids = [m["id"] for m in provider["models"]]
+            self.assertIn("sora-2", model_ids)
+            self.assertIn("sora-2-pro", model_ids)
+
     def test_moonshot_kimi_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
