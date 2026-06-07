@@ -734,7 +734,7 @@ class ChatSseToResponsesConverter:
             self.failed = True
             self.buffer = ""
             self.utf8_remainder = b""
-            return self._event_json("response.failed", {"error": {"message": "SSE buffer exceeded maximum size", "type": "buffer_overflow"}})
+            return self._sse_event("response.failed", {"error": {"message": "SSE buffer exceeded maximum size", "type": "buffer_overflow"}})
 
         parts: List[str] = []
         while True:
@@ -874,8 +874,8 @@ class ChatSseToResponsesConverter:
             }))
         self.text_item["text"] += delta
         idx = self.text_item.get("output_index", 0)
-        parts.append(self._sse_event("response.content_part.delta", {
-            "type": "response.content_part.delta",
+        parts.append(self._sse_event("response.output_text.delta", {
+            "type": "response.output_text.delta",
             "item_id": self.text_item["item_id"],
             "output_index": idx,
             "content_index": 0,
@@ -942,6 +942,13 @@ class ChatSseToResponsesConverter:
         if self.text_item.get("added") and not self.text_item.get("done"):
             self.text_item["done"] = True
             idx = self.text_item.get("output_index", 0)
+            parts.append(self._sse_event("response.output_text.done", {
+                "type": "response.output_text.done",
+                "item_id": self.text_item["item_id"],
+                "output_index": idx,
+                "content_index": 0,
+                "text": self.text_item.get("text", ""),
+            }))
             parts.append(self._sse_event("response.content_part.done", {
                 "type": "response.content_part.done",
                 "item_id": self.text_item["item_id"],

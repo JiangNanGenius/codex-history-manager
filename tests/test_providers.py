@@ -31,6 +31,19 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertTrue(profile["domestic_responses"])
             self.assertTrue(profile["partial_compatibility"])
             self.assertTrue(profile["requires_adapter"])
+            self.assertIn("qwen-api-via-openai-responses", profile["verified_docs_url"])
+
+    def test_volcengine_responses_preset_is_adapter_required(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.import_preset("volcengine-ark-text-media")
+
+            profile = provider["responses_profile"]
+            self.assertTrue(profile["domestic_responses"])
+            self.assertTrue(profile["partial_compatibility"])
+            self.assertTrue(profile["requires_adapter"])
+            self.assertIn("1585128", profile["verified_docs_url"])
+            self.assertIn("payload_until_verified", profile["unsupported_fields"])
 
     def test_catalog_preview_includes_selected_models(self):
         with tempfile.TemporaryDirectory() as tmpdir:

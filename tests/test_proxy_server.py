@@ -169,6 +169,20 @@ class HeaderBuilderTest(unittest.TestCase):
         headers = _build_upstream_headers(provider)
         self.assertNotIn("Authorization", headers)
 
+    def test_anthropic_headers_use_x_api_key_and_version(self):
+        provider = {
+            "api_format": "anthropic",
+            "api_key": "sk-anthropic",
+            "user_agent": "ClaudeUA/1.0",
+            "headers": {"Authorization": "Bearer ignored", "anthropic-beta": "tools-2024-04-04"},
+        }
+        headers = _build_upstream_headers(provider)
+        self.assertEqual(headers["x-api-key"], "sk-anthropic")
+        self.assertEqual(headers["anthropic-version"], "2023-06-01")
+        self.assertEqual(headers["anthropic-beta"], "tools-2024-04-04")
+        self.assertEqual(headers["User-Agent"], "ClaudeUA/1.0")
+        self.assertNotIn("Authorization", headers)
+
 
 class LoadProvidersTest(unittest.TestCase):
     def test_loads_from_custom_path(self):
@@ -256,7 +270,10 @@ class LocalProxyServerTest(unittest.TestCase):
         server1 = LocalProxyServer(port=18083)
         server2 = LocalProxyServer(port=18083)
         self.assertTrue(server1.start())
-        self.assertFalse(server2.start())  # 端口已被占用
+        self.assertTrue(server2.start())
+        self.assertNotEqual(server2.status()["port"], 18083)
+        self.assertTrue(server2.status()["base_url"].startswith("http://127.0.0.1:"))
+        server2.stop()
         server1.stop()
 
     def test_sets_provider_store_path(self):
@@ -448,6 +465,65 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(args[0][1], "https://api.openai.com/v1/chat/completions")
         upstream_body = json.loads(args[1]["body"])
         self.assertIn("messages", upstream_body)
+
+    @patch("proxy_server._upstream_request")
+    def test_responses_endpoint_with_anthropic_provider(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "anthropic-main",
+                    "short_alias": "claude",
+                    "display_name": "Anthropic",
+                    "enabled": True,
+                    "base_url": "https://api.anthropic.com",
+                    "api_format": "anthropic",
+                    "api_key": "sk-claude",
+                    "user_agent": "ClaudeUA/1.0",
+                    "models": [{"id": "claude-sonnet-4-5", "enabled": True}],
+                }
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5",
+            "content": [{"type": "text", "text": "OK"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 7, "output_tokens": 2},
+        }).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/responses",
+            body={
+                "model": "claude/claude-sonnet-4-5",
+                "instructions": "Be concise.",
+                "input": "test",
+                "max_output_tokens": 128,
+            },
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        response_json = json.loads(body.decode())
+        self.assertEqual(response_json["output"][0]["content"][0]["text"], "OK")
+
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://api.anthropic.com/v1/messages")
+        upstream_headers = args[0][2]
+        self.assertEqual(upstream_headers["x-api-key"], "sk-claude")
+        self.assertNotIn("Authorization", upstream_headers)
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "claude-sonnet-4-5")
+        self.assertEqual(upstream_body["system"], "Be concise.")
+        self.assertEqual(upstream_body["max_tokens"], 128)
+        self.assertEqual(upstream_body["messages"][0]["role"], "user")
 
     @patch("proxy_server._upstream_request")
     def test_upstream_error_passed_through(self, mock_upstream):

@@ -1208,9 +1208,9 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
                 "domestic_responses": True,
                 "partial_compatibility": True,
                 "requires_adapter": True,
-                "verified_docs_url": "https://bailian.console.aliyun.com/cn-beijing?tab=api#/api/?type=model&url=3016808",
-                "compatibility_notes": "User-provided Bailian Responses entry. Support differs from OpenAI Responses; probe tools, custom tools, compact, previous_response_id, SSE lifecycle, and media items before real routing.",
-                "unsupported_fields": ["unknown_until_verified"],
+                "verified_docs_url": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses",
+                "compatibility_notes": "Official Bailian docs confirm OpenAI-compatible /compatible-mode/v1/responses, previous_response_id, and output_text streaming events. It is still marked partial: Codex custom tools, compact, and media item routing need adapter probes before real routing.",
+                "unsupported_fields": ["codex_custom_tools_until_adapter_verified", "compact_until_verified", "media_items_until_adapter_verified"],
             },
             "media_profile": {
                 "default_image_provider": True,
@@ -1251,8 +1251,8 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
                 "partial_compatibility": True,
                 "requires_adapter": True,
                 "verified_docs_url": "https://www.volcengine.com/docs/82379/1585128?lang=zh",
-                "compatibility_notes": "User-provided Ark Responses docs. Support differs from OpenAI Responses; verify capabilities and streaming/tool/media behavior before real routing.",
-                "unsupported_fields": ["unknown_until_verified"],
+                "compatibility_notes": "Official Ark Responses docs entry is recorded from the user-provided URL. Treat as partial compatibility: payload details, stream lifecycle, tools, and media behavior must be re-verified from readable docs/source before real routing.",
+                "unsupported_fields": ["payload_until_verified", "stream_lifecycle_until_verified", "tools_until_verified", "media_items_until_adapter_verified"],
             },
             "media_profile": {
                 "default_image_provider": False,

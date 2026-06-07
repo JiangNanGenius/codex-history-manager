@@ -41,6 +41,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from anthropic_adapter import (
+    AnthropicConversionError,
+    AnthropicSseToResponsesConverter,
+    anthropic_message_to_response,
+    anthropic_messages_url,
+    responses_to_anthropic_messages,
+)
 from responses_adapter import (
     ChatSseToResponsesConverter,
     chat_completion_to_response,
@@ -203,6 +210,7 @@ def _build_upstream_headers(provider: Dict[str, Any]) -> Dict[str, str]:
     headers: Dict[str, str] = {
         "Content-Type": "application/json",
     }
+    is_anthropic = provider.get("api_format") == "anthropic"
 
     # User-Agent：provider 级优先
     ua = provider.get("user_agent", "")
@@ -216,15 +224,37 @@ def _build_upstream_headers(provider: Dict[str, Any]) -> Dict[str, str]:
     custom = provider.get("headers", {})
     if isinstance(custom, dict):
         for key, value in custom.items():
-            if key.lower() != "authorization" and isinstance(value, str):
+            if key.lower() not in ("authorization", "x-api-key") and isinstance(value, str):
                 headers[key] = value
 
     # Authorization
     api_key = provider.get("api_key", "")
     if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+        if is_anthropic:
+            headers["x-api-key"] = api_key
+        else:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+    if is_anthropic and not _has_header(headers, "anthropic-version"):
+        headers["anthropic-version"] = str(provider.get("anthropic_version") or "2023-06-01")
 
     return headers
+
+
+def _has_header(headers: Dict[str, str], name: str) -> bool:
+    lower_name = name.lower()
+    return any(key.lower() == lower_name for key in headers)
+
+
+def _is_port_available(port: int) -> bool:
+    try:
+        test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        test_sock.settimeout(1)
+        test_sock.bind(("127.0.0.1", port))
+        test_sock.close()
+        return True
+    except OSError:
+        return False
 
 
 def _upstream_request(
@@ -403,6 +433,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         # 替换 model ID 为上游可用的格式
+        if provider.get("api_format") == "anthropic":
+            _send_error(
+                self,
+                400,
+                "Anthropic providers are supported through /v1/responses; /v1/chat/completions requires a separate Chat response adapter.",
+                "unsupported_api_format",
+            )
+            return
+
         upstream_model = _extract_model_id_for_upstream(request_json, provider)
         request_json["model"] = upstream_model
         upstream_body = json.dumps(request_json, ensure_ascii=False).encode("utf-8")
@@ -488,6 +527,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         # 替换 model ID
+        if provider.get("api_format") == "anthropic":
+            self._handle_responses_anthropic(request_json, provider, base_url)
+            return
+
         upstream_model = _extract_model_id_for_upstream(chat_request, provider)
         chat_request["model"] = upstream_model
         upstream_body = json.dumps(chat_request, ensure_ascii=False).encode("utf-8")
@@ -521,6 +564,51 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._forward_responses_stream(upstream_resp, request_json)
         else:
             self._forward_responses_non_streaming(upstream_resp, request_json)
+
+    def _handle_responses_anthropic(
+        self,
+        request_json: Dict[str, Any],
+        provider: Dict[str, Any],
+        base_url: str,
+    ) -> None:
+        """Forward a Responses request to an Anthropic Messages upstream."""
+        upstream_model = _extract_model_id_for_upstream(request_json, provider)
+        try:
+            anthropic_request = responses_to_anthropic_messages(request_json, upstream_model=upstream_model)
+        except AnthropicConversionError as e:
+            _send_error(self, 400, f"Anthropic request conversion failed: {e}", "invalid_request_error")
+            return
+
+        upstream_body = json.dumps(anthropic_request, ensure_ascii=False).encode("utf-8")
+        upstream_url = anthropic_messages_url(base_url)
+        headers = _build_upstream_headers(provider)
+        is_stream = bool(anthropic_request.get("stream"))
+
+        try:
+            upstream_resp = _upstream_request(
+                "POST",
+                upstream_url,
+                headers,
+                body=upstream_body,
+                stream=is_stream,
+            )
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="replace") if e.fp else "{}"
+            self.send_response(e.code)
+            for header_key, header_value in e.headers.items():
+                if header_key.lower() in ("content-type", "content-length"):
+                    self.send_header(header_key, header_value)
+            self.end_headers()
+            self.wfile.write(error_body.encode("utf-8"))
+            return
+        except (urllib.error.URLError, socket.timeout, OSError) as e:
+            _send_error(self, 502, f"Anthropic upstream connection failed: {e}", "upstream_error")
+            return
+
+        if is_stream:
+            self._forward_anthropic_responses_stream(upstream_resp, request_json)
+        else:
+            self._forward_anthropic_responses_non_streaming(upstream_resp, request_json)
 
     def _forward_non_streaming(self, upstream_resp: urllib.request.addinfourl) -> None:
         """
@@ -570,6 +658,75 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     break
         except (ConnectionResetError, BrokenPipeError, OSError):
             pass
+        finally:
+            try:
+                upstream_resp.close()
+            except Exception:
+                pass
+
+    def _forward_anthropic_responses_non_streaming(
+        self,
+        upstream_resp: urllib.request.addinfourl,
+        original_request: Dict[str, Any],
+    ) -> None:
+        """Convert a non-streaming Anthropic Messages response to Responses JSON."""
+        try:
+            resp_body = upstream_resp.read()
+            anthropic_json = json.loads(resp_body.decode("utf-8", errors="replace"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            _send_error(self, 502, f"Anthropic upstream returned invalid JSON: {e}", "upstream_error")
+            return
+
+        try:
+            response_json = anthropic_message_to_response(anthropic_json, original_request)
+        except Exception as e:
+            _send_error(self, 502, f"Anthropic response conversion failed: {e}", "proxy_error")
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(response_json, ensure_ascii=False).encode("utf-8"))
+
+    def _forward_anthropic_responses_stream(
+        self,
+        upstream_resp: urllib.request.addinfourl,
+        original_request: Dict[str, Any],
+    ) -> None:
+        """Convert Anthropic Messages SSE into Responses SSE."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        converter = AnthropicSseToResponsesConverter(original_request)
+
+        try:
+            while True:
+                chunk = upstream_resp.read(4096)
+                if not chunk:
+                    break
+                event_text = converter.push_bytes(chunk)
+                if event_text:
+                    try:
+                        self.wfile.write(event_text.encode("utf-8"))
+                        self.wfile.flush()
+                    except (ConnectionResetError, BrokenPipeError, OSError):
+                        return
+
+            terminal = converter.finish()
+            if terminal:
+                try:
+                    self.wfile.write(terminal.encode("utf-8"))
+                    self.wfile.flush()
+                except (ConnectionResetError, BrokenPipeError, OSError):
+                    pass
+        except Exception:
+            try:
+                self.wfile.write(converter.fail("Anthropic stream processing error", "proxy_error").encode("utf-8"))
+            except Exception:
+                pass
         finally:
             try:
                 upstream_resp.close()
@@ -666,7 +823,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         return
 
             # 发送 terminal event
-            terminal = converter.finalize()
+            terminal = converter.finish()
             if terminal:
                 try:
                     self.wfile.write(terminal.encode("utf-8"))
@@ -676,7 +833,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except Exception:
             # 任何未预料异常都发送 response.failed 并结束
             try:
-                failed_event = converter.finalize() or (
+                failed_event = converter.finish() or (
                     "event: response.failed\n"
                     'data: {"error":{"type":"proxy_error","message":"Stream processing error"}}\n\n'
                 )
@@ -717,20 +874,22 @@ class LocalProxyServer:
     def start(self) -> bool:
         if self._server is not None:
             return True
-        # 预检端口是否已被占用（Windows 上 SO_REUSEADDR 默认允许重复绑定）
-        try:
-            test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            test_sock.settimeout(1)
-            test_sock.bind(("127.0.0.1", self.port))
-            test_sock.close()
-        except OSError:
-            return False
         # 设置全局 provider store 路径，供 ProxyHandler 使用
         if self.provider_store_path:
             _set_provider_store_path(self.provider_store_path)
-        try:
-            self._server = HTTPServer(("127.0.0.1", self.port), ProxyHandler)
-        except OSError:
+        original_port = self.port
+        for candidate_port in range(original_port, min(original_port + 50, 65536)):
+            if not _is_port_available(candidate_port):
+                continue
+            try:
+                self._server = HTTPServer(("127.0.0.1", candidate_port), ProxyHandler)
+                self.port = candidate_port
+                break
+            except OSError:
+                self._server = None
+                continue
+        if self._server is None:
+            self.port = original_port
             return False
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
