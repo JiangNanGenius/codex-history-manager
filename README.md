@@ -49,6 +49,7 @@ The project is intentionally local-first. Provider secrets, app settings, reques
 - Routes by `provider/model` hard prefix, exact model match, UMC entries, media profile, or AMR group.
 - Uses strict Windows port binding where available and automatically backs off when the configured port is occupied.
 - Writes metadata-only JSONL logs for non-streaming requests: endpoint, provider, model, status, duration, normalized usage, cache read/write, local cost estimate, and FX snapshot.
+- Surfaces those logs in the Token Dashboard with filters, cache read/write columns, cost display, FX display, and retention cleanup.
 - Does not store prompts, request bodies, raw request headers, or raw upstream responses in proxy logs.
 
 ### Usage, Cost, And Currency
