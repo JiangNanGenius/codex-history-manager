@@ -313,6 +313,20 @@ class LocalProxyServerTest(unittest.TestCase):
             server.stop()
             _set_upstream_policy()
 
+    def test_start_installs_and_stop_clears_media_approval_reviewer(self):
+        reviewer = lambda action, profile, provider: {
+            "decision": "accept",
+            "risk_level": "low",
+            "reason": "Allowed.",
+        }
+        server = LocalProxyServer(port=18086, media_approval_reviewer=reviewer)
+        try:
+            self.assertTrue(server.start())
+            self.assertTrue(server.status()["media_auto_approval_reviewer_connected"])
+        finally:
+            server.stop()
+        self.assertFalse(server.status()["media_auto_approval_reviewer_connected"])
+
     def test_start_stop_cycle(self):
         server = LocalProxyServer(port=18081)
         ok = server.start()

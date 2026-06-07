@@ -1376,6 +1376,7 @@ class LocalProxyServer:
         upstream_timeout_seconds: int = DEFAULT_UPSTREAM_TIMEOUT,
         retry_attempts: int = 0,
         retry_backoff_ms: int = 250,
+        media_approval_reviewer: Optional[Callable[[Dict[str, Any], Dict[str, Any], Dict[str, Any]], Any]] = None,
     ):
         self.port = port
         self.provider_store_path = provider_store_path
@@ -1386,6 +1387,7 @@ class LocalProxyServer:
         self.upstream_timeout_seconds = upstream_timeout_seconds
         self.retry_attempts = retry_attempts
         self.retry_backoff_ms = retry_backoff_ms
+        self.media_approval_reviewer = media_approval_reviewer
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._last_requested_port = port
@@ -1402,6 +1404,7 @@ class LocalProxyServer:
 
     def start(self) -> bool:
         if self._server is not None:
+            _set_media_approval_reviewer(self.media_approval_reviewer)
             self.port = int(self._server.server_address[1])
             return True
         # 设置全局 provider store 路径，供 ProxyHandler 使用
@@ -1418,6 +1421,7 @@ class LocalProxyServer:
             retry_attempts=self.retry_attempts,
             retry_backoff_ms=self.retry_backoff_ms,
         )
+        _set_media_approval_reviewer(self.media_approval_reviewer)
 
         if not isinstance(self.port, int) or self.port < 1 or self.port > 65535:
             self._last_requested_port = self.port
@@ -1486,6 +1490,7 @@ class LocalProxyServer:
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
+        _set_media_approval_reviewer(None)
 
     def is_running(self) -> bool:
         return self._server is not None
@@ -1510,6 +1515,7 @@ class LocalProxyServer:
             "upstream_timeout_seconds": _upstream_timeout_seconds,
             "retry_attempts": _upstream_retry_attempts,
             "retry_backoff_ms": _upstream_retry_backoff_ms,
+            "media_auto_approval_reviewer_connected": _media_approval_reviewer is not None,
             "port_backoff": self._last_port_backoff,
             "last_start_error": self._last_start_error,
         }

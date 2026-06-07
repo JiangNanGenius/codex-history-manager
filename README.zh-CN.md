@@ -186,6 +186,7 @@ Codex 会按 `model_provider` 过滤会话列表。在官方 OpenAI 登录态和
 | `model_rotation.py`, `amr_registry.py` | Adaptive Model Rotation 引擎与持久化。 |
 | `proxy_server.py` | 本地 OpenAI-compatible proxy server。 |
 | `approval_broker.py` | Auto Approval prompt builder、严格决策解析和 metadata-only 审批记录。 |
+| `auto_approval_runtime.py` | Auto Approval 运行时模型 reviewer，使用已验证的 Chat、Responses 和 Anthropic request shape。 |
 | `codex_approval_bridge.py` | 基于源码复核的 Codex app-server 审批 request/result 映射，用于 mocked Auto Approval response。 |
 | `request_logs.py` | metadata-only request log、保留策略、汇总和成本快照。 |
 | `responses_adapter.py` | Responses <-> Chat 转换和 SSE normalization。 |
@@ -207,9 +208,7 @@ Codex 会按 `model_provider` 过滤会话列表。在官方 OpenAI 登录态和
 - Anthropic API 文档：[Messages API](https://docs.anthropic.com/en/api/messages)，用于 Anthropic-to-Codex adapter 行为复核。
 - 阿里百炼 / Model Studio：[通义千问通过 OpenAI Responses 调用](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses)，以及用户提供的[百炼控制台 Responses 入口](https://bailian.console.aliyun.com/cn-beijing?spm=5176.12818093_47.resourceCenter.1.52c916d0vlEMb0&tab=api#/api/?type=model&url=3016808)。
 - 火山方舟：[Responses API](https://www.volcengine.com/docs/82379/1585128?lang=zh)、[Seedream 图片生成](https://www.volcengine.com/docs/82379/1824121?lang=zh) 和 [Seedance 视频生成](https://www.volcengine.com/docs/82379/2291680?lang=zh)。
-- 对照实现项目：
-  - [cc-switch](https://github.com/farion1231/cc-switch) 为 MIT license，本项目带引用用于协议与行为对照。
-  - [CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus) 在本地已检查 clone 中没有 repository license file，因此只作为弱行为参考；不复制其代码、资产、sponsor、recommendation、marketplace 或 ad 内容。
+- 对照实现项目：[cc-switch](https://github.com/farion1231/cc-switch) 和 [CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus)。仅用于协议与行为对照，不导入 sponsor、recommendation、marketplace 或 ad 内容。
 
 ## 路线图
 

@@ -186,6 +186,7 @@ After sync, sessions remain visible across account/provider switches.
 | `model_rotation.py`, `amr_registry.py` | Adaptive Model Rotation engine and persistence. |
 | `proxy_server.py` | Local OpenAI-compatible proxy server. |
 | `approval_broker.py` | Auto Approval prompt builder, strict decision parser, and metadata-only approval records. |
+| `auto_approval_runtime.py` | Runtime model reviewer for Auto Approval through verified Chat, Responses, and Anthropic request shapes. |
 | `codex_approval_bridge.py` | Source-verified Codex app-server approval request/result mapping for mocked Auto Approval responses. |
 | `request_logs.py` | Metadata-only proxy request logs, retention, summaries, and cost snapshots. |
 | `responses_adapter.py` | Responses <-> Chat conversion and SSE normalization. |
@@ -207,9 +208,7 @@ Primary protocol and provider references used for implementation decisions:
 - Anthropic API docs: [Messages API](https://docs.anthropic.com/en/api/messages) for Anthropic-to-Codex adapter behavior.
 - Alibaba Bailian / Model Studio: [Qwen via OpenAI Responses](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses) and the user-supplied [Bailian console Responses entry](https://bailian.console.aliyun.com/cn-beijing?spm=5176.12818093_47.resourceCenter.1.52c916d0vlEMb0&tab=api#/api/?type=model&url=3016808).
 - Volcengine Ark: [Responses API](https://www.volcengine.com/docs/82379/1585128?lang=zh), [Seedream image generation](https://www.volcengine.com/docs/82379/1824121?lang=zh), and [Seedance video generation](https://www.volcengine.com/docs/82379/2291680?lang=zh).
-- Comparative implementation references:
-  - [cc-switch](https://github.com/farion1231/cc-switch) is MIT-licensed and is used with attribution for protocol and behavior comparison.
-  - [CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus) has no repository license file in the inspected local clone, so it is treated as a weak behavioral reference only. No code, assets, sponsor, recommendation, marketplace, or ad content is copied from it.
+- Comparative implementation references: [cc-switch](https://github.com/farion1231/cc-switch) and [CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus). They are used for protocol and behavior comparison; sponsor, recommendation, marketplace, and ad content is not imported.
 
 ## Roadmap
 

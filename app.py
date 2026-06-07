@@ -69,6 +69,7 @@ from costing import estimate_request_cost, pricing_preview_payload
 from quota import QuotaManager
 from request_logs import RequestLogStore
 from startup_manager import STARTUP_CONFIG_KEYS, StartupManager
+from auto_approval_runtime import AutoApprovalModelReviewer
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -99,6 +100,9 @@ def create_app() -> Flask:
     backup_mgr = BackupManager(config, db)
     token_stats = TokenStats(config.get("db_path"))
     provider_registry = ProviderRegistry(config.get("provider_store_path", ""))
+    auto_approval_reviewer = AutoApprovalModelReviewer(
+        lambda: provider_registry.list_providers(include_secrets=True).get("providers", [])
+    )
     proxy_server = LocalProxyServer(
         port=config.get("proxy_port", 8080),
         provider_store_path=config.get("provider_store_path", ""),
@@ -109,6 +113,7 @@ def create_app() -> Flask:
         upstream_timeout_seconds=config.get("proxy_upstream_timeout_seconds", 120),
         retry_attempts=config.get("proxy_retry_attempts", 0),
         retry_backoff_ms=config.get("proxy_retry_backoff_ms", 250),
+        media_approval_reviewer=auto_approval_reviewer.review,
     )
     amr_registry = AMRRegistry()
     quota_manager = QuotaManager(lambda: provider_registry.list_providers(include_secrets=True).get("providers", []))

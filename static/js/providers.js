@@ -1319,6 +1319,7 @@ function renderProxyControlCard() {
     const backoff = status.port_backoff || {};
     const portLabel = status.port ? `:${status.port}` : '--';
     const baseUrl = status.base_url || '未启动';
+    const approvalBrokerConnected = Boolean(status.media_auto_approval_reviewer_connected);
     const backoffNotice = backoff.used
         ? `<div class="mt-3 text-xs text-amber-200 bg-amber-950/30 border border-amber-700/40 rounded-lg p-2">
                 配置端口 ${escapeHtml(backoff.from)} 已占用，已自动退避到 ${escapeHtml(backoff.to)}。
@@ -1332,6 +1333,9 @@ function renderProxyControlCard() {
                 <span class="text-xs ${running ? 'text-emerald-400' : 'text-dark-400'}">${running ? '代理运行中' : '代理已停止'} ${portLabel}</span>
             </div>
             <div class="mt-2 text-xs text-dark-400 break-all">${escapeHtml(baseUrl)}</div>
+            <div class="mt-2 text-xs ${approvalBrokerConnected ? 'text-emerald-300' : 'text-dark-500'}">
+                Approval Broker ${approvalBrokerConnected ? 'connected' : 'idle'}
+            </div>
             ${backoffNotice}
             ${status.last_start_error ? `<div class="mt-3 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2">${escapeHtml(status.last_start_error)}</div>` : ''}
             <div class="mt-2 text-xs text-dark-500">启动时会自动尝试配置端口之后的可用端口。</div>
