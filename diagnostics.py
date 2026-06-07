@@ -35,9 +35,18 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from codex_config import CodexConfigManager, detect_auth_mode
+from codex_approval_bridge import (
+    COMMAND_APPROVAL_METHOD,
+    FILE_CHANGE_APPROVAL_METHOD,
+    MCP_ELICITATION_METHOD,
+    PERMISSIONS_APPROVAL_METHOD,
+    SOURCE_NOTES as CODEX_APPROVAL_BRIDGE_SOURCE_NOTES,
+    build_codex_approval_bridge_preview,
+)
 from currency import exchange_rate_status_summary
 from providers import ProviderRegistry, redact_secrets
 from request_logs import RequestLogStore
+from media_proxy import build_media_route_readiness
 
 # 引用 config 模块的配置文件路径常量（Config 类未暴露此属性）
 from config import CONFIG_FILE
@@ -161,10 +170,15 @@ class DiagnosticsCollector:
         # ── d) Providers 摘要 ──
         providers_data = self.provider_registry.list_providers(include_secrets=True)
         providers_summary: List[Dict[str, Any]] = []
+        media_route_ready_count = 0
+        media_route_blocked_count = 0
         for p in providers_data.get("providers", []):
             if not p.get("enabled", True):
                 continue
             enabled_models = [m for m in p.get("models", []) if m.get("enabled", True)]
+            media_route = _provider_media_route_summary(p)
+            media_route_ready_count += int(media_route.get("ready_count") or 0)
+            media_route_blocked_count += int(media_route.get("blocked_count") or 0)
             providers_summary.append({
                 "id": p.get("id"),
                 "display_name": p.get("display_name"),
@@ -176,6 +190,7 @@ class DiagnosticsCollector:
                 "native_currency": p.get("native_currency", ""),
                 "api_key": p.get("api_key", ""),
                 "headers": p.get("headers", {}),
+                "media_route": media_route,
             })
 
         # ── e) Model Catalog 摘要 ──
@@ -239,15 +254,20 @@ class DiagnosticsCollector:
         except Exception as e:
             currency_section = {"error": str(e)}
 
+        approval_bridge_section = _approval_bridge_diagnostics()
+
         return {
             "codex_config": codex_config_section,
             "codex_permissions": permissions_audit,
+            "codex_approval_bridge": approval_bridge_section,
             "auth_mode": auth_section,
             "local_proxy": proxy_status,
             "providers": {
                 "count": len(providers_summary),
                 "providers": providers_summary,
                 "store_path": providers_data.get("store_path", ""),
+                "media_route_ready_count": media_route_ready_count,
+                "media_route_blocked_count": media_route_blocked_count,
             },
             "model_catalog": model_catalog_section,
             "amr": amr_section,
@@ -409,6 +429,98 @@ class DiagnosticsCollector:
             "urls_tested": urls_to_try,
         }
 
+    def check_provider_payload_connectivity(self, provider: Dict[str, Any], timeout: int = 10) -> Dict[str, Any]:
+        """Test an unsaved provider draft without reading or writing the registry."""
+        provider = provider if isinstance(provider, dict) else {}
+        provider_id = str(provider.get("id") or "draft")
+        result = _check_provider_payload_connectivity(provider, provider_id, timeout)
+        result["preview"] = True
+        return result
+
+
+def _approval_bridge_diagnostics() -> Dict[str, Any]:
+    """Report whether the source-verified approval bridge dry-run is usable."""
+    supported_methods = [
+        COMMAND_APPROVAL_METHOD,
+        FILE_CHANGE_APPROVAL_METHOD,
+        PERMISSIONS_APPROVAL_METHOD,
+        MCP_ELICITATION_METHOD,
+    ]
+    sample_message = {
+        "jsonrpc": "2.0",
+        "id": "diagnostics-dry-run",
+        "method": COMMAND_APPROVAL_METHOD,
+        "params": {
+            "approvalId": "diagnostics-dry-run",
+            "command": "<redacted local command>",
+            "cwd": "<workspace>",
+            "reason": "Diagnostics approval bridge shape check.",
+        },
+    }
+    try:
+        preview = build_codex_approval_bridge_preview(sample_message)
+        response_result = preview.get("jsonrpc_response", {}).get("result", {})
+        broker_action = preview.get("broker_action", {})
+        return {
+            "available": True,
+            "preview_only": True,
+            "live_transport_connected": bool(preview.get("live_transport_connected")),
+            "supported_methods": supported_methods,
+            "source_notes": CODEX_APPROVAL_BRIDGE_SOURCE_NOTES,
+            "sample": {
+                "success": bool(preview.get("success")),
+                "method": preview.get("method"),
+                "broker_action_kind": broker_action.get("kind"),
+                "jsonrpc_result_keys": sorted(response_result.keys()) if isinstance(response_result, dict) else [],
+            },
+        }
+    except Exception as e:
+        return {
+            "available": False,
+            "preview_only": True,
+            "live_transport_connected": False,
+            "supported_methods": supported_methods,
+            "source_notes": CODEX_APPROVAL_BRIDGE_SOURCE_NOTES,
+            "error": str(e),
+        }
+
+
+def _provider_media_route_summary(provider: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a compact, secret-free media route readiness summary."""
+    try:
+        readiness = build_media_route_readiness(provider)
+    except Exception as e:
+        return {
+            "success": False,
+            "live_forwarding_enabled": False,
+            "ready_count": 0,
+            "blocked_count": 0,
+            "error": str(e),
+            "checks": [],
+        }
+
+    checks = []
+    for item in readiness.get("checks", []):
+        if not isinstance(item, dict):
+            continue
+        checks.append({
+            "media_kind": item.get("media_kind", ""),
+            "can_forward": bool(item.get("can_forward")),
+            "error_type": item.get("error_type", ""),
+            "message": item.get("message", ""),
+            "route_mode": item.get("route_mode", ""),
+            "canonical_path": item.get("canonical_path", ""),
+            "upstream_url": item.get("upstream_url", ""),
+            "proxy_paths": item.get("proxy_paths", []),
+        })
+    return {
+        "success": bool(readiness.get("success", True)),
+        "live_forwarding_enabled": bool(readiness.get("live_forwarding_enabled")),
+        "ready_count": int(readiness.get("ready_count") or 0),
+        "blocked_count": int(readiness.get("blocked_count") or 0),
+        "checks": checks,
+    }
+
 
 def _provider_health_check_headers(provider: Dict[str, Any]) -> Dict[str, str]:
     """Build low-risk headers for provider connectivity probes.
@@ -433,3 +545,78 @@ def _provider_health_check_headers(provider: Dict[str, Any]) -> Dict[str, str]:
         headers["User-Agent"] = "Codex-Enhance-Manager-HealthCheck/1.0"
 
     return headers
+
+
+def _check_provider_payload_connectivity(provider: Dict[str, Any], provider_id: str, timeout: int = 10) -> Dict[str, Any]:
+    base_url = str((provider or {}).get("base_url") or "").rstrip("/")
+    if not base_url:
+        return {
+            "success": False,
+            "reachable": False,
+            "provider_id": provider_id,
+            "error": "Provider has no base_url configured.",
+        }
+
+    urls_to_try = [
+        f"{base_url}/models",
+        base_url,
+    ]
+    for url in urls_to_try:
+        try:
+            req = urllib.request.Request(
+                url,
+                method="HEAD",
+                headers=_provider_health_check_headers(provider),
+            )
+            proxy_handler = urllib.request.ProxyHandler({})
+            opener = urllib.request.build_opener(proxy_handler)
+            with opener.open(req, timeout=timeout) as resp:
+                return {
+                    "success": True,
+                    "reachable": True,
+                    "provider_id": provider_id,
+                    "status_code": resp.getcode(),
+                    "url": url,
+                    "method": "HEAD",
+                }
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403, 404, 405, 422):
+                return {
+                    "success": True,
+                    "reachable": True,
+                    "provider_id": provider_id,
+                    "status_code": e.code,
+                    "url": url,
+                    "method": "HEAD",
+                    "note": "Server responded with expected auth/method error; network path is open.",
+                }
+            return {
+                "success": False,
+                "reachable": True,
+                "provider_id": provider_id,
+                "status_code": e.code,
+                "url": url,
+                "method": "HEAD",
+                "error": f"HTTP error: {e.code}",
+            }
+        except urllib.error.URLError as e:
+            reason = str(e.reason) if hasattr(e, "reason") else str(e)
+            if "SSL" in reason or "CERTIFICATE" in reason.upper():
+                return {
+                    "success": False,
+                    "reachable": False,
+                    "provider_id": provider_id,
+                    "error": f"SSL/TLS error: {reason}",
+                    "url": url,
+                }
+            continue
+        except socket.timeout:
+            continue
+
+    return {
+        "success": False,
+        "reachable": False,
+        "provider_id": provider_id,
+        "error": "Could not connect to any tested endpoint.",
+        "urls_tested": urls_to_try,
+    }

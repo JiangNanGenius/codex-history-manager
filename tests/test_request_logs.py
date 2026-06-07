@@ -98,6 +98,72 @@ class RequestLogStoreTest(unittest.TestCase):
         self.assertEqual(older["cost_estimate"]["total_display"], 7.2)
         self.assertEqual(newer["cost_estimate"]["total_display"], 7.8)
 
+    def test_build_proxy_log_entry_estimates_media_pricing(self):
+        provider = {
+            "id": "media",
+            "short_alias": "img",
+            "native_currency": "USD",
+            "pricing": {
+                "per_image": 0.02,
+                "per_video_job": 0.10,
+                "per_video_second": 0.03,
+            },
+        }
+
+        entry = build_proxy_log_entry(
+            {
+                "provider": provider,
+                "endpoint": "images/generations",
+                "model": "gpt-image-1",
+                "media_kind": "image",
+            },
+            usage={"image_count": 2, "video_job_count": 1, "video_seconds": 3},
+            currency_settings={"display_currency": "USD"},
+        )
+
+        self.assertEqual(entry["usage"]["image_count"], 2)
+        self.assertEqual(entry["usage"]["video_job_count"], 1)
+        self.assertEqual(entry["usage"]["video_seconds"], 3)
+        self.assertAlmostEqual(entry["cost_estimate"]["components_native"]["images"], 0.04)
+        self.assertAlmostEqual(entry["cost_estimate"]["components_native"]["video_jobs"], 0.10)
+        self.assertAlmostEqual(entry["cost_estimate"]["components_native"]["video_seconds"], 0.09)
+        self.assertAlmostEqual(entry["cost_estimate"]["total_native"], 0.23)
+
+    def test_build_proxy_log_entry_extracts_provider_reported_cost(self):
+        provider = {
+            "id": "reported",
+            "short_alias": "rp",
+            "native_currency": "USD",
+            "pricing": {"input_per_million": 1.0},
+        }
+
+        entry = build_proxy_log_entry(
+            {
+                "provider": provider,
+                "endpoint": "responses",
+                "model": "rp/gpt-5",
+                "upstream_model": "gpt-5",
+            },
+            response_json={
+                "usage": {
+                    "input_tokens": 100_000,
+                    "total_cost": 0.08,
+                    "currency": "USD",
+                },
+                "debug": {"api_key": "sk-should-not-appear"},
+            },
+            currency_settings={"display_currency": "USD"},
+        )
+
+        self.assertAlmostEqual(entry["cost_estimate"]["total_native"], 0.1)
+        self.assertEqual(entry["provider_reported_cost"], {
+            "amount": 0.08,
+            "currency": "USD",
+            "source": "usage.total_cost",
+            "currency_inferred": False,
+        })
+        self.assertNotIn("sk-should-not-appear", json.dumps(entry))
+
     def test_store_summary_and_filters_are_metadata_only(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "proxy_requests.jsonl"
@@ -128,6 +194,130 @@ class RequestLogStoreTest(unittest.TestCase):
             p1_entries = store.read_entries(provider_id="p1")["entries"]
             self.assertEqual(len(p1_entries), 1)
             self.assertNotIn("sk-should-redact", path.read_text(encoding="utf-8"))
+
+    def test_read_entries_filters_media_kind_and_error_type(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "proxy_requests.jsonl"
+            store = RequestLogStore(path, retention_days=30, max_mb=1)
+            store.append({
+                "endpoint": "images/generations",
+                "provider_id": "image",
+                "status_code": 200,
+                "success": True,
+                "media_kind": "image",
+            })
+            store.append({
+                "endpoint": "images/generations",
+                "provider_id": "native-proxy",
+                "status_code": 400,
+                "success": False,
+                "media_kind": "image",
+                "error_type": "media_adapter_required",
+            })
+            store.append({
+                "endpoint": "videos",
+                "provider_id": "video",
+                "status_code": 502,
+                "success": False,
+                "media_kind": "video",
+                "error_type": "upstream_error",
+            })
+
+            image_entries = store.read_entries(media_kind="image")["entries"]
+            adapter_errors = store.read_entries(media_kind="image", error_type="media_adapter_required")["entries"]
+            video_errors = store.read_entries(media_kind="video", success=False)["entries"]
+
+            self.assertEqual(len(image_entries), 2)
+            self.assertEqual(len(adapter_errors), 1)
+            self.assertEqual(adapter_errors[0]["provider_id"], "native-proxy")
+            self.assertEqual(len(video_errors), 1)
+            self.assertEqual(video_errors[0]["error_type"], "upstream_error")
+
+    def test_summary_accumulates_media_usage_and_fx_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "proxy_requests.jsonl"
+            store = RequestLogStore(path, retention_days=30, max_mb=1)
+            store.append({
+                "endpoint": "images/generations",
+                "provider_id": "image",
+                "status_code": 200,
+                "success": True,
+                "usage": {"image_count": 2},
+                "cost_estimate": {"total_native": 0.04, "native_currency": "USD"},
+                "fx_snapshot": {"success": True, "source": "manual", "is_stale": True, "fallback_used": True},
+            })
+            store.append({
+                "endpoint": "videos",
+                "provider_id": "video",
+                "status_code": 200,
+                "success": True,
+                "usage": {"video_job_count": 1, "video_seconds": 8},
+                "cost_estimate": {"total_native": 0.12, "native_currency": "USD"},
+                "fx_snapshot": {"success": False, "source": "apiforex"},
+            })
+            store.append({
+                "timestamp": "2026-06-07T12:00:00Z",
+                "endpoint": "images/generations",
+                "provider_id": "native-proxy",
+                "status_code": 400,
+                "success": False,
+                "media_kind": "image",
+                "error_type": "media_adapter_required",
+            })
+
+            summary = store.summary()
+
+            self.assertEqual(summary["tokens"]["image_count"], 2)
+            self.assertEqual(summary["tokens"]["video_job_count"], 1)
+            self.assertEqual(summary["tokens"]["video_seconds"], 8)
+            self.assertEqual(summary["cost_native_by_currency"], {"USD": 0.16})
+            self.assertEqual(summary["fx"]["snapshots"], 2)
+            self.assertEqual(summary["fx"]["stale_count"], 1)
+            self.assertEqual(summary["fx"]["fallback_count"], 1)
+            self.assertEqual(summary["fx"]["unavailable_count"], 1)
+            self.assertEqual(summary["fx"]["sources"], {"manual": 1, "apiforex": 1})
+            self.assertEqual(summary["media"]["count"], 3)
+            self.assertEqual(summary["media"]["success_count"], 2)
+            self.assertEqual(summary["media"]["error_count"], 1)
+            self.assertEqual(summary["media"]["by_kind"]["image"], {"count": 2, "success_count": 1, "error_count": 1})
+            self.assertEqual(summary["media"]["by_kind"]["video"], {"count": 1, "success_count": 1, "error_count": 0})
+            self.assertEqual(summary["media"]["providers"]["native-proxy"], 1)
+            self.assertEqual(summary["media"]["endpoints"]["images/generations"], 2)
+            self.assertEqual(summary["media"]["error_types"], {"media_adapter_required": 1})
+            self.assertEqual(summary["media"]["latest_error"]["provider_id"], "native-proxy")
+            self.assertEqual(summary["media"]["latest_error"]["media_kind"], "image")
+
+    def test_summary_compares_provider_reported_and_estimated_cost(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "proxy_requests.jsonl"
+            store = RequestLogStore(path, retention_days=30, max_mb=1)
+            store.append({
+                "endpoint": "responses",
+                "provider_id": "p1",
+                "status_code": 200,
+                "success": True,
+                "cost_estimate": {"total_native": 0.1, "native_currency": "USD"},
+                "provider_reported_cost": {"amount": 0.08, "currency": "USD", "source": "usage.total_cost"},
+            })
+            store.append({
+                "endpoint": "responses",
+                "provider_id": "p2",
+                "status_code": 200,
+                "success": True,
+                "cost_estimate": {"total_native": 0.2, "native_currency": "USD"},
+            })
+
+            summary = store.summary()
+
+            self.assertEqual(summary["provider_reported_cost_by_currency"], {"USD": 0.08})
+            self.assertEqual(summary["cost_comparison"]["estimated_count"], 2)
+            self.assertEqual(summary["cost_comparison"]["reported_count"], 1)
+            self.assertEqual(summary["cost_comparison"]["estimated_only_count"], 1)
+            self.assertEqual(summary["cost_comparison"]["matched_currency_count"], 1)
+            self.assertAlmostEqual(
+                summary["cost_comparison"]["estimated_minus_reported_by_currency"]["USD"],
+                0.02,
+            )
 
     def test_enforce_retention_by_age_and_size(self):
         with tempfile.TemporaryDirectory() as tmpdir:

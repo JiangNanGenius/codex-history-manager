@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from model_rotation import AdaptiveModelRotation
+from capabilities import merge_provider_model_capabilities
 from providers import ProviderRegistry, normalize_capabilities, redact_secrets
 
 # Schema version：当 group/candidate 数据结构发生不兼容变更时递增。
@@ -341,15 +342,9 @@ class AMRRegistry:
         for p in providers_data.get("providers", []):
             if not p.get("enabled", True):
                 continue
-            provider_caps = p.get("capabilities", {})
             for m in p.get("models", []):
                 if not m.get("enabled", True):
                     continue
-                # 合并 capabilities：model 级 capability 优先，缺失时回退到 provider 级
-                model_caps = m.get("capabilities", {})
-                merged_caps = dict(provider_caps)
-                if isinstance(model_caps, dict):
-                    merged_caps.update(model_caps)
                 candidates.append({
                     "id": f"{p['id']}/{m['id']}",
                     "provider_id": p["id"],
@@ -357,7 +352,7 @@ class AMRRegistry:
                     "priority": 1 if p.get("catalog_visibility") == "always_visible" else 2,
                     "enabled": True,
                     "context_window": m.get("context_window", 0),
-                    "capabilities": normalize_capabilities(merged_caps),
+                    "capabilities": merge_provider_model_capabilities(p, m),
                     "health": normalize_candidate_health(p.get("status")),
                 })
 

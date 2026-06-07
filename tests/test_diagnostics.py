@@ -12,6 +12,7 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
+from codex_approval_bridge import COMMAND_APPROVAL_METHOD
 from diagnostics import DiagnosticsCollector
 from providers import REDACTED_VALUE
 
@@ -125,6 +126,7 @@ class TestDiagnosticsCollector(unittest.TestCase):
         required_keys = {
             "codex_config",
             "codex_permissions",
+            "codex_approval_bridge",
             "auth_mode",
             "local_proxy",
             "providers",
@@ -145,6 +147,11 @@ class TestDiagnosticsCollector(unittest.TestCase):
         self.assertEqual(cc["model_provider"], "openai")
         self.assertEqual(cc["model"], "gpt-4")
         self.assertEqual(result["codex_permissions"]["issue_count"], 0)
+        self.assertTrue(result["codex_approval_bridge"]["available"])
+        self.assertTrue(result["codex_approval_bridge"]["preview_only"])
+        self.assertFalse(result["codex_approval_bridge"]["live_transport_connected"])
+        self.assertIn(COMMAND_APPROVAL_METHOD, result["codex_approval_bridge"]["supported_methods"])
+        self.assertEqual(result["codex_approval_bridge"]["sample"]["broker_action_kind"], "command")
 
         # 验证 auth_mode 子字段
         auth = result["auth_mode"]
@@ -213,6 +220,45 @@ class TestDiagnosticsCollector(unittest.TestCase):
 
         self.assertEqual(provider["api_key"], REDACTED_VALUE)
         self.assertEqual(provider["headers"]["Authorization"], REDACTED_VALUE)
+
+    @patch("diagnostics.CodexConfigManager")
+    def test_collect_all_includes_media_route_readiness_summary(self, MockMgr):
+        self._mock_codex_manager(MockMgr)
+        self.registry.list_providers.return_value = {
+            "providers": [
+                {
+                    "id": "image-provider",
+                    "enabled": True,
+                    "display_name": "Image Provider",
+                    "short_alias": "img",
+                    "base_url": "https://image.example.test/v1",
+                    "api_format": "openai_responses",
+                    "api_key": "sk-image-secret",
+                    "capabilities": {"text": True, "images": True},
+                    "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+                    "models": [{"id": "gpt-image-1", "enabled": True}],
+                }
+            ],
+            "focus_provider_id": "",
+            "store_path": "/tmp/providers.json",
+        }
+
+        result = self.collector.collect_redacted()
+
+        providers = result["providers"]
+        media_route = providers["providers"][0]["media_route"]
+        image_check = next(item for item in media_route["checks"] if item["media_kind"] == "image")
+        self.assertEqual(providers["media_route_ready_count"], 1)
+        self.assertEqual(providers["media_route_blocked_count"], 1)
+        self.assertTrue(media_route["live_forwarding_enabled"])
+        self.assertTrue(image_check["can_forward"])
+        self.assertEqual(image_check["canonical_path"], "/images/generations")
+        self.assertIn("OpenAI-compatible image media pass-through is ready", image_check["message"])
+        self.assertEqual(image_check["upstream_url"], "https://image.example.test/v1/images/generations")
+        video_check = next(item for item in media_route["checks"] if item["media_kind"] == "video")
+        self.assertEqual(video_check["error_type"], "media_capability_unsupported")
+        self.assertIn("not configured for video media requests", video_check["message"])
+        self.assertNotIn("sk-image-secret", json.dumps(result, ensure_ascii=False))
 
     @patch("diagnostics.CodexConfigManager")
     def test_export_safe_bundle_outputs_valid_json(self, MockMgr):
@@ -290,6 +336,37 @@ class TestDiagnosticsCollector(unittest.TestCase):
         self.assertEqual(req.get_header("X-trace-id"), "trace-123")
         self.assertIsNone(req.get_header("Authorization"))
         self.assertIsNone(req.get_header("X-api-key"))
+
+    @patch("urllib.request.build_opener")
+    def test_check_provider_payload_connectivity_uses_draft_without_auth_headers(self, mock_build_opener):
+        mock_resp = MagicMock()
+        mock_resp.getcode.return_value = 200
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = mock_resp
+        mock_build_opener.return_value = mock_opener
+
+        result = self.collector.check_provider_payload_connectivity({
+            "id": "draft-provider",
+            "base_url": "https://draft.example.test/v1",
+            "api_key": "secret",
+            "user_agent": "DraftUA/1.0",
+            "headers": {
+                "Authorization": "Bearer secret",
+                "X-Trace-Id": "trace-draft",
+            },
+        })
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["preview"])
+        self.assertEqual(result["provider_id"], "draft-provider")
+        req = mock_opener.open.call_args[0][0]
+        self.assertEqual(req.full_url, "https://draft.example.test/v1/models")
+        self.assertEqual(req.get_header("User-agent"), "DraftUA/1.0")
+        self.assertEqual(req.get_header("X-trace-id"), "trace-draft")
+        self.assertIsNone(req.get_header("Authorization"))
 
     @patch("urllib.request.build_opener")
     def test_check_provider_connectivity_auth_error_considered_reachable(self, mock_build_opener):

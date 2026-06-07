@@ -1,6 +1,10 @@
+import tempfile
 import unittest
+from pathlib import Path
 
+from capabilities import normalize_capabilities
 from model_catalog import UnifiedModelCatalog
+from providers import ProviderRegistry
 
 
 class UnifiedModelCatalogTest(unittest.TestCase):
@@ -225,7 +229,56 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         umc = UnifiedModelCatalog(providers)
         entry = umc.find_entry("openai/gpt-4")
         self.assertIsNotNone(entry)
-        self.assertEqual(entry["capabilities"], {"text": True, "vision": True})
+        self.assertTrue(entry["capabilities"]["text"])
+        self.assertTrue(entry["capabilities"]["vision"])
+
+    def test_entry_legacy_normalized_model_caps_do_not_mask_provider_images(self):
+        providers = [
+            {
+                "id": "p1",
+                "short_alias": "img",
+                "enabled": True,
+                "catalog_visibility": "always_visible",
+                "capabilities": {"text": False, "images": True},
+                "models": [{"id": "auto", "enabled": True, "capabilities": normalize_capabilities(None)}],
+            }
+        ]
+        umc = UnifiedModelCatalog(providers)
+        entry = umc.find_entry("img/auto")
+        self.assertIsNotNone(entry)
+        self.assertFalse(entry["capabilities"]["text"])
+        self.assertTrue(entry["capabilities"]["images"])
+
+    def test_entry_infers_images_from_media_profile(self):
+        providers = [
+            {
+                "id": "p1",
+                "short_alias": "native",
+                "enabled": True,
+                "catalog_visibility": "always_visible",
+                "api_format": "openai_responses",
+                "capabilities": {"text": True},
+                "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+                "models": [{"id": "auto", "enabled": True, "capabilities": normalize_capabilities(None)}],
+            }
+        ]
+        entry = UnifiedModelCatalog(providers).find_entry("native/auto")
+
+        self.assertIsNotNone(entry)
+        self.assertTrue(entry["capabilities"]["images"])
+
+    def test_codex_api_key_mixin_preset_advertises_images_to_catalog(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.import_preset("codex-api-key-mixin")
+
+        entry = UnifiedModelCatalog([provider]).find_entry("mix/auto")
+
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["api_format"], "openai_responses")
+        self.assertTrue(entry["capabilities"]["text"])
+        self.assertTrue(entry["capabilities"]["vision"])
+        self.assertTrue(entry["capabilities"]["images"])
 
     def test_entry_pricing_merges_model_over_provider(self):
         providers = [

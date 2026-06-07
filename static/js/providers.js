@@ -41,6 +41,8 @@ let providerState = {
     draftError: '',
     proxyStatus: null,
     responsesProbePreview: null,
+    mediaRoutePreview: null,
+    mediaAdapterPreview: null,
     quotaPreview: null,
     healthPreview: null,
 };
@@ -75,9 +77,9 @@ async function loadProvidersPage() {
     if (!providerState.selectedProviderId && providerState.providers.length) {
         providerState.selectedProviderId = providerState.providers[0].id;
     }
-    await Promise.all([refreshCatalogPreview(), refreshProxyStatus()]);
+    await Promise.all([refreshCatalogPreview(), refreshProxyStatus(), refreshSelectedQuotaCache()]);
     renderProvidersPage();
-    setStatus('Providers loaded');
+    setStatus(t('providersLoaded'));
 }
 
 async function ensureProviderData() {
@@ -95,7 +97,7 @@ async function ensureProviderData() {
         providerState.presets = presetsData.presets || [];
     } catch (err) {
         providerState.draftError = err.message;
-        showToast('加载 provider 数据失败：' + err.message, 'error');
+        showToast(t('failed') + err.message, 'error');
     }
 }
 
@@ -117,7 +119,38 @@ async function refreshCatalogPreview(focusProviderId = '') {
     try {
         providerState.catalogPreview = await api('/api/model-catalog/preview' + query);
     } catch (err) {
-        providerState.catalogPreview = { entries: [], route_explanation: ['Preview failed: ' + err.message] };
+        providerState.catalogPreview = { entries: [], route_explanation: [t('previewFailedWithError', { error: err.message })] };
+    }
+}
+
+async function refreshCatalogPreviewDraft(provider) {
+    const draft = readProviderForm(provider);
+    if (!draft) return false;
+    try {
+        providerState.catalogPreview = await api('/api/providers/' + encodeURIComponent(provider.id) + '/model-catalog/preview-draft', {
+            method: 'POST',
+            body: JSON.stringify({ provider: draft }),
+        });
+        return true;
+    } catch (err) {
+        providerState.catalogPreview = { entries: [], route_explanation: [t('draftPreviewFailedWithError', { error: err.message })] };
+        showProviderFormError(err.message);
+        return false;
+    }
+}
+
+async function refreshSelectedQuotaCache() {
+    const provider = getSelectedProvider();
+    if (!provider) {
+        providerState.quotaPreview = null;
+        return;
+    }
+    try {
+        const result = await api('/api/providers/' + encodeURIComponent(provider.id) + '/quota');
+        if (provider.id !== providerState.selectedProviderId) return;
+        providerState.quotaPreview = result && result.cache_hit ? result : null;
+    } catch (err) {
+        if (provider.id === providerState.selectedProviderId) providerState.quotaPreview = null;
     }
 }
 
@@ -146,43 +179,43 @@ function renderEnhanceOverview() {
         <div class="animate-in">
         <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
             <div>
-                <h2 class="text-2xl font-semibold text-white">Codex Enhance Manager</h2>
-                <p class="text-sm text-dark-400 mt-1">本地增强控制中心：先建立 provider registry、预览和 dry-run 护栏，再接入 UMC、AMR、proxy、media、cost。</p>
+                <h2 class="text-2xl font-semibold text-white">${escapeHtml(t('providerOverviewTitle'))}</h2>
+                <p class="text-sm text-dark-400 mt-1">${escapeHtml(t('providerOverviewDesc'))}</p>
             </div>
             <div class="enhance-status-strip">
-                ${renderStatusPill('enabled', enabledCount + ' providers enabled', 'emerald')}
-                ${renderStatusPill('dry-run', 'Codex writes are preview-only', 'amber')}
-                ${renderStatusPill('manual', 'Codex mutation tests are manual', 'accent')}
+                ${renderStatusPill('enabled', t('providersEnabled', { count: enabledCount }), 'emerald')}
+                ${renderStatusPill('preview', t('codexWritesPreviewOnly'), 'amber')}
+                ${renderStatusPill('manual', t('codexMutationManual'), 'accent')}
             </div>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-6">
-            ${renderMetricCard('Providers', providers.length, enabledCount + ' enabled')}
-            ${renderMetricCard('Always Visible', alwaysVisible, 'UMC pinned providers')}
-            ${renderMetricCard('Selected Models', selectedModels, 'visible model picks')}
-            ${renderMetricCard('Media Profiles', mediaProviders, 'image/video defaults')}
+            ${renderMetricCard(t('providersLabel'), providers.length, t('enabledCountSub', { count: enabledCount }))}
+            ${renderMetricCard(t('alwaysVisibleMetric'), alwaysVisible, t('umcPinnedProviders'))}
+            ${renderMetricCard(t('selectedModelsMetric'), selectedModels, t('visibleModelPicks'))}
+            ${renderMetricCard(t('mediaProfilesMetric'), mediaProviders, t('imageVideoDefaults'))}
         </div>
 
         <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mt-6">
             <div class="card xl:col-span-2">
                 <div class="flex items-center justify-between gap-3">
-                    <h3 class="card-title">Implementation Shell</h3>
-                    <button onclick="navigateTo('quick-setup')" class="btn btn-secondary text-xs">Quick Setup</button>
+                    <h3 class="card-title">${escapeHtml(t('implementationShell'))}</h3>
+                    <button onclick="navigateTo('quick-setup')" class="btn btn-secondary text-xs">${escapeHtml(t('quickSetup'))}</button>
                 </div>
                 <div class="enhance-step-list mt-3">
-                    ${renderStepRow('Provider Registry', '本地 JSON registry、schema version、CRUD、preset import、secret redaction。', true)}
-                    ${renderStepRow('Unified Model Catalog Preview', '常驻显示、选中模型、focus provider 的最终 catalog 预览。', true)}
-                    ${renderStepRow('Codex Config Diff Preview', '预留入口；真实写入前必须有 diff、backup、rollback。', false)}
-                    ${renderStepRow('Route Simulator', 'Read-only AMR capability/context simulation with route explanation.', true)}
+                    ${renderStepRow(t('providerRegistry'), t('providerRegistryDesc'), true)}
+                    ${renderStepRow(t('catalogPreviewTitle'), t('catalogPreviewDesc'), true)}
+                    ${renderStepRow(t('codexConfigPreviewTitle'), t('codexConfigPreviewDesc'), false)}
+                    ${renderStepRow(t('routeSimulator'), t('routeSimulatorDesc'), true)}
                 </div>
             </div>
             <div class="card">
-                <h3 class="card-title">Guardrails</h3>
+                <h3 class="card-title">${escapeHtml(t('guardrails'))}</h3>
                 <div class="space-y-3 mt-3 text-sm text-dark-300">
-                    <div class="guardrail-line stagger-item">读取型 Codex 检查可以在本窗口执行。</div>
-                    <div class="guardrail-line stagger-item">会修改 Codex 状态的测试由用户手动执行。</div>
-                    <div class="guardrail-line stagger-item">协议转换不猜测，先查官方源码和供应商文档。</div>
-                    <div class="guardrail-line stagger-item">API key 只进本地配置，UI 和诊断默认脱敏。</div>
+                    <div class="guardrail-line stagger-item">${escapeHtml(t('guardrailReadOnly'))}</div>
+                    <div class="guardrail-line stagger-item">${escapeHtml(t('guardrailManualMutation'))}</div>
+                    <div class="guardrail-line stagger-item">${escapeHtml(t('guardrailNoGuess'))}</div>
+                    <div class="guardrail-line stagger-item">${escapeHtml(t('guardrailSecretsLocal'))}</div>
                 </div>
             </div>
         </div>
@@ -213,32 +246,32 @@ function renderQuickSetup() {
         <div class="animate-in">
         <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
             <div>
-                <h2 class="text-2xl font-semibold text-white">Quick Setup</h2>
-                <p class="text-sm text-dark-400 mt-1">Preset-first flow：先导入预设，再在 Providers 页面补 base URL、key、模型和高级字段。</p>
+                <h2 class="text-2xl font-semibold text-white">${escapeHtml(t('quickSetup'))}</h2>
+                <p class="text-sm text-dark-400 mt-1">${escapeHtml(t('quickSetupDesc'))}</p>
             </div>
             <div class="enhance-status-strip">
-                ${renderStatusPill('preview', 'No Codex files are written', 'amber')}
-                ${renderStatusPill('test', 'Tests validate current section only', 'emerald')}
+                ${renderStatusPill('preview', t('noCodexFilesWritten'), 'amber')}
+                ${renderStatusPill('test', t('testsCurrentSectionOnly'), 'emerald')}
             </div>
         </div>
 
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-6">
             <div class="card">
-                <h3 class="card-title">Generic Presets</h3>
-                <div class="preset-list mt-3">${generic.map(renderPresetCard).join('') || renderEmptyState('No generic presets')}</div>
+                <h3 class="card-title">${escapeHtml(t('genericPresets'))}</h3>
+                <div class="preset-list mt-3">${generic.map(renderPresetCard).join('') || renderEmptyState(t('noGenericPresets'))}</div>
             </div>
             <div class="card">
-                <h3 class="card-title">Domestic Media/Text Presets</h3>
-                <div class="preset-list mt-3">${domestic.map(renderPresetCard).join('') || renderEmptyState('No domestic presets')}</div>
+                <h3 class="card-title">${escapeHtml(t('domesticPresets'))}</h3>
+                <div class="preset-list mt-3">${domestic.map(renderPresetCard).join('') || renderEmptyState(t('noDomesticPresets'))}</div>
             </div>
         </div>
 
         <div class="card mt-4">
-            <h3 class="card-title">Next Steps</h3>
+            <h3 class="card-title">${escapeHtml(t('nextSteps'))}</h3>
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
-                ${renderPreviewTile('1', 'Import a preset', 'Creates a local provider record with redacted secret handling.')}
-                ${renderPreviewTile('2', 'Edit provider', 'Set alias, currency, visibility, User-Agent, models, media profile.')}
-                ${renderPreviewTile('3', 'Preview catalog', 'See final UMC catalog before any future Codex config write.')}
+                ${renderPreviewTile('1', t('importPreset'), t('importPresetDesc'))}
+                ${renderPreviewTile('2', t('editProviderStep'), t('editProviderDesc'))}
+                ${renderPreviewTile('3', t('previewCatalogStep'), t('previewCatalogDesc'))}
             </div>
         </div>
     `;
@@ -269,29 +302,29 @@ function renderProvidersPage() {
         <div class="animate-in">
         <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
             <div>
-                <h2 class="text-2xl font-semibold text-white">Providers</h2>
-                <p class="text-sm text-dark-400 mt-1">管理本地 provider registry。这里的 Test 是本地校验，不触发真实 provider 请求，也不写 Codex 配置。</p>
+                <h2 class="text-2xl font-semibold text-white">${escapeHtml(t('providersPageTitle'))}</h2>
+                <p class="text-sm text-dark-400 mt-1">${escapeHtml(t('providersPageDesc'))}</p>
             </div>
             <div class="flex flex-wrap gap-2">
-                <button onclick="createBlankProvider()" class="btn btn-primary">New Provider</button>
-                <button onclick="exportProviderBundle()" class="btn btn-secondary">Export Redacted</button>
+                <button onclick="createBlankProvider()" class="btn btn-primary">${escapeHtml(t('newProvider'))}</button>
+                <button onclick="exportProviderBundle()" class="btn btn-secondary">${escapeHtml(t('exportRedacted'))}</button>
             </div>
         </div>
 
         <div class="grid grid-cols-1 2xl:grid-cols-[320px_1fr_420px] gap-4 mt-6">
             <div class="space-y-4">
                 <div class="card">
-                    <h3 class="card-title">Provider List</h3>
+                    <h3 class="card-title">${escapeHtml(t('providerList'))}</h3>
                     <div class="space-y-2 mt-3">
-                        ${providers.map(renderProviderListItem).join('') || renderEmptyState('No providers yet. Import a preset or create one.')}
+                        ${providers.map(renderProviderListItem).join('') || renderEmptyState(t('noProvidersYet'))}
                     </div>
                 </div>
                 <div class="card">
-                    <h3 class="card-title">Preset Import</h3>
+                    <h3 class="card-title">${escapeHtml(t('presetImport'))}</h3>
                     <div class="space-y-2 mt-3">
                         ${(providerState.presets || []).slice(0, 6).map(renderCompactPresetButton).join('')}
                     </div>
-                    <button onclick="navigateTo('quick-setup')" class="btn btn-ghost text-xs mt-3">Open full wizard</button>
+                    <button onclick="navigateTo('quick-setup')" class="btn btn-ghost text-xs mt-3">${escapeHtml(t('openFullWizard'))}</button>
                 </div>
                 ${renderProxyControlCard()}
             </div>
@@ -300,11 +333,8 @@ function renderProvidersPage() {
                 ${selected ? renderProviderEditor(selected) : renderEmptyProviderEditor()}
             </div>
 
-            <div class="space-y-4">
-                ${renderCatalogPreviewPanel()}
-                ${renderProxyRouteTestCard()}
-                ${renderRouteSimulatorShell()}
-                ${renderCodexDiffPreviewShell()}
+            <div id="provider-side-panel-root" class="space-y-4">
+                ${renderProviderSidePanel()}
             </div>
         </div>
         </div>
@@ -313,6 +343,26 @@ function renderProvidersPage() {
     if (typeof attachRippleToButtons === 'function') attachRippleToButtons(root);
     syncApprovalModeControls();
     syncMediaModeControls();
+}
+
+function renderProviderSidePanel() {
+    return `
+        ${renderCatalogPreviewPanel()}
+        ${renderProxyRouteTestCard()}
+        ${renderRouteSimulatorShell()}
+        ${renderCodexDiffPreviewShell()}
+    `;
+}
+
+function refreshProviderSidePanel() {
+    const root = document.getElementById('provider-side-panel-root');
+    if (!root) {
+        renderProvidersPage();
+        return;
+    }
+    root.innerHTML = renderProviderSidePanel();
+    if (typeof triggerStaggerAnimations === 'function') triggerStaggerAnimations(root);
+    if (typeof attachRippleToButtons === 'function') attachRippleToButtons(root);
 }
 
 function renderProviderListItem(provider) {
@@ -329,10 +379,10 @@ function renderProviderListItem(provider) {
     const active = provider.id === providerState.selectedProviderId;
     const error = provider.status && provider.status.last_error;
     const visOptions = [
-        { value: 'hidden', label: 'hidden' },
-        { value: 'focused_only', label: 'focused' },
-        { value: 'always_visible', label: 'always' },
-        { value: 'selected_models', label: 'selected' },
+        { value: 'hidden', label: t('catalogVisibilityHidden') },
+        { value: 'focused_only', label: t('catalogVisibilityFocused') },
+        { value: 'always_visible', label: t('catalogVisibilityAlways') },
+        { value: 'selected_models', label: t('catalogVisibilitySelected') },
     ];
     const visSelect = `
         <select
@@ -395,7 +445,7 @@ function renderProviderEditor(provider) {
         <div class="card">
             <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
                 <div>
-                    <h3 class="card-title">Edit Provider</h3>
+                    <h3 class="card-title">${escapeHtml(t('editProvider'))}</h3>
                     <div class="text-xs text-dark-500 font-mono">${escapeHtml(provider.id)}</div>
                 </div>
                 ${renderProviderStatusStrip(provider)}
@@ -404,10 +454,10 @@ function renderProviderEditor(provider) {
             <div id="provider-form-error" class="hidden mt-3 text-sm text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-3"></div>
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                ${renderInput('provider-display-name', 'Display Name', provider.display_name)}
-                ${renderInput('provider-short-alias', 'Short Alias', provider.short_alias)}
-                ${renderInput('provider-base-url', 'Base URL', provider.base_url)}
-                ${renderSelect('provider-api-format', 'API Format', provider.api_format, [
+                ${renderInput('provider-display-name', t('displayName'), provider.display_name)}
+                ${renderInput('provider-short-alias', t('shortAlias'), provider.short_alias)}
+                ${renderInput('provider-base-url', t('baseUrl'), provider.base_url)}
+                ${renderSelect('provider-api-format', t('apiFormat'), provider.api_format, [
                     'openai_responses',
                     'openai_chat',
                     'openai_images',
@@ -416,9 +466,9 @@ function renderProviderEditor(provider) {
                     'anthropic',
                     'custom',
                 ], 'syncMediaModeControls(true)')}
-                ${renderInput('provider-country-region', 'Country / Region', provider.country_region)}
-                ${renderInput('provider-native-currency', 'Native Currency', provider.native_currency)}
-                ${renderSelect('provider-visibility', 'Catalog Visibility', provider.catalog_visibility, [
+                ${renderInput('provider-country-region', t('countryRegion'), provider.country_region)}
+                ${renderInput('provider-native-currency', t('nativeCurrency'), provider.native_currency)}
+                ${renderSelect('provider-visibility', t('catalogVisibility'), provider.catalog_visibility, [
                     'hidden',
                     'focused_only',
                     'always_visible',
@@ -430,19 +480,19 @@ function renderProviderEditor(provider) {
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                 <label class="flex items-center gap-2 text-sm cursor-pointer">
                     <input id="provider-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${provider.enabled ? 'checked' : ''}>
-                    <span>Enabled</span>
+                    <span>${escapeHtml(t('enabledLabel'))}</span>
                 </label>
                 <label class="flex items-center gap-2 text-sm cursor-pointer">
                     <input id="provider-fallback-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${provider.fallback_enabled ? 'checked' : ''}>
-                    <span>Fallback Enabled</span>
+                    <span>${escapeHtml(t('fallbackEnabled'))}</span>
                 </label>
             </div>
 
             <details class="advanced-box mt-4">
-                <summary>Advanced</summary>
+                <summary>${escapeHtml(t('advanced'))}</summary>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderInput('provider-api-key', 'API Key', provider.api_key || '', 'password')}
-                    ${renderSelect('provider-auth-mode', 'Auth Mode', provider.auth_mode, [
+                    ${renderInput('provider-api-key', t('apiKey'), provider.api_key || '', 'password')}
+                    ${renderSelect('provider-auth-mode', t('authMode'), provider.auth_mode, [
                         'provider_api_key',
                         'global_auth_json',
                         'official_oauth',
@@ -450,126 +500,157 @@ function renderProviderEditor(provider) {
                     ])}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderTextarea('provider-headers-json', 'Headers JSON', JSON.stringify(provider.headers || {}, null, 2), 7)}
-                    ${renderTextarea('provider-models-text', 'Models (id|display|context|selected)', modelsText, 7)}
+                    ${renderTextarea('provider-headers-json', t('headersJson'), JSON.stringify(provider.headers || {}, null, 2), 7)}
+                    ${renderTextarea('provider-models-text', t('modelsText'), modelsText, 7)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderTextarea('provider-aliases-json', 'Model Aliases JSON', JSON.stringify(provider.aliases || {}, null, 2), 6)}
-                    ${renderTextarea('provider-alias-patterns-json', 'Regex Rewrite Patterns JSON', JSON.stringify(provider.alias_patterns || [], null, 2), 6)}
+                    ${renderTextarea('provider-aliases-json', t('modelAliasesJson'), JSON.stringify(provider.aliases || {}, null, 2), 6)}
+                    ${renderTextarea('provider-alias-patterns-json', t('regexRewritePatternsJson'), JSON.stringify(provider.alias_patterns || [], null, 2), 6)}
                 </div>
                 <div class="mt-4">
-                    <div class="text-xs text-dark-400 mb-2">Proxy Network Policy</div>
+                    <div class="text-xs text-dark-400 mb-2">${escapeHtml(t('proxyNetworkPolicy'))}</div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        ${renderCapabilityToggle('proxy-bypass-system-proxy', 'Bypass System Proxy', proxyProfile.bypass_system_proxy !== false)}
-                        ${renderInput('proxy-upstream-timeout', 'Upstream Timeout Seconds (0 = global)', proxyProfile.upstream_timeout_seconds || 0, 'number')}
-                        ${renderInput('proxy-retry-attempts', 'Retry Attempts (0 = global)', proxyProfile.retry_attempts || 0, 'number')}
-                        ${renderInput('proxy-retry-backoff-ms', 'Retry Backoff ms (0 = global)', proxyProfile.retry_backoff_ms || 0, 'number')}
+                        ${renderCapabilityToggle('proxy-bypass-system-proxy', t('bypassSystemProxy'), proxyProfile.bypass_system_proxy !== false)}
+                        ${renderInput('proxy-upstream-timeout', t('upstreamTimeoutSeconds'), proxyProfile.upstream_timeout_seconds || 0, 'number')}
+                        ${renderInput('proxy-retry-attempts', t('retryAttempts'), proxyProfile.retry_attempts || 0, 'number')}
+                        ${renderInput('proxy-retry-backoff-ms', t('retryBackoffMs'), proxyProfile.retry_backoff_ms || 0, 'number')}
                     </div>
                 </div>
                 <div class="flex flex-wrap gap-2 mt-3">
-                    <button data-bulk-action="select_all" onclick="runBulkModelAction('select_all')" class="btn btn-secondary text-xs">全选</button>
-                    <button data-bulk-action="deselect_all" onclick="runBulkModelAction('deselect_all')" class="btn btn-secondary text-xs">全不选</button>
-                    <button data-bulk-action="select_vision" onclick="runBulkModelAction('select_vision')" class="btn btn-secondary text-xs">只选 Vision</button>
-                    <button data-bulk-action="select_high_context" onclick="runBulkModelAction('select_high_context')" class="btn btn-secondary text-xs">只选高上下文</button>
-                    <button data-bulk-action="select_low_cost" onclick="runBulkModelAction('select_low_cost')" class="btn btn-secondary text-xs">只选低成本</button>
-                    <button data-bulk-action="add_selected_to_amr" onclick="addSelectedModelsToAmr()" class="btn btn-secondary text-xs">加入 AMR</button>
+                    <button data-bulk-action="select_all" onclick="runBulkModelAction('select_all')" class="btn btn-secondary text-xs">${escapeHtml(t('selectAll'))}</button>
+                    <button data-bulk-action="deselect_all" onclick="runBulkModelAction('deselect_all')" class="btn btn-secondary text-xs">${escapeHtml(t('deselectAll'))}</button>
+                    <button data-bulk-action="select_vision" onclick="runBulkModelAction('select_vision')" class="btn btn-secondary text-xs">${escapeHtml(t('selectVision'))}</button>
+                    <button data-bulk-action="select_high_context" onclick="runBulkModelAction('select_high_context')" class="btn btn-secondary text-xs">${escapeHtml(t('selectHighContext'))}</button>
+                    <button data-bulk-action="select_low_cost" onclick="runBulkModelAction('select_low_cost')" class="btn btn-secondary text-xs">${escapeHtml(t('selectLowCost'))}</button>
+                    <button data-bulk-action="add_selected_to_amr" onclick="addSelectedModelsToAmr()" class="btn btn-secondary text-xs">${escapeHtml(t('addToAmr'))}</button>
                 </div>
                 <div id="bulk-action-error" class="hidden mt-2 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2"></div>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
-                    ${renderCapabilityToggle('cap-text', 'Text', provider.capabilities.text)}
-                    ${renderCapabilityToggle('cap-vision', 'Vision Input', provider.capabilities.vision)}
-                    ${renderCapabilityToggle('cap-tools', 'Tools', provider.capabilities.tools)}
-                    ${renderCapabilityToggle('cap-custom-tools', 'Custom Tools', provider.capabilities.custom_tools)}
-                    ${renderCapabilityToggle('cap-reasoning', 'Reasoning', provider.capabilities.reasoning)}
-                    ${renderCapabilityToggle('cap-images', 'Images', provider.capabilities.images)}
-                    ${renderCapabilityToggle('cap-videos', 'Videos', provider.capabilities.videos)}
+                    ${renderCapabilityToggle('cap-text', t('textCapability'), provider.capabilities.text)}
+                    ${renderCapabilityToggle('cap-vision', t('visionInputCapability'), provider.capabilities.vision)}
+                    ${renderCapabilityToggle('cap-tools', t('toolsCapability'), provider.capabilities.tools)}
+                    ${renderCapabilityToggle('cap-custom-tools', t('customToolsCapability'), provider.capabilities.custom_tools)}
+                    ${renderCapabilityToggle('cap-reasoning', t('reasoningCapability'), provider.capabilities.reasoning)}
+                    ${renderCapabilityToggle('cap-images', t('imagesCapability'), provider.capabilities.images, 'syncMediaModeControls(true)')}
+                    ${renderCapabilityToggle('cap-videos', t('videosCapability'), provider.capabilities.videos, 'syncMediaModeControls(true)')}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
-                    ${renderCapabilityToggle('responses-domestic', 'Domestic Responses', provider.responses_profile && provider.responses_profile.domestic_responses)}
-                    ${renderCapabilityToggle('responses-partial', 'Partial Responses Compatibility', provider.responses_profile && provider.responses_profile.partial_compatibility)}
-                    ${renderCapabilityToggle('responses-requires-adapter', 'Responses Adapter Required', provider.responses_profile && provider.responses_profile.requires_adapter)}
+                    ${renderCapabilityToggle('responses-domestic', t('domesticResponses'), provider.responses_profile && provider.responses_profile.domestic_responses)}
+                    ${renderCapabilityToggle('responses-partial', t('partialResponsesCompatibility'), provider.responses_profile && provider.responses_profile.partial_compatibility)}
+                    ${renderCapabilityToggle('responses-requires-adapter', t('responsesAdapterRequired'), provider.responses_profile && provider.responses_profile.requires_adapter)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderInput('responses-profile-id', 'Responses Profile ID', provider.responses_profile && provider.responses_profile.profile_id)}
-                    ${renderInput('responses-docs-url', 'Responses Docs URL', provider.responses_profile && provider.responses_profile.verified_docs_url)}
-                    ${renderInput('responses-unsupported', 'Unsupported Fields', provider.responses_profile && (provider.responses_profile.unsupported_fields || []).join(', '))}
+                    ${renderInput('responses-profile-id', t('responsesProfileId'), provider.responses_profile && provider.responses_profile.profile_id)}
+                    ${renderInput('responses-docs-url', t('responsesDocsUrl'), provider.responses_profile && provider.responses_profile.verified_docs_url)}
+                    ${renderInput('responses-unsupported', t('unsupportedFields'), provider.responses_profile && (provider.responses_profile.unsupported_fields || []).join(', '))}
                 </div>
                 ${renderApprovalModeSegment(approvalProfile)}
                 <div id="approval-auto-fields" class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 ${approvalModeFromProfile(approvalProfile) === 'proxy_auto_approve' ? '' : 'hidden'}">
-                    ${renderInput('approval-reviewer-model', 'Reviewer Model', approvalProfile.reviewer_model || '')}
-                    ${renderInput('approval-allowed-actions', 'Allowed Actions', (approvalProfile.allowed_actions || []).join(', '))}
-                    ${renderSelect('approval-error-policy', 'Review Error Policy', approvalProfile.on_review_error || 'decline', [
+                    ${renderInput('approval-reviewer-model', t('reviewerModel'), approvalProfile.reviewer_model || '')}
+                    ${renderInput('approval-allowed-actions', t('allowedActions'), (approvalProfile.allowed_actions || []).join(', '))}
+                    ${renderSelect('approval-error-policy', t('reviewErrorPolicy'), approvalProfile.on_review_error || 'decline', [
                         'decline',
                         'ask_user',
                         'allow',
                     ])}
-                    ${renderInput('approval-timeout-ms', 'Timeout ms', approvalProfile.timeout_ms || 90000, 'number')}
-                    ${renderInput('approval-max-retries', 'Max Retries', approvalProfile.max_retries || 1, 'number')}
-                    ${renderCapabilityToggle('approval-audit-decisions', 'Audit Decisions', approvalProfile.audit_decisions !== false)}
-                    ${renderCapabilityToggle('approval-auto-accept-low-risk', 'Auto Accept Low Risk', approvalProfile.auto_accept_low_risk !== false)}
-                    ${renderCapabilityToggle('approval-auto-decline-high-risk', 'Auto Decline High Risk', approvalProfile.auto_decline_high_risk !== false)}
+                    ${renderInput('approval-timeout-ms', t('timeoutMs'), approvalProfile.timeout_ms || 90000, 'number')}
+                    ${renderInput('approval-max-retries', t('maxRetries'), approvalProfile.max_retries || 1, 'number')}
+                    ${renderCapabilityToggle('approval-audit-decisions', t('auditDecisions'), approvalProfile.audit_decisions !== false)}
+                    ${renderCapabilityToggle('approval-auto-accept-low-risk', t('autoAcceptLowRisk'), approvalProfile.auto_accept_low_risk !== false)}
+                    ${renderCapabilityToggle('approval-auto-decline-high-risk', t('autoDeclineHighRisk'), approvalProfile.auto_decline_high_risk !== false)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4">
-                    ${renderCapabilityToggle('media-default-image', 'Default Image Provider', mediaProfile.default_image_provider)}
-                    ${renderCapabilityToggle('media-default-video', 'Default Video Provider', mediaProfile.default_video_provider)}
+                    ${renderCapabilityToggle('media-default-image', t('defaultImageProvider'), mediaProfile.default_image_provider, 'syncMediaModeControls(true)')}
+                    ${renderCapabilityToggle('media-default-video', t('defaultVideoProvider'), mediaProfile.default_video_provider, 'syncMediaModeControls(true)')}
                 </div>
                 ${renderMediaModeSegment(mediaProfile)}
+                ${renderMediaRoutingHint(provider)}
                 <div id="media-async-fields" class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4 ${showMediaAsyncFields ? '' : 'hidden'}">
-                    ${renderCapabilityToggle('media-async-submit', 'Async Submit', mediaProfile.async_submit)}
-                    ${renderCapabilityToggle('media-poll-required', 'Poll Required', mediaProfile.poll_required)}
-                    ${renderCapabilityToggle('media-cancel-supported', 'Cancel Supported', mediaProfile.cancel_supported)}
+                    ${renderCapabilityToggle('media-async-submit', t('asyncSubmit'), mediaProfile.async_submit)}
+                    ${renderCapabilityToggle('media-poll-required', t('pollRequired'), mediaProfile.poll_required)}
+                    ${renderCapabilityToggle('media-cancel-supported', t('cancelSupported'), mediaProfile.cancel_supported)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderTextarea('media-image-overrides-json', 'Image Model Overrides JSON', JSON.stringify(mediaProfile.image_model_overrides || {}, null, 2), 5)}
-                    ${renderTextarea('media-video-overrides-json', 'Video Model Overrides JSON', JSON.stringify(mediaProfile.video_model_overrides || {}, null, 2), 5)}
+                    ${renderTextarea('media-image-overrides-json', t('imageOverridesJson'), JSON.stringify(mediaProfile.image_model_overrides || {}, null, 2), 5)}
+                    ${renderTextarea('media-video-overrides-json', t('videoOverridesJson'), JSON.stringify(mediaProfile.video_model_overrides || {}, null, 2), 5)}
                 </div>
                 <div class="mt-4">
-                    ${renderTextarea('provider-quota-json', 'Quota Check JSON', JSON.stringify(provider.quota_check || {}, null, 2), 8)}
+                    ${renderTextarea('provider-quota-json', t('quotaCheckJson'), JSON.stringify(provider.quota_check || {}, null, 2), 8)}
                 </div>
             </details>
 
             <div class="flex flex-wrap gap-2 mt-5">
-                <button onclick="saveSelectedProvider()" class="btn btn-primary">Save Local Provider</button>
-                <button onclick="testSelectedProvider()" class="btn btn-secondary">Test This Section</button>
-                <button onclick="checkProviderHealth()" class="btn btn-secondary">Check Network</button>
-                <button onclick="previewResponsesProbe()" class="btn btn-secondary">Responses Probe Preview</button>
-                <button onclick="refreshProviderQuota()" class="btn btn-secondary">Refresh Quota</button>
-                <button onclick="previewProviderDraft()" class="btn btn-ghost">Preview Draft</button>
-                <button onclick="deleteSelectedProvider()" class="btn btn-danger">Delete</button>
+                <button onclick="saveSelectedProvider()" class="btn btn-primary">${escapeHtml(t('saveLocalProvider'))}</button>
+                <button onclick="testSelectedProvider()" class="btn btn-secondary">${escapeHtml(t('testThisSection'))}</button>
+                <button onclick="checkProviderHealth()" class="btn btn-secondary">${escapeHtml(t('checkNetwork'))}</button>
+                <button onclick="previewResponsesProbe()" class="btn btn-secondary">${escapeHtml(t('responsesProbePreview'))}</button>
+                <button onclick="previewMediaRoutes()" class="btn btn-secondary">${escapeHtml(t('mediaRouteCheck'))}</button>
+                <button onclick="previewMediaAdapter()" class="btn btn-secondary">${escapeHtml(t('mediaAdapterPreview'))}</button>
+                <button onclick="refreshProviderQuota()" class="btn btn-secondary">${escapeHtml(t('refreshQuota'))}</button>
+                <button onclick="previewProviderDraft()" class="btn btn-ghost">${escapeHtml(t('previewDraft'))}</button>
+                <button onclick="deleteSelectedProvider()" class="btn btn-danger">${escapeHtml(t('deleteAction'))}</button>
             </div>
         </div>
 
+        <div id="provider-preview-panels-root" class="space-y-4">
+            ${renderProviderPreviewPanels()}
+        </div>
+    `;
+}
+
+function renderProviderPreviewPanels() {
+    return `
         <div id="provider-draft-preview" class="card hidden">
-            <h3 class="card-title">Draft Preview</h3>
+            <h3 class="card-title">${escapeHtml(t('draftPreview'))}</h3>
             <pre class="preview-code mt-3"></pre>
         </div>
 
         <div id="provider-responses-probe-preview" class="card ${providerState.responsesProbePreview ? '' : 'hidden'}">
-            <h3 class="card-title">Responses Probe Preview</h3>
-            <p class="text-xs text-dark-400 mt-1">Dry-run only: no network request, no Codex mutation.</p>
+            <h3 class="card-title">${escapeHtml(t('responsesProbePreview'))}</h3>
+            <p class="text-xs text-dark-400 mt-1">${escapeHtml(t('noNetworkNoCodexMutation'))}</p>
             <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.responsesProbePreview || {}, null, 2))}</pre>
         </div>
 
+        <div id="provider-media-adapter-preview" class="card ${providerState.mediaAdapterPreview ? '' : 'hidden'}">
+            <h3 class="card-title">${escapeHtml(t('mediaAdapterPreview'))}</h3>
+            <p class="text-xs text-dark-400 mt-1">${escapeHtml(t('adapterPreviewDesc'))}</p>
+            ${renderProviderMediaAdapterResult(providerState.mediaAdapterPreview)}
+        </div>
+
+        <div id="provider-media-route-preview" class="card ${providerState.mediaRoutePreview ? '' : 'hidden'}">
+            <h3 class="card-title">${escapeHtml(t('mediaRouteCheck'))}</h3>
+            <p class="text-xs text-dark-400 mt-1">${escapeHtml(t('mediaRouteCheckDesc'))}</p>
+            ${renderProviderMediaRouteResult(providerState.mediaRoutePreview)}
+        </div>
+
         <div id="provider-quota-preview" class="card ${providerState.quotaPreview ? '' : 'hidden'}">
-            <h3 class="card-title">Quota Preview</h3>
-            <p class="text-xs text-dark-400 mt-1">Manual provider-section test. Uses provider quota_check and returns redacted results.</p>
-            <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.quotaPreview || {}, null, 2))}</pre>
+            <h3 class="card-title">${escapeHtml(t('quotaPreview'))}</h3>
+            <p class="text-xs text-dark-400 mt-1">${escapeHtml(t('quotaPreviewDesc'))}</p>
+            ${renderProviderQuotaResult(providerState.quotaPreview)}
         </div>
 
         <div id="provider-health-preview" class="card ${providerState.healthPreview ? '' : 'hidden'}">
-            <h3 class="card-title">Provider Health Check</h3>
-            <p class="text-xs text-dark-400 mt-1">Section-local network probe. Sends HEAD only and strips credential headers.</p>
+            <h3 class="card-title">${escapeHtml(t('providerHealthCheck'))}</h3>
+            <p class="text-xs text-dark-400 mt-1">${escapeHtml(t('providerHealthDesc'))}</p>
             ${renderProviderHealthResult(providerState.healthPreview)}
             <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.healthPreview || {}, null, 2))}</pre>
         </div>
     `;
 }
 
+function refreshProviderPreviewPanels() {
+    const root = document.getElementById('provider-preview-panels-root');
+    if (!root) return;
+    root.innerHTML = renderProviderPreviewPanels();
+    if (typeof triggerStaggerAnimations === 'function') triggerStaggerAnimations(root);
+    if (typeof attachRippleToButtons === 'function') attachRippleToButtons(root);
+}
+
 function renderEmptyProviderEditor() {
     return `
         <div class="card">
-            <h3 class="card-title">Edit Provider</h3>
-            ${renderEmptyState('Create or import a provider to edit local registry settings.')}
+            <h3 class="card-title">${escapeHtml(t('editProvider'))}</h3>
+            ${renderEmptyState(t('providerEmptyEdit'))}
         </div>
     `;
 }
@@ -582,10 +663,10 @@ function renderProviderStatusStrip(provider) {
     const status = provider.status || {};
     return `
         <div class="enhance-status-strip">
-            ${renderStatusPill(provider.enabled ? 'enabled' : 'disabled', provider.enabled ? 'enabled' : 'disabled', provider.enabled ? 'emerald' : 'dark')}
-            ${renderStatusPill('tested', status.last_tested ? 'last tested ' + formatShortDate(status.last_tested) : 'not tested', status.last_tested ? 'accent' : 'dark')}
-            ${renderStatusPill('restart', status.needs_restart ? 'needs restart' : 'no restart', status.needs_restart ? 'amber' : 'emerald')}
-            ${status.last_error ? renderStatusPill('error', 'has error', 'red') : ''}
+            ${renderStatusPill(provider.enabled ? 'enabled' : 'disabled', provider.enabled ? t('enabledLabel') : t('disabled'), provider.enabled ? 'emerald' : 'dark')}
+            ${renderStatusPill('tested', status.last_tested ? t('lastTested', { value: formatShortDate(status.last_tested) }) : t('notTested'), status.last_tested ? 'accent' : 'dark')}
+            ${renderStatusPill('restart', status.needs_restart ? t('needsRestart') : t('noRestart'), status.needs_restart ? 'amber' : 'emerald')}
+            ${status.last_error ? renderStatusPill('error', t('hasError'), 'red') : ''}
         </div>
     `;
 }
@@ -595,10 +676,10 @@ function renderProviderHealthResult(result) {
     const reachable = Boolean(result.reachable);
     const success = Boolean(result.success);
     const tone = success ? 'emerald' : (reachable ? 'amber' : 'red');
-    const label = success ? 'reachable' : (reachable ? 'reachable with error' : 'unreachable');
-    const status = result.status_code ? `HTTP ${result.status_code}` : 'no status';
+    const label = success ? t('reachable') : (reachable ? t('reachableWithError') : t('unreachable'));
+    const status = result.status_code ? `HTTP ${result.status_code}` : t('noStatus');
     const target = result.url || (Array.isArray(result.urls_tested) ? result.urls_tested.join(', ') : '');
-    const message = result.note || result.error || 'No details returned.';
+    const message = result.note || result.error || t('noDetailsReturned');
     return `
         <div class="enhance-status-strip mt-3">
             ${renderStatusPill('network', label, tone)}
@@ -610,10 +691,166 @@ function renderProviderHealthResult(result) {
     `;
 }
 
+function renderProviderMediaAdapterResult(result) {
+    if (!result) return '';
+    const previews = Array.isArray(result.previews) ? result.previews : [];
+    const modeLabel = result.openai_compatible_media ? t('adapterModeReady') : (result.adapter_required ? t('adapterModeRequired') : t('adapterModePreview'));
+    return `
+        <div class="enhance-status-strip mt-3">
+            ${renderStatusPill('adapter', result.adapter_id || t('adapterUnknown'), result.adapter_id ? 'accent' : 'amber')}
+            ${renderStatusPill('mode', modeLabel, result.adapter_required ? 'amber' : 'dark')}
+            ${renderStatusPill('live', result.live_forwarding_enabled ? t('liveEnabled') : t('previewOnly'), result.live_forwarding_enabled ? 'emerald' : 'amber')}
+        </div>
+        <div class="space-y-2 mt-3">
+            ${previews.map(renderMediaAdapterPreviewItem).join('') || renderEmptyState(t('noAdapterPreview'))}
+        </div>
+        <details class="mt-3">
+            <summary class="text-xs text-dark-400 cursor-pointer">${escapeHtml(t('rawAdapterPreview'))}</summary>
+            <pre class="preview-code mt-2">${escapeHtml(JSON.stringify(result, null, 2))}</pre>
+        </details>
+    `;
+}
+
+function renderProviderMediaRouteResult(result) {
+    if (!result) return '';
+    const checks = Array.isArray(result.checks) ? result.checks : [];
+    return `
+        <div class="enhance-status-strip mt-3">
+            ${renderStatusPill('forwarding', result.live_forwarding_enabled ? t('forwardingReady') : t('forwardingBlocked'), result.live_forwarding_enabled ? 'emerald' : 'amber')}
+            ${renderStatusPill('ready', String(result.ready_count || 0), result.ready_count ? 'emerald' : 'dark')}
+            ${renderStatusPill('blocked', String(result.blocked_count || 0), result.blocked_count ? 'amber' : 'dark')}
+            ${renderStatusPill('format', result.api_format || t('formatUnknown'), 'dark')}
+        </div>
+        <div class="space-y-2 mt-3">
+            ${checks.map(renderMediaRouteCheckItem).join('') || renderEmptyState(t('noMediaRouteChecks'))}
+        </div>
+        <details class="mt-3">
+            <summary class="text-xs text-dark-400 cursor-pointer">${escapeHtml(t('rawMediaReadiness'))}</summary>
+            <pre class="preview-code mt-2">${escapeHtml(JSON.stringify(result, null, 2))}</pre>
+        </details>
+    `;
+}
+
+function renderMediaRouteCheckItem(item) {
+    const ready = Boolean(item && item.can_forward);
+    const proxyPaths = Array.isArray(item.proxy_paths) ? item.proxy_paths : [];
+    const title = `${providerMediaKindLabel(item.media_kind)} ${item.operation || t('routeFilter')}`;
+    const message = item.message || (ready ? t('routeCanForward') : t('routeBlocked'));
+    return `
+        <div class="rounded-lg border ${ready ? 'border-emerald-800/60 bg-emerald-950/10' : 'border-amber-800/60 bg-amber-950/10'} p-3">
+            <div class="flex items-center justify-between gap-2">
+                <div class="text-sm font-medium text-dark-100">${escapeHtml(title)}</div>
+                <span class="text-xs ${ready ? 'text-emerald-300' : 'text-amber-300'}">${ready ? escapeHtml(t('routeCanForward')) : escapeHtml(item.error_type ? providerProblemLabel(item.error_type) : t('routeBlocked'))}</span>
+            </div>
+            <div class="font-mono text-xs text-dark-300 mt-2 break-all">${escapeHtml(t('proxyPathLabel'))}: ${escapeHtml(proxyPaths.join(' | ') || item.canonical_path || '-')}</div>
+            <div class="font-mono text-xs text-dark-300 mt-1 break-all">${escapeHtml(t('upstreamPathLabel'))}: ${escapeHtml(item.upstream_url || '-')}</div>
+            <div class="text-xs ${ready ? 'text-emerald-300' : 'text-amber-200'} mt-2">${escapeHtml(message)}</div>
+            <div class="text-xs text-dark-500 mt-1">${escapeHtml(t('modeValue', { mode: item.route_mode || t('statusUnknown') }))}</div>
+        </div>
+    `;
+}
+
+function renderMediaAdapterPreviewItem(item) {
+    const endpoint = item && item.endpoint && typeof item.endpoint === 'object' ? item.endpoint : {};
+    const blockers = Array.isArray(item.blockers) ? item.blockers : [];
+    const docs = Array.isArray(item.docs_urls) ? item.docs_urls : [];
+    const endpointText = endpoint.method && endpoint.path ? `${endpoint.method} ${endpoint.path}` : t('noStatus');
+    const title = `${providerMediaKindLabel(item.media_kind)} ${item.operation || t('previewDraft')}`;
+    return `
+        <div class="rounded-lg border border-dark-800 bg-dark-950/50 p-3">
+            <div class="flex items-center justify-between gap-2">
+                <div class="text-sm font-medium text-dark-100">${escapeHtml(title)}</div>
+                <span class="text-xs ${item.supported ? 'text-emerald-300' : 'text-amber-300'}">${escapeHtml(item.supported ? t('supportedShape') : t('blockedLabel'))}</span>
+            </div>
+            <div class="font-mono text-xs text-dark-300 mt-1 break-all">${escapeHtml(endpointText)}</div>
+            <div class="text-xs text-dark-400 mt-2">${escapeHtml(item.summary || '')}</div>
+            ${blockers.length ? `<div class="mt-2 space-y-1">${blockers.map(blocker => `<div class="text-xs text-amber-200">${escapeHtml(t('blockedReason', { value: blocker }))}</div>`).join('')}</div>` : ''}
+            ${docs.length ? `<div class="mt-2 text-xs text-dark-500 break-all">${escapeHtml(t('docsLabel'))}: ${docs.map(url => `<span>${escapeHtml(url)}</span>`).join(' | ')}</div>` : ''}
+        </div>
+    `;
+}
+
+function providerMediaKindLabel(kind) {
+    if (kind === 'image') return t('imageLabel');
+    if (kind === 'video') return t('videoLabel');
+    return t('mediaFilter');
+}
+
+function providerProblemLabel(errorType) {
+    if (errorType === 'media_base_url_missing') return t('mediaBaseUrlMissing');
+    if (errorType === 'media_capability_unsupported') return t('mediaCapabilityUnsupported');
+    if (errorType === 'media_adapter_required') return t('mediaAdapterRequired');
+    if (errorType === 'upstream_error') return t('upstreamError');
+    if (errorType === 'network_error') return t('networkError');
+    return errorType || t('requestIssue');
+}
+
 /**
  * 渲染右侧 UMC Catalog 预览面板。
  * catalog-entry 携带 .stagger-item，列表加载时依次滑入。
  */
+// Render a readable quota snapshot while keeping the raw redacted payload nearby.
+function renderProviderQuotaResult(result) {
+    if (!result) return '';
+    const success = Boolean(result.success);
+    const enabled = result.enabled !== false;
+    const tone = success ? 'emerald' : (enabled ? 'amber' : 'dark');
+    const label = success ? t('quotaSnapshotOk') : (enabled ? t('quotaProbeIssue') : t('disabled'));
+    const cacheTone = result.cache_expired ? 'amber' : (result.cache_hit ? 'accent' : 'emerald');
+    const cacheLabel = result.cache_hit ? t('cacheHit') : t('freshProbe');
+    const status = result.status_code ? `HTTP ${result.status_code}` : t('noStatus');
+    const fetchedAt = result.fetched_at || result.cache_created_at;
+    const values = quotaValues(result);
+    const message = result.error || result.note || (success ? t('quotaSnapshotOk') : t('noDetailsReturned'));
+    return `
+        <div class="enhance-status-strip mt-3">
+            ${renderStatusPill('quota', label, tone)}
+            ${renderStatusPill('status', status, result.status_code ? 'dark' : tone)}
+            ${renderStatusPill('cache', result.cache_expired ? t('cacheExpired') : cacheLabel, cacheTone)}
+            ${Number.isFinite(Number(result.cache_ttl_remaining_seconds)) ? renderStatusPill('ttl', formatDuration(result.cache_ttl_remaining_seconds), result.cache_expired ? 'amber' : 'dark') : ''}
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+            ${renderQuotaMetaTile(t('fetchedLabel'), formatQuotaDate(fetchedAt))}
+            ${renderQuotaMetaTile(t('expiresLabel'), formatQuotaDate(result.cache_expires_at))}
+        </div>
+        <div class="text-xs ${success ? 'text-emerald-300' : 'text-amber-200'} mt-3">${escapeHtml(message)}</div>
+        ${values.length ? renderQuotaValueTable(values) : renderEmptyState(t('noQuotaValues'))}
+        <details class="mt-3">
+            <summary class="text-xs text-dark-400 cursor-pointer">${escapeHtml(t('rawRedactedJson'))}</summary>
+            <pre class="preview-code mt-2">${escapeHtml(JSON.stringify(result || {}, null, 2))}</pre>
+        </details>
+    `;
+}
+
+function renderQuotaMetaTile(label, value) {
+    return `
+        <div class="rounded-lg border border-dark-800 bg-dark-950/45 px-3 py-2">
+            <div class="text-[11px] uppercase tracking-wide text-dark-500">${escapeHtml(label)}</div>
+            <div class="text-xs text-dark-200 mt-1">${escapeHtml(value || '-')}</div>
+        </div>
+    `;
+}
+
+function renderQuotaValueTable(values) {
+    return `
+        <div class="mt-3 rounded-lg border border-dark-800 bg-dark-950/45 overflow-hidden">
+            ${values.map(([key, value]) => `
+                <div class="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] gap-3 px-3 py-2 border-b border-dark-800 last:border-b-0">
+                    <div class="text-xs text-dark-400 break-all">${escapeHtml(key)}</div>
+                    <div class="text-xs font-mono text-dark-100 break-all">${escapeHtml(formatQuotaValue(value))}</div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function quotaValues(result) {
+    const raw = result && result.values && typeof result.values === 'object' && !Array.isArray(result.values)
+        ? result.values
+        : {};
+    return Object.entries(raw).filter(([, value]) => value !== undefined && value !== null && value !== '');
+}
+
 function renderCatalogPreviewPanel() {
     /**
      * 渲染右侧 UMC Catalog 预览面板。
@@ -622,20 +859,21 @@ function renderCatalogPreviewPanel() {
     const preview = providerState.catalogPreview || { entries: [], route_explanation: [] };
     const entries = preview.entries || [];
     const filteredEntries = getFilteredCatalogEntries(entries);
+    const previewMode = preview.preview ? t('draftFormPreview') : '';
     return `
         <div class="card">
             <div class="flex items-center justify-between gap-3">
-                <h3 class="card-title">Unified Model Catalog Preview</h3>
-                <button onclick="previewWithSelectedFocus()" class="btn btn-secondary text-xs">Focus Selected</button>
+                <h3 class="card-title">${escapeHtml(t('unifiedCatalogPreview'))}</h3>
+                <button onclick="previewWithSelectedFocus()" class="btn btn-secondary text-xs">${escapeHtml(t('focusSelected'))}</button>
             </div>
-            <div class="text-xs text-dark-500 mt-1">Preview only. No Codex model catalog file is written.</div>
+            <div class="text-xs text-dark-500 mt-1">${escapeHtml(previewMode)}${escapeHtml(t('previewOnlyNoCatalogWritten'))}</div>
             ${renderCatalogFilters(entries, filteredEntries)}
             <div class="space-y-2 mt-3 max-h-[360px] overflow-y-auto">
-                ${filteredEntries.map(renderCatalogEntry).join('') || renderEmptyState('No catalog entries match the filters.')}
+                ${filteredEntries.map(renderCatalogEntry).join('') || renderEmptyState(t('noCatalogEntries'))}
             </div>
             <div class="mt-3">
-                <div class="text-xs text-dark-400 mb-1">Route explanation</div>
-                <pre class="preview-code">${escapeHtml((preview.route_explanation || []).join('\n') || 'No routes yet.')}</pre>
+                <div class="text-xs text-dark-400 mb-1">${escapeHtml(t('routeExplanation'))}</div>
+                <pre class="preview-code">${escapeHtml((preview.route_explanation || []).join('\n') || t('noRoutesYet'))}</pre>
             </div>
         </div>
     `;
@@ -655,32 +893,32 @@ function renderCatalogFilters(entries, filteredEntries) {
     const capabilityOptions = ['text', 'vision', 'tools', 'custom_tools', 'reasoning', 'images', 'videos']
         .filter(capability => entries.some(entry => catalogHasCapability(entry, capability)))
         .map(capability => ({ value: capability, label: capability }));
-    const countLabel = `${filteredEntries.length}/${entries.length} visible`;
+    const countLabel = t('visibleCount', { shown: filteredEntries.length, total: entries.length });
 
     return `
         <div class="mt-3 rounded-lg border border-dark-700/70 bg-dark-950/40 p-3">
             <div class="flex items-center justify-between gap-2">
-                <span class="text-xs font-medium text-dark-300">Filters</span>
+                <span class="text-xs font-medium text-dark-300">${escapeHtml(t('filtersLabel'))}</span>
                 <span class="text-xs text-dark-500">${escapeHtml(countLabel)}</span>
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
                 <select class="input text-xs py-2" onchange="updateCatalogFilter('provider', this.value)">
-                    <option value="">All providers</option>
+                    <option value="">${escapeHtml(t('allProviders'))}</option>
                     ${providerOptions.map(option => `<option value="${escapeAttr(option.value)}" ${filters.provider === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
                 </select>
                 <select class="input text-xs py-2" onchange="updateCatalogFilter('capability', this.value)">
-                    <option value="">Any capability</option>
+                    <option value="">${escapeHtml(t('anyCapability'))}</option>
                     ${capabilityOptions.map(option => `<option value="${escapeAttr(option.value)}" ${filters.capability === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
                 </select>
                 <input class="input text-xs py-2" type="number" min="0" step="1000" value="${escapeAttr(filters.minContext)}"
-                    onchange="updateCatalogFilter('minContext', this.value)" placeholder="Min context">
+                    onchange="updateCatalogFilter('minContext', this.value)" placeholder="${escapeAttr(t('minContext'))}">
                 <input class="input text-xs py-2" type="number" min="0" step="0.0001" value="${escapeAttr(filters.maxInputPrice)}"
-                    onchange="updateCatalogFilter('maxInputPrice', this.value)" placeholder="Max input / 1M">
+                    onchange="updateCatalogFilter('maxInputPrice', this.value)" placeholder="${escapeAttr(t('maxInputPrice'))}">
                 <select class="input text-xs py-2" onchange="updateCatalogFilter('currency', this.value)">
-                    <option value="">Any currency</option>
+                    <option value="">${escapeHtml(t('anyCurrency'))}</option>
                     ${currencyOptions.map(option => `<option value="${escapeAttr(option.value)}" ${filters.currency === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
                 </select>
-                <button onclick="resetCatalogFilters()" class="btn btn-secondary text-xs">Reset Filters</button>
+                <button onclick="resetCatalogFilters()" class="btn btn-secondary text-xs">${escapeHtml(t('resetFilters'))}</button>
             </div>
         </div>
     `;
@@ -720,7 +958,7 @@ function updateCatalogFilter(key, value) {
         ...getCatalogFilters(),
         [key]: value,
     };
-    renderProvidersPage();
+    refreshProviderSidePanel();
 }
 
 function resetCatalogFilters() {
@@ -731,7 +969,7 @@ function resetCatalogFilters() {
         maxInputPrice: '',
         currency: '',
     };
-    renderProvidersPage();
+    refreshProviderSidePanel();
 }
 
 function uniqueCatalogOptions(entries, valueFn, labelFn) {
@@ -750,9 +988,18 @@ function catalogHasCapability(entry, capability) {
     return Boolean(capabilities[capability]);
 }
 
+function catalogPriceValue(pricing, aliases) {
+    const source = pricing && typeof pricing === 'object' ? pricing : {};
+    for (const key of aliases) {
+        const value = parseCatalogNumber(source[key]);
+        if (value !== null) return value;
+    }
+    return null;
+}
+
 function catalogInputPrice(entry) {
     const pricing = entry && entry.pricing && typeof entry.pricing === 'object' ? entry.pricing : {};
-    const aliases = [
+    return catalogPriceValue(pricing, [
         'input_per_million',
         'input_tokens_per_million',
         'prompt_per_million',
@@ -760,12 +1007,23 @@ function catalogInputPrice(entry) {
         'input_price_per_million',
         'prompt',
         'input',
+    ]);
+}
+
+function catalogMediaPriceBadges(entry) {
+    const pricing = entry && entry.pricing && typeof entry.pricing === 'object' ? entry.pricing : {};
+    const mediaPrices = [
+        [t('mediaPriceImage'), ['per_image', 'image', 'image_per_unit', 'image_per_generation']],
+        [t('mediaPriceVideoJob'), ['per_video_job', 'video_job', 'video_per_job', 'video_generation']],
+        [t('mediaPriceVideoSecond'), ['per_video_second', 'video_second', 'video_per_second', 'video_sec']],
+        [t('mediaPriceMinimum'), ['request_minimum', 'minimum', 'min_charge']],
     ];
-    for (const key of aliases) {
-        const value = parseCatalogNumber(pricing[key]);
-        if (value !== null) return value;
-    }
-    return null;
+    return mediaPrices
+        .map(([label, aliases]) => {
+            const value = catalogPriceValue(pricing, aliases);
+            return value !== null ? renderMiniBadge(`${label} ${formatCatalogPrice(value)}`) : '';
+        })
+        .filter(Boolean);
 }
 
 function parseCatalogNumber(value) {
@@ -792,13 +1050,14 @@ function renderCatalogEntry(entry) {
     const providerLabel = entry.provider_display_name || entry.provider_id || 'provider';
     const badges = [
         renderMiniBadge(entry.provider_alias || entry.provider_id),
-        entry.focused ? renderMiniBadge('focused') : '',
+        entry.focused ? renderMiniBadge(t('focusedBadge')) : '',
         entry.catalog_visibility ? renderMiniBadge(entry.catalog_visibility) : '',
-        entry.catalog_collision ? renderMiniBadge('collision resolved') : '',
+        entry.catalog_collision ? renderMiniBadge(t('collisionResolved')) : '',
         entry.api_format ? renderMiniBadge(entry.api_format) : '',
-        entry.responses_profile && entry.responses_profile.domestic_responses ? renderMiniBadge('domestic responses') : '',
-        entry.context_window ? renderMiniBadge(formatNumber(entry.context_window, { compact: false }) + ' ctx') : '',
-        inputPrice !== null ? renderMiniBadge('input ' + formatCatalogPrice(inputPrice) + '/1M') : '',
+        entry.responses_profile && entry.responses_profile.domestic_responses ? renderMiniBadge(t('domesticResponsesBadge')) : '',
+        entry.context_window ? renderMiniBadge(t('contextShort', { value: formatNumber(entry.context_window, { compact: false }) })) : '',
+        inputPrice !== null ? renderMiniBadge(t('inputPriceBadge', { value: formatCatalogPrice(inputPrice) })) : '',
+        ...catalogMediaPriceBadges(entry),
         ...capabilityBadges(entry.capabilities),
     ].filter(Boolean).join('');
     return `
@@ -827,10 +1086,10 @@ function renderRouteSimulatorShell() {
     return `
         <div class="card">
             <div class="flex items-center justify-between gap-3">
-                <h3 class="card-title">Route Simulator</h3>
-                <span class="text-xs text-emerald-300">read-only</span>
+                <h3 class="card-title">${escapeHtml(t('routeSimulator'))}</h3>
+                <span class="text-xs text-emerald-300">${escapeHtml(t('readOnlyLabel'))}</span>
             </div>
-            <div class="text-xs text-dark-500 mt-1">Simulates AMR capability/context routing from the current provider registry. No upstream request or Codex write is performed.</div>
+            <div class="text-xs text-dark-500 mt-1">${escapeHtml(t('routeSimulatorDescFull'))}</div>
             <div class="grid grid-cols-2 gap-2 mt-3">
                 ${renderRouteCapabilityToggle('route-sim-cap-text', 'text', true)}
                 ${renderRouteCapabilityToggle('route-sim-cap-vision', 'vision', false)}
@@ -841,14 +1100,14 @@ function renderRouteSimulatorShell() {
                 ${renderRouteCapabilityToggle('route-sim-cap-videos', 'videos', false)}
             </div>
             <div class="grid grid-cols-1 gap-3 mt-3">
-                <input id="route-sim-model" class="input" list="route-sim-model-options" placeholder="optional model id, provider/model, or catalog id">
+                <input id="route-sim-model" class="input" list="route-sim-model-options" placeholder="${escapeAttr(t('optionalModelPlaceholder'))}">
                 <datalist id="route-sim-model-options">
                     ${datalistEntries.map(value => `<option value="${escapeAttr(value)}"></option>`).join('')}
                 </datalist>
-                <input id="route-sim-context" type="number" min="0" step="1000" class="input" placeholder="required context tokens">
+                <input id="route-sim-context" type="number" min="0" step="1000" class="input" placeholder="${escapeAttr(t('requiredContextPlaceholder'))}">
             </div>
-            <button onclick="runRouteSimulatorShell()" class="btn btn-secondary text-xs mt-3">Simulate Route</button>
-            <div id="route-sim-result" class="preview-code mt-3">No simulation yet.</div>
+            <button onclick="runRouteSimulatorShell()" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('simulateRoute'))}</button>
+            <div id="route-sim-result" class="preview-code mt-3">${escapeHtml(t('noSimulationYet'))}</div>
         </div>
     `;
 }
@@ -866,9 +1125,9 @@ function renderRouteCapabilityToggle(id, capability, checked) {
 function renderCodexDiffPreviewShell() {
     return `
         <div class="card">
-            <h3 class="card-title">Codex Diff Preview</h3>
-            <div class="text-xs text-dark-500 mt-1">Future writes to auth/config/model catalog must pass through diff preview, backup, and rollback. This shell intentionally performs no write.</div>
-            <pre class="preview-code mt-3">No pending Codex file changes.</pre>
+            <h3 class="card-title">${escapeHtml(t('codexDiffPreview'))}</h3>
+            <div class="text-xs text-dark-500 mt-1">${escapeHtml(t('codexDiffShellDesc'))}</div>
+            <pre class="preview-code mt-3">${escapeHtml(t('noPendingCodexChanges'))}</pre>
         </div>
     `;
 }
@@ -884,7 +1143,7 @@ function renderPresetCard(preset) {
                 <div class="font-medium text-white">${escapeHtml(preset.name)}</div>
                 <div class="text-xs text-dark-400 mt-1">${escapeHtml(preset.description || '')}</div>
             </div>
-            <button onclick="importPreset('${escapeAttr(preset.preset_id)}')" class="btn btn-secondary text-xs">Import</button>
+            <button onclick="importPreset('${escapeAttr(preset.preset_id)}')" class="btn btn-secondary text-xs">${escapeHtml(t('importAction'))}</button>
         </div>
     `;
 }
@@ -909,14 +1168,15 @@ async function importPreset(presetId) {
             body: JSON.stringify({ preset_id: presetId }),
         });
         providerState.selectedProviderId = result.provider.id;
+        providerState.mediaRoutePreview = null;
         providerState.healthPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
-        showToast('Provider preset imported', 'success');
+        showToast(t('providerPresetImported'), 'success');
         if (currentPage === 'quick-setup') renderQuickSetup();
         if (currentPage === 'providers') renderProvidersPage();
     } catch (err) {
-        showToast('导入 preset 失败：' + err.message, 'error');
+        showToast(t('providerPresetImportFailed') + err.message, 'error');
     }
 }
 
@@ -925,7 +1185,7 @@ async function createBlankProvider() {
         const result = await api('/api/providers', {
             method: 'POST',
             body: JSON.stringify({
-                display_name: 'New Provider',
+                display_name: t('newProviderDefaultName'),
                 short_alias: 'new',
                 base_url: '',
                 api_format: 'openai_responses',
@@ -935,21 +1195,27 @@ async function createBlankProvider() {
             }),
         });
         providerState.selectedProviderId = result.provider.id;
+        providerState.mediaRoutePreview = null;
+        providerState.mediaAdapterPreview = null;
         providerState.healthPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
         renderProvidersPage();
-        showToast('Provider created', 'success');
+        showToast(t('providerCreated'), 'success');
     } catch (err) {
-        showToast('创建 provider 失败：' + err.message, 'error');
+        showToast(t('providerCreateFailed') + err.message, 'error');
     }
 }
 
-function selectProvider(providerId) {
+async function selectProvider(providerId) {
     providerState.selectedProviderId = providerId;
     providerState.responsesProbePreview = null;
+    providerState.mediaRoutePreview = null;
+    providerState.mediaAdapterPreview = null;
     providerState.quotaPreview = null;
     providerState.healthPreview = null;
+    renderProvidersPage();
+    await refreshSelectedQuotaCache();
     renderProvidersPage();
 }
 
@@ -964,12 +1230,14 @@ async function saveSelectedProvider() {
             body: JSON.stringify(draft),
         });
         providerState.selectedProviderId = result.provider.id;
+        providerState.mediaRoutePreview = null;
+        providerState.mediaAdapterPreview = null;
         providerState.quotaPreview = null;
         providerState.healthPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
         renderProvidersPage();
-        showToast('Provider saved locally', 'success');
+        showToast(t('providerSaved'), 'success');
     } catch (err) {
         showProviderFormError(err.message);
     }
@@ -978,15 +1246,17 @@ async function saveSelectedProvider() {
 async function testSelectedProvider() {
     const provider = getSelectedProvider();
     if (!provider) return;
+    const draft = readProviderForm(provider);
+    if (!draft) return;
     try {
-        const result = await api('/api/providers/' + encodeURIComponent(provider.id) + '/test', { method: 'POST' });
-        await ensureProviderData();
-        await refreshCatalogPreview();
-        renderProvidersPage();
+        const result = await api('/api/providers/test', {
+            method: 'POST',
+            body: JSON.stringify(draft),
+        });
         if (result.success) {
-            showToast(result.message || 'Provider test passed', 'success');
+            showToast(result.message || t('providerTestPassed'), 'success');
         } else {
-            showToast((result.errors || []).join('; ') || 'Provider test failed', 'error');
+            showToast((result.errors || []).join('; ') || t('providerTestFailed'), 'error');
         }
     } catch (err) {
         showProviderFormError(err.message);
@@ -996,15 +1266,18 @@ async function testSelectedProvider() {
 async function checkProviderHealth() {
     const provider = getSelectedProvider();
     if (!provider) return;
+    const draft = readProviderForm(provider);
+    if (!draft) return;
     try {
-        providerState.healthPreview = await api('/api/providers/' + encodeURIComponent(provider.id) + '/health-check', {
+        providerState.healthPreview = await api('/api/providers/' + encodeURIComponent(provider.id) + '/health-check-draft', {
             method: 'POST',
+            body: JSON.stringify({ provider: draft }),
         });
-        renderProvidersPage();
+        refreshProviderPreviewPanels();
         if (providerState.healthPreview && providerState.healthPreview.success) {
-            showToast('Provider network path is reachable', 'success');
+            showToast(t('providerHealthReachable'), 'success');
         } else {
-            showToast('Provider health check returned an issue', 'warning');
+            showToast(t('providerHealthIssue'), 'warning');
         }
     } catch (err) {
         showProviderFormError(err.message);
@@ -1033,8 +1306,46 @@ async function previewResponsesProbe() {
             method: 'POST',
             body: JSON.stringify({ provider: draft }),
         });
-        renderProvidersPage();
-        showToast('Responses probe preview generated', 'success');
+        refreshProviderPreviewPanels();
+        showToast(t('responsesProbeGenerated'), 'success');
+    } catch (err) {
+        showProviderFormError(err.message);
+    }
+}
+
+async function previewMediaRoutes() {
+    const provider = getSelectedProvider();
+    if (!provider) return;
+    const draft = readProviderForm(provider);
+    if (!draft) return;
+    try {
+        providerState.mediaRoutePreview = await api('/api/providers/' + encodeURIComponent(provider.id) + '/media-route/preview-draft', {
+            method: 'POST',
+            body: JSON.stringify({ provider: draft }),
+        });
+        refreshProviderPreviewPanels();
+        if (providerState.mediaRoutePreview && providerState.mediaRoutePreview.live_forwarding_enabled) {
+            showToast(t('mediaRouteReadyToast'), 'success');
+        } else {
+            showToast(t('mediaRouteBlockersToast'), 'warning');
+        }
+    } catch (err) {
+        showProviderFormError(err.message);
+    }
+}
+
+async function previewMediaAdapter() {
+    const provider = getSelectedProvider();
+    if (!provider) return;
+    const draft = readProviderForm(provider);
+    if (!draft) return;
+    try {
+        providerState.mediaAdapterPreview = await api('/api/providers/' + encodeURIComponent(provider.id) + '/media-adapter/preview-draft', {
+            method: 'POST',
+            body: JSON.stringify({ provider: draft }),
+        });
+        refreshProviderPreviewPanels();
+        showToast(t('mediaAdapterGenerated'), 'success');
     } catch (err) {
         showProviderFormError(err.message);
     }
@@ -1043,16 +1354,18 @@ async function previewResponsesProbe() {
 async function refreshProviderQuota() {
     const provider = getSelectedProvider();
     if (!provider) return;
+    const draft = readProviderForm(provider);
+    if (!draft) return;
     try {
-        providerState.quotaPreview = await api('/api/providers/' + encodeURIComponent(provider.id) + '/quota/refresh', {
+        providerState.quotaPreview = await api('/api/providers/' + encodeURIComponent(provider.id) + '/quota/refresh-draft', {
             method: 'POST',
-            body: JSON.stringify({ force: true }),
+            body: JSON.stringify({ provider: draft }),
         });
-        renderProvidersPage();
+        refreshProviderPreviewPanels();
         if (providerState.quotaPreview && providerState.quotaPreview.success) {
-            showToast('Quota refreshed', 'success');
+            showToast(t('quotaRefreshed'), 'success');
         } else {
-            showToast('Quota refresh returned an error', 'warning');
+            showToast(t('quotaRefreshIssue'), 'warning');
         }
     } catch (err) {
         showProviderFormError(err.message);
@@ -1062,22 +1375,27 @@ async function refreshProviderQuota() {
 async function deleteSelectedProvider() {
     const provider = getSelectedProvider();
     if (!provider) return;
-    if (!confirm('Delete local provider "' + provider.display_name + '"?')) return;
+    if (!confirm(t('deleteProviderConfirm', { name: provider.display_name }))) return;
     try {
         await api('/api/providers/' + encodeURIComponent(provider.id), { method: 'DELETE' });
         providerState.selectedProviderId = '';
         await ensureProviderData();
         await refreshCatalogPreview();
         renderProvidersPage();
-        showToast('Provider deleted', 'success');
+        showToast(t('providerDeleted'), 'success');
     } catch (err) {
-        showToast('删除 provider 失败：' + err.message, 'error');
+        showToast(t('providerDeleteFailed') + err.message, 'error');
     }
 }
 
 async function previewWithSelectedFocus() {
-    await refreshCatalogPreview(providerState.selectedProviderId || '');
-    renderProvidersPage();
+    const provider = getSelectedProvider();
+    if (provider) {
+        await refreshCatalogPreviewDraft(provider);
+    } else {
+        await refreshCatalogPreview(providerState.selectedProviderId || '');
+    }
+    refreshProviderSidePanel();
 }
 
 async function runRouteSimulatorShell() {
@@ -1104,7 +1422,7 @@ async function runRouteSimulatorShell() {
         });
         result.innerHTML = renderRouteSimulationResult(decision);
     } catch (err) {
-        result.textContent = 'Simulation failed: ' + err.message;
+        result.textContent = t('simulationFailed') + err.message;
     }
 }
 
@@ -1112,13 +1430,13 @@ function renderRouteSimulationResult(decision) {
     const statusClass = decision.success ? 'text-emerald-300' : 'text-red-300';
     const title = decision.success
         ? `${decision.provider_id || ''}/${decision.model_id || ''}`
-        : (decision.error || 'No route available');
+        : (decision.error || t('noRouteAvailable'));
     const candidateRows = (decision.candidate_status || []).slice(0, 8).map(row => {
         const missingCapabilities = row.missing_capabilities || [];
         const flags = [
-            row.capability_match ? 'caps ok' : `missing ${missingCapabilities.join(', ') || 'capability'}`,
-            row.context_match ? 'ctx ok' : 'ctx too small',
-            row.model_match ? 'model ok' : 'model filtered',
+            row.capability_match ? t('capsOk') : t('missingCapability', { value: missingCapabilities.join(', ') || t('capabilitiesLabel') }),
+            row.context_match ? t('contextOk') : t('contextTooSmall'),
+            row.model_match ? t('modelOk') : t('modelFiltered'),
         ];
         return `
             <div class="grid grid-cols-[1fr_auto] gap-2 py-2 border-b border-dark-800 last:border-b-0">
@@ -1126,26 +1444,26 @@ function renderRouteSimulationResult(decision) {
                     <div class="font-mono text-xs text-dark-100 break-all">${escapeHtml(row.codex_model_id || row.candidate_id)}</div>
                     <div class="text-xs text-dark-500">p${escapeHtml(row.priority)} · ctx ${formatCount(row.context_window || 0)} · ${escapeHtml(flags.join(' · '))}</div>
                 </div>
-                <span class="text-xs ${row.available ? 'text-emerald-300' : 'text-amber-300'}">${row.available ? 'available' : 'blocked'}</span>
+                <span class="text-xs ${row.available ? 'text-emerald-300' : 'text-amber-300'}">${escapeHtml(row.available ? t('availableLabel') : t('blockedLabel'))}</span>
             </div>
         `;
     }).join('');
     return `
         <div class="space-y-3">
             <div>
-                <div class="text-xs ${statusClass}">${decision.success ? 'Route selected' : 'Route unavailable'}</div>
+                <div class="text-xs ${statusClass}">${escapeHtml(decision.success ? t('routeSelected') : t('routeUnavailable'))}</div>
                 <div class="font-mono text-sm text-dark-100 break-all">${escapeHtml(title)}</div>
                 <div class="text-xs text-dark-500 mt-1">
-                    capabilities: ${escapeHtml((decision.required_capabilities || []).join(', ') || 'text')}
-                    · context: ${escapeHtml(decision.required_context || 0)}
-                    · candidates: ${escapeHtml(decision.candidate_count || 0)}
+                    ${escapeHtml(t('capabilitiesLabel'))}: ${escapeHtml((decision.required_capabilities || []).join(', ') || 'text')}
+                    · ${escapeHtml(t('contextLabel'))}: ${escapeHtml(decision.required_context || 0)}
+                    · ${escapeHtml(t('candidatesLabel'))}: ${escapeHtml(decision.candidate_count || 0)}
                 </div>
             </div>
             <div class="rounded-md border border-dark-800 bg-dark-950/50 px-3 py-2">
-                ${(decision.explanation || []).map(line => `<div class="text-xs text-dark-300 py-0.5">${escapeHtml(line)}</div>`).join('') || '<div class="text-xs text-dark-500">No explanation returned.</div>'}
+                ${(decision.explanation || []).map(line => `<div class="text-xs text-dark-300 py-0.5">${escapeHtml(line)}</div>`).join('') || `<div class="text-xs text-dark-500">${escapeHtml(t('noExplanationReturned'))}</div>`}
             </div>
             <div class="rounded-md border border-dark-800 bg-dark-950/40 px-3 py-1">
-                ${candidateRows || '<div class="text-xs text-dark-500 py-2">No candidate status returned.</div>'}
+                ${candidateRows || `<div class="text-xs text-dark-500 py-2">${escapeHtml(t('noCandidateStatusReturned'))}</div>`}
             </div>
         </div>
     `;
@@ -1156,9 +1474,9 @@ async function exportProviderBundle() {
         const bundle = await api('/api/providers/export');
         const preview = JSON.stringify(bundle, null, 2);
         await navigator.clipboard.writeText(preview);
-        showToast('Redacted provider bundle copied', 'success');
+        showToast(t('redactedProviderBundleCopied'), 'success');
     } catch (err) {
-        showToast('导出失败：' + err.message, 'error');
+        showToast(t('exportFailed') + err.message, 'error');
     }
 }
 
@@ -1174,7 +1492,7 @@ function readProviderForm(existing) {
         const quotaCheck = JSON.parse(document.getElementById('provider-quota-json')?.value || '{}');
         const aliases = JSON.parse(document.getElementById('provider-aliases-json')?.value || '{}');
         const aliasPatterns = JSON.parse(document.getElementById('provider-alias-patterns-json')?.value || '[]');
-        const models = parseModelsText(document.getElementById('provider-models-text')?.value || '');
+        const models = parseModelsText(document.getElementById('provider-models-text')?.value || '', existing.models || []);
         const approvalMode = getSelectedApprovalMode();
         const mediaMode = getSelectedMediaMode();
         const mediaAsyncVisible = !document.getElementById('media-async-fields')?.classList.contains('hidden');
@@ -1257,18 +1575,31 @@ function readProviderForm(existing) {
             },
         };
     } catch (err) {
-        showProviderFormError('Draft parse failed: ' + err.message);
+        showProviderFormError(t('draftParseFailed') + err.message);
         return null;
     }
 }
 
-function parseModelsText(text) {
+function parseModelsText(text, existingModels = []) {
+    const existingById = new Map();
+    (existingModels || []).forEach(model => {
+        if (!model || !model.id) return;
+        const key = String(model.id).trim();
+        if (!key) return;
+        const list = existingById.get(key) || [];
+        list.push(model);
+        existingById.set(key, list);
+    });
     return String(text || '').split('\n')
         .map(line => line.trim())
         .filter(Boolean)
         .map(line => {
             const parts = line.split('|').map(part => part.trim());
+            const modelId = parts[0] || 'model-id';
+            const existingList = existingById.get(modelId) || [];
+            const existing = existingList.shift() || {};
             return {
+                ...existing,
                 id: parts[0] || 'model-id',
                 display_name: parts[1] || parts[0] || 'Model',
                 context_window: parseInt(parts[2], 10) || 0,
@@ -1326,16 +1657,45 @@ function renderSelect(id, label, value, options, onchange = '') {
         <div>
             <label class="text-xs text-dark-400">${escapeHtml(label)}</label>
             <select id="${escapeAttr(id)}" class="input mt-1 w-full"${changeAttr}>
-                ${options.map(option => `<option value="${escapeAttr(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+                ${options.map(option => {
+                    const optionValue = typeof option === 'object' ? option.value : option;
+                    const optionLabel = typeof option === 'object' ? option.label : providerOptionLabel(optionValue);
+                    return `<option value="${escapeAttr(optionValue)}" ${optionValue === value ? 'selected' : ''}>${escapeHtml(optionLabel)}</option>`;
+                }).join('')}
             </select>
         </div>
     `;
 }
 
-function renderCapabilityToggle(id, label, checked) {
+function providerOptionLabel(value) {
+    const labels = {
+        hidden: t('catalogVisibilityHidden'),
+        focused_only: t('catalogVisibilityFocused'),
+        always_visible: t('catalogVisibilityAlways'),
+        selected_models: t('catalogVisibilitySelected'),
+        openai_responses: t('apiFormatOpenaiResponses'),
+        openai_chat: t('apiFormatOpenaiChat'),
+        openai_images: t('apiFormatOpenaiImages'),
+        openai_videos: t('apiFormatOpenaiVideos'),
+        openai_compatible: t('apiFormatOpenaiCompatible'),
+        anthropic: t('apiFormatAnthropic'),
+        custom: t('apiFormatCustom'),
+        provider_api_key: t('authProviderApiKey'),
+        global_auth_json: t('authGlobalAuthJson'),
+        official_oauth: t('authOfficialOAuth'),
+        no_auth: t('authNoAuth'),
+        decline: t('reviewDecline'),
+        ask_user: t('reviewAskUser'),
+        allow: t('reviewAllow'),
+    };
+    return labels[value] || value;
+}
+
+function renderCapabilityToggle(id, label, checked, onchange = '') {
+    const changeAttr = onchange ? ` onchange="${escapeAttr(onchange)}"` : '';
     return `
         <label class="flex items-center gap-2 text-sm cursor-pointer bg-dark-900/60 border border-dark-700 rounded-lg px-3 py-2">
-            <input id="${escapeAttr(id)}" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${checked ? 'checked' : ''}>
+            <input id="${escapeAttr(id)}" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${checked ? 'checked' : ''}${changeAttr}>
             <span>${escapeHtml(label)}</span>
         </label>
     `;
@@ -1352,14 +1712,14 @@ function approvalModeFromProfile(profile) {
 function renderApprovalModeSegment(profile) {
     const mode = approvalModeFromProfile(profile || {});
     const options = [
-        ['manual_only', 'Manual', 'User decides'],
-        ['official_guardian', 'Official Guardian', 'Codex native'],
-        ['proxy_auto_approve', 'Auto Approval', 'Proxy broker'],
+        ['manual_only', t('manualOnly'), t('userDecides')],
+        ['official_guardian', t('officialGuardian'), t('codexNative')],
+        ['proxy_auto_approve', t('autoApproval'), t('proxyBroker')],
     ];
     return `
         <div class="approval-mode-field mt-4">
-            <div class="text-xs text-dark-400 mb-2">Approval Mode</div>
-            <div class="segmented-control" role="radiogroup" aria-label="Approval Mode">
+            <div class="text-xs text-dark-400 mb-2">${escapeHtml(t('approvalMode'))}</div>
+            <div class="segmented-control" role="radiogroup" aria-label="${escapeAttr(t('approvalMode'))}">
                 ${options.map(([value, label, hint]) => `
                     <label class="segmented-option ${mode === value ? 'active' : ''}">
                         <input
@@ -1405,17 +1765,47 @@ function shouldShowMediaAsyncFields(profile, apiFormat) {
         || Boolean(profile && (profile.async_submit || profile.poll_required || profile.cancel_supported));
 }
 
+function providerMediaRoutingHint(provider) {
+    const profile = provider && provider.media_profile ? provider.media_profile : {};
+    const caps = provider && provider.capabilities ? provider.capabilities : {};
+    const apiFormat = String(provider && provider.api_format ? provider.api_format : '');
+    const wantsMedia = Boolean(caps.images || caps.videos || profile.default_image_provider || profile.default_video_provider);
+    const hasMediaRoute = Boolean(
+        profile.openai_compatible_media
+        || profile.adapter_required
+        || apiFormat === 'openai_images'
+        || apiFormat === 'openai_videos'
+    );
+    if (wantsMedia && !hasMediaRoute) {
+        return t('mediaCapabilityHint');
+    }
+    if (hasMediaRoute && !wantsMedia && apiFormat !== 'openai_images' && apiFormat !== 'openai_videos') {
+        return t('mediaModeEnabledWithoutCapability');
+    }
+    return '';
+}
+
+function renderMediaRoutingHint(provider) {
+    const hint = providerMediaRoutingHint(provider);
+    const hidden = hint ? '' : 'hidden';
+    return `
+        <div id="media-routing-hint" class="${hidden} mt-3 text-xs text-amber-200 bg-amber-950/25 border border-amber-700/50 rounded-lg p-3">
+            ${escapeHtml(hint)}
+        </div>
+    `;
+}
+
 function renderMediaModeSegment(profile) {
     const mode = mediaModeFromProfile(profile || {});
     const options = [
-        ['openai_compatible', 'OpenAI-compatible', 'Direct pass-through'],
-        ['adapter_required', 'Adapter required', 'Vendor adapter'],
-        ['disabled', 'Disabled', 'No media route'],
+        ['openai_compatible', t('openaiCompatibleMode'), t('directPassthrough')],
+        ['adapter_required', t('adapterRequiredMode'), t('vendorSpecificMedia')],
+        ['disabled', t('disabledMode'), t('noMediaForwarding')],
     ];
     return `
         <div class="media-mode-field mt-4">
-            <div class="text-xs text-dark-400 mb-2">Media Mode</div>
-            <div class="segmented-control" role="radiogroup" aria-label="Media Mode">
+            <div class="text-xs text-dark-400 mb-2">${escapeHtml(t('mediaProfile'))}</div>
+            <div class="segmented-control" role="radiogroup" aria-label="${escapeAttr(t('mediaProfile'))}">
                 ${options.map(([value, label, hint]) => `
                     <label class="segmented-option ${mode === value ? 'active' : ''}">
                         <input
@@ -1445,20 +1835,42 @@ function syncMediaModeControls(clearHiddenAsync = false) {
         option.classList.toggle('active', Boolean(input && input.value === selectedMode));
     });
     const asyncFields = document.getElementById('media-async-fields');
-    if (!asyncFields) return;
     const apiFormat = document.getElementById('provider-api-format')?.value || '';
     const hasExistingAsync = ['media-async-submit', 'media-poll-required', 'media-cancel-supported']
         .some(id => document.getElementById(id)?.checked);
     const showAsync = selectedMode === 'adapter_required'
         || apiFormat === 'openai_videos'
         || (!clearHiddenAsync && hasExistingAsync);
-    asyncFields.classList.toggle('hidden', !showAsync);
-    if (!showAsync) {
+    if (asyncFields) asyncFields.classList.toggle('hidden', !showAsync);
+    if (asyncFields && !showAsync) {
         ['media-async-submit', 'media-poll-required', 'media-cancel-supported'].forEach(id => {
             const checkbox = document.getElementById(id);
             if (checkbox) checkbox.checked = false;
         });
     }
+    syncMediaRoutingHint();
+}
+
+function syncMediaRoutingHint() {
+    const hint = document.getElementById('media-routing-hint');
+    if (!hint) return;
+    const apiFormat = document.getElementById('provider-api-format')?.value || '';
+    const selectedMode = getSelectedMediaMode();
+    const wantsMedia = Boolean(
+        document.getElementById('cap-images')?.checked
+        || document.getElementById('cap-videos')?.checked
+        || document.getElementById('media-default-image')?.checked
+        || document.getElementById('media-default-video')?.checked
+    );
+    const hasMediaRoute = selectedMode !== 'disabled' || apiFormat === 'openai_images' || apiFormat === 'openai_videos';
+    let message = '';
+    if (wantsMedia && !hasMediaRoute) {
+        message = t('mediaCapabilityHint');
+    } else if (hasMediaRoute && !wantsMedia && apiFormat !== 'openai_images' && apiFormat !== 'openai_videos') {
+        message = t('mediaModeEnabledWithoutCapability');
+    }
+    hint.textContent = message;
+    hint.classList.toggle('hidden', !message);
 }
 
 /**
@@ -1519,7 +1931,20 @@ function capabilityBadges(capabilities) {
     const caps = capabilities || {};
     return ['text', 'vision', 'tools', 'custom_tools', 'reasoning', 'images', 'videos']
         .filter(key => caps[key])
-        .map(renderMiniBadge);
+        .map(key => renderMiniBadge(providerCapabilityLabel(key)));
+}
+
+function providerCapabilityLabel(capability) {
+    const labels = {
+        text: t('textCapability'),
+        vision: t('visionInputCapability'),
+        tools: t('toolsCapability'),
+        custom_tools: t('customToolsCapability'),
+        reasoning: t('reasoningCapability'),
+        images: t('imagesCapability'),
+        videos: t('videosCapability'),
+    };
+    return labels[capability] || capability;
 }
 
 function renderEmptyState(text) {
@@ -1531,6 +1956,36 @@ function formatShortDate(value) {
     const date = new Date(value);
     if (isNaN(date.getTime())) return String(value).slice(0, 16);
     return date.toLocaleString();
+}
+
+function formatQuotaDate(value) {
+    if (!value) return '-';
+    const numeric = Number(value);
+    const date = Number.isFinite(numeric) && numeric > 100000
+        ? new Date(numeric * 1000)
+        : new Date(value);
+    if (isNaN(date.getTime())) return String(value).slice(0, 32);
+    return date.toLocaleString();
+}
+
+function formatDuration(seconds) {
+    const value = Math.max(0, Math.round(Number(seconds) || 0));
+    if (value < 60) return `${value}s`;
+    const minutes = Math.floor(value / 60);
+    const remainingSeconds = value % 60;
+    if (minutes < 60) return remainingSeconds ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+function formatQuotaValue(value) {
+    if (typeof value === 'number') {
+        return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 6 });
+    }
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (value && typeof value === 'object') return JSON.stringify(value);
+    return String(value ?? '');
 }
 
 function escapeHtml(value) {
@@ -1553,30 +2008,30 @@ function renderProxyControlCard() {
     const running = status.running || false;
     const backoff = status.port_backoff || {};
     const portLabel = status.port ? `:${status.port}` : '--';
-    const baseUrl = status.base_url || '未启动';
+    const baseUrl = status.base_url || t('notStarted');
     const approvalBrokerConnected = Boolean(status.media_auto_approval_reviewer_connected);
     const backoffNotice = backoff.used
         ? `<div class="mt-3 text-xs text-amber-200 bg-amber-950/30 border border-amber-700/40 rounded-lg p-2">
-                配置端口 ${escapeHtml(backoff.from)} 已占用，已自动退避到 ${escapeHtml(backoff.to)}。
+                ${escapeHtml(t('proxyBackoffNotice', { from: backoff.from, to: backoff.to }))}
            </div>`
         : '';
     return `
         <div class="card">
-            <h3 class="card-title">Local Proxy</h3>
+            <h3 class="card-title">${escapeHtml(t('localProxyTitle'))}</h3>
             <div class="flex items-center gap-2 mt-3">
                 <span class="status-dot ${running ? 'bg-emerald-500' : 'bg-dark-500'}"></span>
-                <span class="text-xs ${running ? 'text-emerald-400' : 'text-dark-400'}">${running ? '代理运行中' : '代理已停止'} ${portLabel}</span>
+                <span class="text-xs ${running ? 'text-emerald-400' : 'text-dark-400'}">${escapeHtml(running ? t('proxyRunning') : t('proxyStopped'))} ${escapeHtml(portLabel)}</span>
             </div>
             <div class="mt-2 text-xs text-dark-400 break-all">${escapeHtml(baseUrl)}</div>
             <div class="mt-2 text-xs ${approvalBrokerConnected ? 'text-emerald-300' : 'text-dark-500'}">
-                Approval Broker ${approvalBrokerConnected ? 'connected' : 'idle'}
+                ${escapeHtml(t('approvalBrokerLabel'))} ${escapeHtml(approvalBrokerConnected ? t('connectedLabel') : t('idleLabel'))}
             </div>
             ${backoffNotice}
             ${status.last_start_error ? `<div class="mt-3 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2">${escapeHtml(status.last_start_error)}</div>` : ''}
-            <div class="mt-2 text-xs text-dark-500">启动时会自动尝试配置端口之后的可用端口。</div>
+            <div class="mt-2 text-xs text-dark-500">${escapeHtml(t('proxyPortHint'))}</div>
             <div class="flex flex-wrap gap-2 mt-3">
-                <button id="proxy-start-btn" onclick="startProxy()" class="btn btn-primary text-xs" ${running ? 'disabled' : ''}>启动代理</button>
-                <button id="proxy-stop-btn" onclick="stopProxy()" class="btn btn-danger text-xs" ${running ? '' : 'disabled'}>停止代理</button>
+                <button id="proxy-start-btn" onclick="startProxy()" class="btn btn-primary text-xs" ${running ? 'disabled' : ''}>${escapeHtml(t('startProxy'))}</button>
+                <button id="proxy-stop-btn" onclick="stopProxy()" class="btn btn-danger text-xs" ${running ? '' : 'disabled'}>${escapeHtml(t('stopProxy'))}</button>
             </div>
             <div id="proxy-action-error" class="hidden mt-2 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2"></div>
         </div>
@@ -1586,13 +2041,13 @@ function renderProxyControlCard() {
 function renderProxyRouteTestCard() {
     return `
         <div class="card">
-            <h3 class="card-title">Proxy Route Test</h3>
-            <div class="text-xs text-dark-500 mt-1">输入 model ID，测试会路由到哪个 provider</div>
+            <h3 class="card-title">${escapeHtml(t('proxyRouteTest'))}</h3>
+            <div class="text-xs text-dark-500 mt-1">${escapeHtml(t('proxyRouteTestDesc'))}</div>
             <div class="flex gap-2 mt-3">
                 <input id="proxy-test-model" class="input flex-1 text-sm" placeholder="qwen/qwen3-coder-plus">
-                <button id="proxy-test-btn" onclick="testProxyRoute()" class="btn btn-secondary text-xs">测试路由</button>
+                <button id="proxy-test-btn" onclick="testProxyRoute()" class="btn btn-secondary text-xs">${escapeHtml(t('testRoute'))}</button>
             </div>
-            <pre id="proxy-test-result" class="preview-code mt-3">输入 model ID 并点击测试</pre>
+            <pre id="proxy-test-result" class="preview-code mt-3">${escapeHtml(t('routeTestPrompt'))}</pre>
         </div>
     `;
 }
@@ -1625,10 +2080,10 @@ async function runBulkModelAction(action) {
                 setTimeout(() => btn.classList.remove('btn-success-flash'), 1200);
             }
         }, 60);
-        showToast('批量操作成功', 'success', 1500);
+        showToast(t('bulkModelsUpdated'), 'success', 1500);
     } catch (err) {
         if (errorEl) {
-            errorEl.textContent = '批量操作失败：' + (err.message || '网络错误，请检查连接');
+            errorEl.textContent = t('bulkModelsFailed') + (err.message || t('networkErrorGeneric'));
             errorEl.classList.remove('hidden');
         }
         document.querySelectorAll('[data-bulk-action]').forEach(btn => { btn.disabled = false; });
@@ -1643,7 +2098,7 @@ async function addSelectedModelsToAmr() {
 
     if (!provider.enabled) {
         if (errorEl) {
-            errorEl.textContent = '加入 AMR 失败：provider 当前未启用';
+            errorEl.textContent = t('amrProviderDisabled');
             errorEl.classList.remove('hidden');
         }
         return;
@@ -1653,7 +2108,7 @@ async function addSelectedModelsToAmr() {
         .length;
     if (!selectedCount) {
         if (errorEl) {
-            errorEl.textContent = '加入 AMR 失败：没有已选中的启用模型';
+            errorEl.textContent = t('amrNoSelectedModels');
             errorEl.classList.remove('hidden');
         }
         return;
@@ -1674,10 +2129,10 @@ async function addSelectedModelsToAmr() {
                 setTimeout(() => btn.classList.remove('btn-success-flash'), 1200);
             }
         }, 60);
-        showToast(`已加入 ${result.added_count || selectedCount} 个模型到 AMR`, 'success', 1800);
+        showToast(t('amrModelsAdded', { count: result.added_count || selectedCount }), 'success', 1800);
     } catch (err) {
         if (errorEl) {
-            errorEl.textContent = '加入 AMR 失败：' + (err.message || '网络错误，请检查连接');
+            errorEl.textContent = t('amrAddFailed') + (err.message || t('networkErrorGeneric'));
             errorEl.classList.remove('hidden');
         }
         document.querySelectorAll('[data-bulk-action]').forEach(btn => { btn.disabled = false; });
@@ -1698,9 +2153,9 @@ async function setProviderVisibility(providerId, visibility, selectEl) {
         await ensureProviderData();
         await refreshCatalogPreview();
         renderProvidersPage();
-        showToast('Visibility 已更新', 'success', 1500);
+        showToast(t('visibilityUpdated'), 'success', 1500);
     } catch (err) {
-        showToast('更新 visibility 失败：' + (err.message || '网络错误'), 'error');
+        showToast(t('visibilityUpdateFailed') + (err.message || t('networkErrorGeneric')), 'error');
         if (selectEl) {
             const provider = (providerState.providers || []).find(p => p.id === providerId);
             if (provider) selectEl.value = provider.catalog_visibility;
@@ -1733,10 +2188,10 @@ async function startProxy() {
                 setTimeout(() => newBtn.classList.remove('btn-success-flash'), 1200);
             }
         }, 60);
-        showToast('代理已启动', 'success', 1500);
+        showToast(t('proxyStartedToast'), 'success', 1500);
     } catch (err) {
         if (errorEl) {
-            errorEl.textContent = '启动代理失败：' + (err.message || '网络错误');
+            errorEl.textContent = t('proxyStartFailed') + (err.message || t('networkErrorGeneric'));
             errorEl.classList.remove('hidden');
         }
         if (btn) btn.disabled = false;
@@ -1752,10 +2207,10 @@ async function stopProxy() {
         await api('/api/proxy/stop', { method: 'POST', body: '{}' });
         await refreshProxyStatus();
         renderProvidersPage();
-        showToast('代理已停止', 'success', 1500);
+        showToast(t('proxyStoppedToast'), 'success', 1500);
     } catch (err) {
         if (errorEl) {
-            errorEl.textContent = '停止代理失败：' + (err.message || '网络错误');
+            errorEl.textContent = t('proxyStopFailed') + (err.message || t('networkErrorGeneric'));
             errorEl.classList.remove('hidden');
         }
         if (btn) btn.disabled = false;
@@ -1768,28 +2223,28 @@ async function testProxyRoute() {
     const btn = document.getElementById('proxy-test-btn');
     const modelId = (input?.value || '').trim();
     if (!modelId) {
-        if (result) result.textContent = '请输入 model ID';
+        if (result) result.textContent = t('enterModelId');
         return;
     }
     if (btn) btn.disabled = true;
-    if (result) result.textContent = '测试中...';
+    if (result) result.textContent = t('testing');
     try {
         const data = await api('/api/proxy/test-route', {
             method: 'POST',
             body: JSON.stringify({ model: modelId }),
         });
         if (result) {
-            result.textContent = 'Provider: ' + (data.provider_id || '-') + '\n' +
-                'Display: ' + (data.display_name || '-') + '\n' +
-                'Base URL: ' + (data.base_url || '-') + '\n' +
-                'Format: ' + (data.api_format || '-');
+            result.textContent = t('routeTestProvider') + ': ' + (data.provider_id || '-') + '\n' +
+                t('routeTestDisplay') + ': ' + (data.display_name || '-') + '\n' +
+                t('routeTestBaseUrl') + ': ' + (data.base_url || '-') + '\n' +
+                t('routeTestFormat') + ': ' + (data.api_format || '-');
         }
         if (btn) {
             btn.classList.add('btn-success-flash');
             setTimeout(() => btn.classList.remove('btn-success-flash'), 1200);
         }
     } catch (err) {
-        if (result) result.textContent = '测试失败：' + (err.message || '网络错误');
+        if (result) result.textContent = t('routeTestFailed') + (err.message || t('networkErrorGeneric'));
     } finally {
         if (btn) btn.disabled = false;
     }
@@ -1801,6 +2256,13 @@ let codexIntegrationState = {
     status: null,
     preview: null,
     permissionsPreview: null,
+    approvalBridgePreview: null,
+    approvalBridgeMessage: '',
+    approvalBridgeDecision: {
+        decision: 'ask_user',
+        risk_level: 'unknown',
+        reason: 'Dry-run preview only.',
+    },
     backups: [],
     loading: false,
 };
@@ -1823,7 +2285,7 @@ async function loadCodexIntegrationPage() {
     await refreshCodexIntegrationStatus();
     await refreshCodexIntegrationBackups();
     renderCodexIntegrationPage();
-    setStatus('Codex Integration loaded');
+    setStatus(t('codexIntegrationTitle'));
 }
 
 async function refreshCodexIntegrationStatus() {
@@ -1852,9 +2314,9 @@ async function previewCodexIntegration() {
             body: JSON.stringify({ proxy_base_url: proxyBaseUrl, proxy_model: proxyModel }),
         });
         renderCodexIntegrationPage();
-        showToast('Diff preview generated', 'success');
+        showToast(t('diffPreviewGenerated'), 'success');
     } catch (err) {
-        showToast('Preview failed: ' + err.message, 'error');
+        showToast(t('previewFailedWithError', { error: err.message }), 'error');
     }
 }
 
@@ -1874,9 +2336,54 @@ async function previewCodexPermissions() {
             }),
         });
         renderCodexIntegrationPage();
-        showToast('Sandbox preview generated', 'success');
+        showToast(t('sandboxPreviewGenerated'), 'success');
     } catch (err) {
-        showToast('Sandbox preview failed: ' + err.message, 'error');
+        showToast(t('previewFailedWithError', { error: err.message }), 'error');
+    }
+}
+
+function defaultCodexApprovalBridgeMessage() {
+    return {
+        jsonrpc: '2.0',
+        id: 101,
+        method: 'item/commandExecution/requestApproval',
+        params: {
+            threadId: 'thread_dry_run',
+            turnId: 'turn_dry_run',
+            itemId: 'cmd_dry_run',
+            approvalId: 'approval_dry_run',
+            command: 'python -m pytest',
+            cwd: 'C:/repo',
+            reason: 'Run local tests',
+            availableDecisions: ['accept', 'acceptForSession', 'decline'],
+        },
+    };
+}
+
+function codexApprovalBridgeMessageText() {
+    if (codexIntegrationState.approvalBridgeMessage) return codexIntegrationState.approvalBridgeMessage;
+    return JSON.stringify(defaultCodexApprovalBridgeMessage(), null, 2);
+}
+
+async function previewCodexApprovalBridge() {
+    const messageText = document.getElementById('ci-approval-bridge-json')?.value || codexApprovalBridgeMessageText();
+    const decision = {
+        decision: document.getElementById('ci-approval-bridge-decision')?.value || 'ask_user',
+        risk_level: document.getElementById('ci-approval-bridge-risk')?.value || 'unknown',
+        reason: document.getElementById('ci-approval-bridge-reason')?.value || t('previewOnly'),
+    };
+    try {
+        const message = JSON.parse(messageText);
+        codexIntegrationState.approvalBridgeMessage = JSON.stringify(message, null, 2);
+        codexIntegrationState.approvalBridgeDecision = decision;
+        codexIntegrationState.approvalBridgePreview = await api('/api/codex-integration/approval-bridge-preview', {
+            method: 'POST',
+            body: JSON.stringify({ message, decision }),
+        });
+        renderCodexIntegrationPage();
+        showToast(t('approvalBridgePreviewGenerated'), 'success');
+    } catch (err) {
+        showToast(t('previewFailedWithError', { error: err.message }), 'error');
     }
 }
 
@@ -1884,7 +2391,7 @@ async function applyCodexIntegration() {
     const proxyBaseUrl = document.getElementById('ci-proxy-base-url')?.value || getCodexIntegrationProxyBaseUrl();
     const proxyModel = document.getElementById('ci-proxy-model')?.value || 'auto';
     const preserveAuth = document.getElementById('ci-preserve-auth')?.checked !== false;
-    const manual = requestCodexMutationConfirmation('write Codex config.toml');
+    const manual = requestCodexMutationConfirmation(t('writeCodexConfigAction'));
     if (!manual) return;
     try {
         const result = await api('/api/codex-integration/apply', {
@@ -1897,20 +2404,20 @@ async function applyCodexIntegration() {
             }),
         });
         if (result.success) {
-            showToast('Applied. Restart Codex to take effect.', 'success');
+            showToast(t('applySuccessRestart'), 'success');
         } else {
-            showToast('Apply failed: ' + (result.errors || []).join('; '), 'error');
+            showToast(t('applyFailed') + (result.errors || []).join('; '), 'error');
         }
         await refreshCodexIntegrationStatus();
         await refreshCodexIntegrationBackups();
         renderCodexIntegrationPage();
     } catch (err) {
-        showToast('Apply failed: ' + err.message, 'error');
+        showToast(t('applyFailed') + err.message, 'error');
     }
 }
 
 async function restoreCodexConfig() {
-    const manual = requestCodexMutationConfirmation('restore Codex config.toml');
+    const manual = requestCodexMutationConfirmation(t('restoreCodexConfigAction'));
     if (!manual) return;
     try {
         const result = await api('/api/codex-integration/restore-config', {
@@ -1918,19 +2425,19 @@ async function restoreCodexConfig() {
             body: JSON.stringify(manual),
         });
         if (result.success) {
-            showToast('Config restored. Restart Codex.', 'success');
+            showToast(t('configRestoredRestart'), 'success');
         } else {
-            showToast('Restore failed: ' + (result.error || ''), 'error');
+            showToast(t('restoreFailed') + (result.error || ''), 'error');
         }
         await refreshCodexIntegrationStatus();
         renderCodexIntegrationPage();
     } catch (err) {
-        showToast('Restore failed: ' + err.message, 'error');
+        showToast(t('restoreFailed') + err.message, 'error');
     }
 }
 
 async function restoreCodexAuth() {
-    const manual = requestCodexMutationConfirmation('restore Codex auth.json');
+    const manual = requestCodexMutationConfirmation(t('restoreCodexAuthAction'));
     if (!manual) return;
     try {
         const result = await api('/api/codex-integration/restore-auth', {
@@ -1938,26 +2445,22 @@ async function restoreCodexAuth() {
             body: JSON.stringify(manual),
         });
         if (result.success) {
-            showToast('Auth restored. Restart Codex.', 'success');
+            showToast(t('authRestoredRestart'), 'success');
         } else {
-            showToast('Restore failed: ' + (result.error || ''), 'error');
+            showToast(t('restoreFailed') + (result.error || ''), 'error');
         }
         await refreshCodexIntegrationStatus();
         renderCodexIntegrationPage();
     } catch (err) {
-        showToast('Restore failed: ' + err.message, 'error');
+        showToast(t('restoreFailed') + err.message, 'error');
     }
 }
 
 function requestCodexMutationConfirmation(actionLabel) {
     const phrase = 'MODIFY_CODEX_FILES';
-    const value = prompt(
-        'This action will change Codex files or process state: ' + actionLabel + '\n\n' +
-        'Codex mutation tests are manual-only in this workspace.\n' +
-        'Type ' + phrase + ' to continue.'
-    );
+    const value = prompt(t('codexMutationConfirm', { action: actionLabel, phrase }));
     if (value !== phrase) {
-        showToast('Codex mutation cancelled', 'warning');
+        showToast(t('codexMutationCancelled'), 'warning');
         return null;
     }
     return {
@@ -1981,49 +2484,49 @@ function renderCodexIntegrationPage() {
     const proxyStatus = status.proxy_status || {};
     const proxyBackoff = proxyStatus.port_backoff || {};
     const proxyBackoffNote = proxyBackoff.used
-        ? `<div class="mt-2 text-xs text-amber-300">Configured port ${escapeHtml(proxyBackoff.from)} was occupied; using ${escapeHtml(proxyBackoff.to)}.</div>`
+        ? `<div class="mt-2 text-xs text-amber-300">${escapeHtml(t('proxyBackoffNotice', { from: proxyBackoff.from, to: proxyBackoff.to }))}</div>`
         : '';
 
     root.innerHTML = `
         <div class="animate-in">
         <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
             <div>
-                <h2 class="text-2xl font-semibold text-white">Codex Integration</h2>
-                <p class="text-sm text-dark-400 mt-1">Safe config/auth management with diff preview, backup, and rollback.</p>
+                <h2 class="text-2xl font-semibold text-white">${escapeHtml(t('codexIntegrationTitle'))}</h2>
+                <p class="text-sm text-dark-400 mt-1">${escapeHtml(t('codexIntegrationDesc'))}</p>
             </div>
             <div class="enhance-status-strip">
-                ${renderStatusPill('auth-mode', 'Auth: ' + (status.auth_mode || 'unknown'), status.auth_mode === 'official_oauth' ? 'emerald' : 'amber')}
-                ${renderStatusPill('restart', 'Restart required after writes', 'amber')}
+                ${renderStatusPill('auth-mode', t('authPill', { mode: status.auth_mode || t('statusUnknown') }), status.auth_mode === 'official_oauth' ? 'emerald' : 'amber')}
+                ${renderStatusPill('restart', t('restartRequiredAfterWrites'), 'amber')}
             </div>
         </div>
 
         <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4 mt-6">
             <div class="space-y-4">
                 <div class="card">
-                    <h3 class="card-title">Current Codex Status</h3>
+                    <h3 class="card-title">${escapeHtml(t('currentCodexStatus'))}</h3>
                     <div class="space-y-2 mt-3 text-sm text-dark-300">
-                        <div class="flex justify-between"><span class="text-dark-500">Config path</span><span class="font-mono text-dark-200">${escapeHtml(status.config_path || '-')}</span></div>
-                        <div class="flex justify-between"><span class="text-dark-500">Auth path</span><span class="font-mono text-dark-200">${escapeHtml(status.auth_path || '-')}</span></div>
-                        <div class="flex justify-between"><span class="text-dark-500">Auth mode</span><span class="font-mono ${status.auth_mode === 'official_oauth' ? 'text-emerald-400' : 'text-amber-400'}">${escapeHtml(status.auth_mode || 'none')}</span></div>
-                        <div class="flex justify-between"><span class="text-dark-500">Model provider</span><span class="font-mono text-dark-200">${escapeHtml((status.config || {}).model_provider || '-')}</span></div>
-                        <div class="flex justify-between"><span class="text-dark-500">Model</span><span class="font-mono text-dark-200">${escapeHtml((status.config || {}).model || '-')}</span></div>
+                        <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('configPath'))}</span><span class="font-mono text-dark-200">${escapeHtml(status.config_path || '-')}</span></div>
+                        <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('authPath'))}</span><span class="font-mono text-dark-200">${escapeHtml(status.auth_path || '-')}</span></div>
+                        <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('authModeLabel'))}</span><span class="font-mono ${status.auth_mode === 'official_oauth' ? 'text-emerald-400' : 'text-amber-400'}">${escapeHtml(status.auth_mode || 'none')}</span></div>
+                        <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('modelProviderLabel'))}</span><span class="font-mono text-dark-200">${escapeHtml((status.config || {}).model_provider || '-')}</span></div>
+                        <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('modelLabelShort'))}</span><span class="font-mono text-dark-200">${escapeHtml((status.config || {}).model || '-')}</span></div>
                     </div>
                 </div>
 
                 <div class="card">
-                    <h3 class="card-title">Local Proxy Settings</h3>
+                    <h3 class="card-title">${escapeHtml(t('localProxySettings'))}</h3>
                     <div class="grid grid-cols-1 gap-4 mt-3">
-                        ${renderInput('ci-proxy-base-url', 'Proxy Base URL', proxyBaseUrl)}
-                        ${renderInput('ci-proxy-model', 'Proxy Model', 'auto')}
+                        ${renderInput('ci-proxy-base-url', t('proxyBaseUrl'), proxyBaseUrl)}
+                        ${renderInput('ci-proxy-model', t('proxyModel'), 'auto')}
                         <label class="flex items-center gap-2 text-sm cursor-pointer">
                             <input id="ci-preserve-auth" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" checked>
-                            <span>Preserve official OAuth (do not modify auth.json)</span>
+                            <span>${escapeHtml(t('preserveOfficialOAuth'))}</span>
                         </label>
                     </div>
                     ${proxyBackoffNote}
                     <div class="flex flex-wrap gap-2 mt-4">
-                        <button onclick="previewCodexIntegration()" class="btn btn-secondary">Preview Diff</button>
-                        <button onclick="applyCodexIntegration()" class="btn btn-warning">Manual Apply to Codex Config</button>
+                        <button onclick="previewCodexIntegration()" class="btn btn-secondary">${escapeHtml(t('previewDiff'))}</button>
+                        <button onclick="applyCodexIntegration()" class="btn btn-warning">${escapeHtml(t('manualApplyCodexConfig'))}</button>
                     </div>
                 </div>
 
@@ -2032,20 +2535,21 @@ function renderCodexIntegrationPage() {
 
             <div class="space-y-4">
                 ${preview ? renderDiffPreview(preview) : renderDiffPreviewShell()}
+                ${renderApprovalBridgePreviewCard(codexIntegrationState.approvalBridgePreview)}
 
                 <div class="card">
-                    <h3 class="card-title">Backups & Rollback</h3>
+                    <h3 class="card-title">${escapeHtml(t('backupsRollback'))}</h3>
                     <div class="space-y-2 mt-3">
                         ${backups.length ? backups.slice(0, 6).map(b => `
                             <div class="flex items-center justify-between text-sm">
                                 <span class="font-mono text-dark-300">${escapeHtml(b.name)}</span>
                                 <span class="text-dark-500">${escapeHtml(b.mtime ? b.mtime.slice(0, 19).replace('T', ' ') : '')}</span>
                             </div>
-                        `).join('') : '<div class="text-sm text-dark-500">No backups yet.</div>'}
+                        `).join('') : `<div class="text-sm text-dark-500">${escapeHtml(t('noBackupsYet'))}</div>`}
                     </div>
                     <div class="flex flex-wrap gap-2 mt-4">
-                        <button onclick="restoreCodexConfig()" class="btn btn-warning text-xs">Manual Restore Config</button>
-                        <button onclick="restoreCodexAuth()" class="btn btn-warning text-xs">Manual Restore Auth</button>
+                        <button onclick="restoreCodexConfig()" class="btn btn-warning text-xs">${escapeHtml(t('manualRestoreConfig'))}</button>
+                        <button onclick="restoreCodexAuth()" class="btn btn-warning text-xs">${escapeHtml(t('manualRestoreAuth'))}</button>
                     </div>
                 </div>
             </div>
@@ -2067,19 +2571,72 @@ function renderDiffPreview(preview) {
     return `
         <div class="card">
             <div class="flex items-center justify-between gap-3">
-                <h3 class="card-title">Diff Preview</h3>
-                ${hasChanges ? renderStatusPill('pending', 'changes pending', 'amber') : renderStatusPill('clean', 'no changes', 'emerald')}
+                <h3 class="card-title">${escapeHtml(t('diffPreview'))}</h3>
+                ${hasChanges ? renderStatusPill('pending', t('changesPending'), 'amber') : renderStatusPill('clean', t('noChanges'), 'emerald')}
             </div>
             ${(preview.warnings || []).length ? `<div class="mt-3 space-y-1">${(preview.warnings || []).map(w => `<div class="text-xs text-amber-300">${escapeHtml(w)}</div>`).join('')}</div>` : ''}
             <div class="mt-3 space-y-2 text-sm">
                 ${Object.entries(diff.added || {}).map(([k, v]) => `<div class="diff-added">+ ${escapeHtml(k)} = ${escapeHtml(JSON.stringify(v))}</div>`).join('')}
                 ${Object.entries(diff.changed || {}).map(([k, v]) => `<div class="diff-changed">~ ${escapeHtml(k)}: ${escapeHtml(JSON.stringify(v.old))} → ${escapeHtml(JSON.stringify(v.new))}</div>`).join('')}
                 ${Object.entries(diff.removed || {}).map(([k, v]) => `<div class="diff-removed">- ${escapeHtml(k)} = ${escapeHtml(JSON.stringify(v))}</div>`).join('')}
-                ${!hasChanges ? '<div class="text-dark-500">No differences from current config.</div>' : ''}
+                ${!hasChanges ? `<div class="text-dark-500">${escapeHtml(t('noDifferencesConfig'))}</div>` : ''}
             </div>
             <div class="mt-3 text-xs text-dark-500">
-                preserve_official_oauth: ${preview.preserve_official_oauth ? 'true' : 'false'}
-                &middot; restart_required: ${preview.restart_required ? 'true' : 'false'}
+                ${escapeHtml(t('preserveOfficialOAuthStatus'))}: ${escapeHtml(preview.preserve_official_oauth ? t('yes') : t('no'))}
+                &middot; ${escapeHtml(t('restartRequiredStatus'))}: ${escapeHtml(preview.restart_required ? t('yes') : t('no'))}
+            </div>
+        </div>
+    `;
+}
+
+function renderApprovalBridgePreviewCard(preview) {
+    const decision = codexIntegrationState.approvalBridgeDecision || {};
+    return `
+        <div class="card">
+            <div class="flex items-center justify-between gap-3">
+                <h3 class="card-title">${escapeHtml(t('approvalBridgeDryRun'))}</h3>
+                ${renderStatusPill('transport', t('previewOnly'), 'amber')}
+            </div>
+            <p class="text-xs text-dark-400 mt-1">${escapeHtml(t('approvalBridgeDesc'))}</p>
+            <textarea id="ci-approval-bridge-json" class="input mt-3 w-full font-mono text-xs" rows="9">${escapeHtml(codexApprovalBridgeMessageText())}</textarea>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                <select id="ci-approval-bridge-decision" class="input">
+                    ${renderOption('ask_user', t('decisionAskUser'), (decision.decision || 'ask_user') === 'ask_user')}
+                    ${renderOption('accept', t('decisionAccept'), decision.decision === 'accept')}
+                    ${renderOption('decline', t('decisionDecline'), decision.decision === 'decline')}
+                </select>
+                <select id="ci-approval-bridge-risk" class="input">
+                    ${renderOption('unknown', t('riskUnknown'), (decision.risk_level || 'unknown') === 'unknown')}
+                    ${renderOption('low', t('riskLow'), decision.risk_level === 'low')}
+                    ${renderOption('medium', t('riskMedium'), decision.risk_level === 'medium')}
+                    ${renderOption('high', t('riskHigh'), decision.risk_level === 'high')}
+                    ${renderOption('critical', t('riskCritical'), decision.risk_level === 'critical')}
+                </select>
+                <input id="ci-approval-bridge-reason" class="input" value="${escapeAttr(decision.reason || t('previewOnly'))}" placeholder="${escapeAttr(t('decisionReason'))}">
+            </div>
+            <button onclick="previewCodexApprovalBridge()" class="btn btn-secondary mt-3">${escapeHtml(t('previewApprovalBridge'))}</button>
+            ${preview ? renderApprovalBridgePreviewResult(preview) : `<div class="text-xs text-dark-500 mt-3">${escapeHtml(t('noApprovalBridgePreviewYet'))}</div>`}
+        </div>
+    `;
+}
+
+function renderApprovalBridgePreviewResult(preview) {
+    const action = preview.broker_action || {};
+    const response = preview.jsonrpc_response || {};
+    return `
+        <div class="enhance-status-strip mt-3">
+            ${renderStatusPill('method', preview.method || t('statusUnknown'), preview.success ? 'accent' : 'amber')}
+            ${renderStatusPill('action', action.kind || t('statusUnknown'), action.kind ? 'emerald' : 'amber')}
+            ${renderStatusPill('live', preview.live_transport_connected ? t('connectedLabel') : t('previewOnly'), preview.live_transport_connected ? 'emerald' : 'amber')}
+        </div>
+        <div class="grid grid-cols-1 gap-3 mt-3">
+            <div>
+                <div class="text-xs text-dark-400 mb-1">${escapeHtml(t('brokerAction'))}</div>
+                <pre class="preview-code">${escapeHtml(JSON.stringify(action, null, 2))}</pre>
+            </div>
+            <div>
+                <div class="text-xs text-dark-400 mb-1">${escapeHtml(t('simulatedJsonRpcResponse'))}</div>
+                <pre class="preview-code">${escapeHtml(JSON.stringify(response, null, 2))}</pre>
             </div>
         </div>
     `;
@@ -2098,82 +2655,82 @@ function renderPermissionsAudit(current, preview) {
     return `
         <div class="card">
             <div class="flex items-center justify-between gap-3">
-                <h3 class="card-title">Approval & Sandbox Audit</h3>
-                ${renderStatusPill('sandbox', current.issue_count ? `${current.issue_count} issues` : 'clean', issueColor)}
+                <h3 class="card-title">${escapeHtml(t('approvalSandboxAudit'))}</h3>
+                ${renderStatusPill('sandbox', current.issue_count ? t('issueCount', { count: current.issue_count }) : t('cleanStatus'), issueColor)}
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 text-sm">
-                ${renderReadonlyKV('approval_policy', current.approval_policy || '(default)')}
-                ${renderReadonlyKV('sandbox_mode', current.sandbox_mode || '(derived/default)')}
-                ${renderReadonlyKV('default_permissions', current.default_permissions || '(none)')}
-                ${renderReadonlyKV('windows.sandbox', current.windows_sandbox || '(default)')}
-                ${renderReadonlyKV('network_access', String((current.sandbox_workspace_write || {}).network_access || false))}
-                ${renderReadonlyKV('full_access_detected', String(Boolean(current.effective_full_access)))}
+                ${renderReadonlyKV(t('approvalPolicy'), current.approval_policy || t('defaultValueLabel'))}
+                ${renderReadonlyKV(t('sandboxMode'), current.sandbox_mode || t('derivedDefaultValue'))}
+                ${renderReadonlyKV(t('defaultPermissions'), current.default_permissions || t('noneValueLabel'))}
+                ${renderReadonlyKV(t('windowsSandbox'), current.windows_sandbox || t('defaultValueLabel'))}
+                ${renderReadonlyKV(t('networkAccess'), (current.sandbox_workspace_write || {}).network_access ? t('yes') : t('no'))}
+                ${renderReadonlyKV(t('fullAccessDetected'), current.effective_full_access ? t('yes') : t('no'))}
             </div>
             ${issues.length ? `<div class="mt-3 space-y-1">${issues.map(issue => `
                 <div class="text-xs ${issue.severity === 'error' || issue.severity === 'high' ? 'text-red-300' : 'text-amber-300'}">
-                    ${escapeHtml(issue.field || 'config')}: ${escapeHtml(issue.message || '')}
+                    ${escapeHtml(issue.field || t('configLabel'))}: ${escapeHtml(issue.message || '')}
                 </div>
-            `).join('')}</div>` : '<div class="mt-3 text-xs text-emerald-300">No known approval/sandbox corruption detected.</div>'}
+            `).join('')}</div>` : `<div class="mt-3 text-xs text-emerald-300">${escapeHtml(t('noSandboxCorruption'))}</div>`}
             ${warnings.length ? `<div class="mt-2 space-y-1">${warnings.map(w => `<div class="text-xs text-amber-300">${escapeHtml(w)}</div>`).join('')}</div>` : ''}
             ${recommendations.length ? `<div class="mt-2 space-y-1">${recommendations.map(r => `<div class="text-xs text-dark-400">${escapeHtml(r)}</div>`).join('')}</div>` : ''}
 
             <details class="advanced-box mt-4">
-                <summary>Sandbox Preview</summary>
+                <summary>${escapeHtml(t('sandboxPreview'))}</summary>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                     <div>
-                        <label class="text-xs text-dark-400">Approval Policy</label>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('approvalPolicy'))}</label>
                         <select id="ci-approval-policy" class="input mt-1 w-full">
-                            ${renderOption('', 'Keep current', true)}
-                            ${renderOption('untrusted', 'untrusted', false)}
-                            ${renderOption('on-request', 'on-request', false)}
-                            ${renderOption('never', 'never', false)}
-                            ${renderOption('on-failure', 'on-failure (deprecated)', false)}
+                            ${renderOption('', t('keepCurrent'), true)}
+                            ${renderOption('untrusted', t('approvalPolicyUntrusted'), false)}
+                            ${renderOption('on-request', t('approvalPolicyOnRequest'), false)}
+                            ${renderOption('never', t('approvalPolicyNever'), false)}
+                            ${renderOption('on-failure', t('approvalPolicyOnFailure'), false)}
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Sandbox Mode</label>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('sandboxMode'))}</label>
                         <select id="ci-sandbox-mode" class="input mt-1 w-full">
-                            ${renderOption('', 'Keep current', true)}
-                            ${renderOption('read-only', 'read-only', false)}
-                            ${renderOption('workspace-write', 'workspace-write', false)}
-                            ${renderOption('danger-full-access', 'danger-full-access', false)}
+                            ${renderOption('', t('keepCurrent'), true)}
+                            ${renderOption('read-only', t('sandboxReadOnly'), false)}
+                            ${renderOption('workspace-write', t('sandboxWorkspaceWrite'), false)}
+                            ${renderOption('danger-full-access', t('sandboxDangerFullAccess'), false)}
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Windows Sandbox</label>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('windowsSandbox'))}</label>
                         <select id="ci-windows-sandbox" class="input mt-1 w-full">
-                            ${renderOption('', 'Keep current', true)}
-                            ${renderOption('disabled', 'disabled', false)}
-                            ${renderOption('restricted-token', 'restricted-token', false)}
-                            ${renderOption('elevated', 'elevated', false)}
+                            ${renderOption('', t('keepCurrent'), true)}
+                            ${renderOption('disabled', t('windowsSandboxDisabled'), false)}
+                            ${renderOption('restricted-token', t('windowsSandboxRestricted'), false)}
+                            ${renderOption('elevated', t('windowsSandboxElevated'), false)}
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Default Permissions</label>
-                        <input id="ci-default-permissions" class="input mt-1 w-full" placeholder="Keep current or :workspace">
+                        <label class="text-xs text-dark-400">${escapeHtml(t('defaultPermissions'))}</label>
+                        <input id="ci-default-permissions" class="input mt-1 w-full" placeholder="${escapeAttr(t('keepCurrentWorkspace'))}">
                     </div>
                     <div class="md:col-span-2">
-                        <label class="text-xs text-dark-400">Writable Roots</label>
-                        <textarea id="ci-writable-roots" class="input mt-1 w-full min-h-[72px]" placeholder="One path per line or comma-separated"></textarea>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('writableRoots'))}</label>
+                        <textarea id="ci-writable-roots" class="input mt-1 w-full min-h-[72px]" placeholder="${escapeAttr(t('writableRootsPlaceholder'))}"></textarea>
                     </div>
                     <label class="flex items-center gap-2 text-sm">
                         <input id="ci-network-access" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span>workspace network_access</span>
+                        <span>${escapeHtml(t('workspaceNetworkAccess'))}</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm">
                         <input id="ci-exclude-tmpdir-env" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span>exclude_tmpdir_env_var</span>
+                        <span>${escapeHtml(t('excludeTmpdirEnvVar'))}</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm">
                         <input id="ci-exclude-slash-tmp" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span>exclude_slash_tmp</span>
+                        <span>${escapeHtml(t('excludeSlashTmp'))}</span>
                     </label>
                 </div>
-                <button onclick="previewCodexPermissions()" class="btn btn-secondary mt-3">Preview Sandbox Diff</button>
-                ${preview ? renderPermissionsPreviewResult(preview, desired, previewHasChanges) : '<div class="text-xs text-dark-500 mt-3">Preview only. This does not write config.toml.</div>'}
+                <button onclick="previewCodexPermissions()" class="btn btn-secondary mt-3">${escapeHtml(t('previewSandboxDiff'))}</button>
+                ${preview ? renderPermissionsPreviewResult(preview, desired, previewHasChanges) : `<div class="text-xs text-dark-500 mt-3">${escapeHtml(t('previewOnlyNoConfigWrite'))}</div>`}
             </details>
             <details class="advanced-box mt-3">
-                <summary>Verified Source Notes</summary>
+                <summary>${escapeHtml(t('verifiedSourceNotes'))}</summary>
                 <div class="mt-2 space-y-1">
                     ${(current.source_notes || []).map(note => `<div class="text-xs text-dark-400">${escapeHtml(note)}</div>`).join('')}
                 </div>
@@ -2201,16 +2758,16 @@ function renderPermissionsPreviewResult(preview, desired, hasChanges) {
     return `
         <div class="mt-3 rounded-md border border-dark-800 bg-dark-900/50 p-3">
             <div class="flex items-center justify-between gap-3">
-                <span class="text-sm font-medium text-dark-200">Sandbox Diff Preview</span>
-                ${hasChanges ? renderStatusPill('pending', 'changes pending', 'amber') : renderStatusPill('clean', 'no changes', 'emerald')}
+                <span class="text-sm font-medium text-dark-200">${escapeHtml(t('sandboxDiffPreview'))}</span>
+                ${hasChanges ? renderStatusPill('pending', t('changesPending'), 'amber') : renderStatusPill('clean', t('noChanges'), 'emerald')}
             </div>
             <div class="mt-2 space-y-1 text-xs">
                 ${Object.entries(diff.added || {}).map(([k, v]) => `<div class="diff-added">+ ${escapeHtml(k)} = ${escapeHtml(JSON.stringify(v))}</div>`).join('')}
                 ${Object.entries(diff.changed || {}).map(([k, v]) => `<div class="diff-changed">~ ${escapeHtml(k)}: ${escapeHtml(JSON.stringify(v.old))} -> ${escapeHtml(JSON.stringify(v.new))}</div>`).join('')}
                 ${Object.entries(diff.removed || {}).map(([k, v]) => `<div class="diff-removed">- ${escapeHtml(k)} = ${escapeHtml(JSON.stringify(v))}</div>`).join('')}
-                ${!hasChanges ? '<div class="text-dark-500">No differences from current config.</div>' : ''}
+                ${!hasChanges ? `<div class="text-dark-500">${escapeHtml(t('noDifferencesConfig'))}</div>` : ''}
             </div>
-            ${desiredIssues.length ? `<div class="mt-2 space-y-1">${desiredIssues.map(issue => `<div class="text-xs text-amber-300">${escapeHtml(issue.field || 'config')}: ${escapeHtml(issue.message || '')}</div>`).join('')}</div>` : ''}
+            ${desiredIssues.length ? `<div class="mt-2 space-y-1">${desiredIssues.map(issue => `<div class="text-xs text-amber-300">${escapeHtml(issue.field || t('configLabel'))}: ${escapeHtml(issue.message || '')}</div>`).join('')}</div>` : ''}
         </div>
     `;
 }
@@ -2218,8 +2775,8 @@ function renderPermissionsPreviewResult(preview, desired, hasChanges) {
 function renderDiffPreviewShell() {
     return `
         <div class="card">
-            <h3 class="card-title">Diff Preview</h3>
-            <div class="text-sm text-dark-500 mt-3">Click "Preview Diff" to see what will change in config.toml before applying.</div>
+            <h3 class="card-title">${escapeHtml(t('diffPreview'))}</h3>
+            <div class="text-sm text-dark-500 mt-3">${escapeHtml(t('clickPreviewDiffHint'))}</div>
         </div>
     `;
 }

@@ -2,7 +2,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from startup_manager import CommandResult, STARTUP_CONFIRMATION, StartupManager
+from startup_manager import (
+    CommandResult,
+    PACKAGED_RELEASE_EXE_NAME,
+    STARTUP_CONFIRMATION,
+    StartupManager,
+)
 
 
 class StartupManagerTest(unittest.TestCase):
@@ -66,6 +71,44 @@ class StartupManagerTest(unittest.TestCase):
 
             self.assertTrue(result["success"])
             self.assertEqual(calls[-1], create_action["argv"])
+
+    def test_preview_reports_release_exe_target_diagnostics(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exe_path = Path(tmpdir) / PACKAGED_RELEASE_EXE_NAME
+            exe_path.write_bytes(b"fake exe")
+            manager = StartupManager(startup_dir=Path(tmpdir), platform_name="Windows")
+
+            preview = manager.preview({
+                "startup_enabled": True,
+                "startup_mode": "startup_folder",
+                "startup_target_path": str(exe_path),
+            })
+
+            diagnostics = preview["target_diagnostics"]
+            self.assertTrue(diagnostics["target_exists"])
+            self.assertTrue(diagnostics["target_is_exe"])
+            self.assertTrue(diagnostics["target_matches_release_exe_name"])
+            self.assertTrue(diagnostics["release_startup_ready"])
+            self.assertEqual(diagnostics["warning_count"], 0)
+
+    def test_preview_warns_when_startup_target_is_not_packaged_exe(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script_path = Path(tmpdir) / "run-dev.py"
+            script_path.write_text("print('dev')\n", encoding="utf-8")
+            manager = StartupManager(startup_dir=Path(tmpdir), platform_name="Windows")
+
+            preview = manager.preview({
+                "startup_enabled": True,
+                "startup_mode": "startup_folder",
+                "startup_target_path": str(script_path),
+            })
+
+            diagnostics = preview["target_diagnostics"]
+            self.assertTrue(diagnostics["target_exists"])
+            self.assertFalse(diagnostics["target_is_exe"])
+            self.assertFalse(diagnostics["release_startup_ready"])
+            self.assertGreaterEqual(diagnostics["warning_count"], 1)
+            self.assertTrue(any("not a Windows EXE" in item for item in diagnostics["warnings"]))
 
     def test_remove_deletes_startup_file_and_existing_task(self):
         calls = []

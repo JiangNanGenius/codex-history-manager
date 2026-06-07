@@ -156,11 +156,11 @@ async function saveCurrencySettings() {
             method: 'POST',
             body: JSON.stringify(payload),
         });
-        if (!result.success) throw new Error(result.error || 'Currency settings save failed');
+        if (!result.success) throw new Error(result.error || t('currencySettingsSaveFailed'));
         await loadCurrencySettings();
-        showToast('Currency settings saved', 'success');
+        showToast(t('currencySettingsSaved'), 'success');
     } catch (err) {
-        showToast('Currency save failed: ' + err.message, 'error');
+        showToast(t('currencySaveFailed') + err.message, 'error');
     }
 }
 
@@ -178,7 +178,7 @@ async function previewCurrencyRate() {
         });
         resultEl.textContent = JSON.stringify(data, null, 2);
     } catch (err) {
-        resultEl.textContent = 'Preview failed: ' + err.message;
+        resultEl.textContent = t('previewFailed') + err.message;
     }
 }
 
@@ -243,7 +243,7 @@ async function loadStartupStatus() {
         renderStartupStatus(data);
     } catch (err) {
         strip.className = 'mt-4 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200';
-        strip.textContent = 'Startup status failed: ' + err.message;
+        strip.textContent = t('startupStatusFailed') + err.message;
     }
 }
 
@@ -268,6 +268,7 @@ async function previewStartupSettings() {
             startup_entry_exists: false,
             scheduled_task_exists: false,
             scheduled_task_checked: false,
+            target_diagnostics: data.target_diagnostics,
         });
     } catch (err) {
         renderInlineError('startup-preview-result', err.message);
@@ -275,9 +276,9 @@ async function previewStartupSettings() {
 }
 
 async function applyStartupSettings() {
-    const confirmation = prompt('Type MODIFY_WINDOWS_STARTUP to apply the startup change.');
+    const confirmation = prompt(t('startupConfirmApply'));
     if (confirmation !== 'MODIFY_WINDOWS_STARTUP') {
-        showToast('Startup change cancelled', 'warning');
+        showToast(t('startupChangeCancelled'), 'warning');
         return;
     }
     try {
@@ -288,16 +289,16 @@ async function applyStartupSettings() {
         });
         renderStartupMutationResult(result);
         await loadStartupStatus();
-        showToast('Startup change applied', 'success');
+        showToast(t('startupChangeApplied'), 'success');
     } catch (err) {
         renderInlineError('startup-preview-result', err.message);
     }
 }
 
 async function removeStartupSettings() {
-    const confirmation = prompt('Type MODIFY_WINDOWS_STARTUP to remove the startup entry.');
+    const confirmation = prompt(t('startupConfirmRemove'));
     if (confirmation !== 'MODIFY_WINDOWS_STARTUP') {
-        showToast('Startup removal cancelled', 'warning');
+        showToast(t('startupRemovalCancelled'), 'warning');
         return;
     }
     try {
@@ -308,7 +309,7 @@ async function removeStartupSettings() {
         renderStartupMutationResult(result);
         await loadStartupStatus();
         await loadSettings();
-        showToast('Startup entry removed', 'success');
+        showToast(t('startupEntryRemoved'), 'success');
     } catch (err) {
         renderInlineError('startup-preview-result', err.message);
     }
@@ -326,17 +327,36 @@ function renderStartupStatus(data) {
         : active
             ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
             : 'border-dark-800 bg-dark-950/40 text-dark-300';
-    const entry = data.startup_entry_exists ? 'startup file present' : 'startup file absent';
-    const task = data.scheduled_task_exists ? 'scheduled task present' : 'scheduled task absent';
-    const checked = data.scheduled_task_checked === false ? 'task not checked' : task;
+    const entry = data.startup_entry_exists ? t('startupFilePresent') : t('startupFileAbsent');
+    const task = data.scheduled_task_exists ? t('scheduledTaskPresent') : t('scheduledTaskAbsent');
+    const checked = data.scheduled_task_checked === false ? t('scheduledTaskNotChecked') : task;
+    const targetDiagnostics = data.target_diagnostics || {};
+    const targetSummary = formatStartupTargetSummary(targetDiagnostics, active);
+    const warnings = active && Array.isArray(targetDiagnostics.warnings) ? targetDiagnostics.warnings : [];
     strip.className = `mt-4 rounded-md border ${cls} px-4 py-2 text-sm`;
-    strip.textContent = `${supported ? 'Windows integration supported' : 'Unsupported platform'} · Mode: ${mode} · ${entry} · ${checked}`;
+    strip.innerHTML = `
+        <div>${escapeHtml(supported ? t('windowsIntegrationSupported') : t('unsupportedPlatform'))} | ${escapeHtml(t('modeStatus', { mode }))} | ${escapeHtml(entry)} | ${escapeHtml(checked)} | ${escapeHtml(targetSummary)}</div>
+        ${warnings.length ? `<div class="mt-1 text-xs">${warnings.map(item => escapeHtml(item)).join('<br>')}</div>` : ''}
+    `;
 }
 
 function renderStartupMutationResult(result) {
     const resultEl = document.getElementById('startup-preview-result');
     if (!resultEl) return;
     resultEl.textContent = JSON.stringify(result, null, 2);
+}
+
+function formatStartupTargetSummary(diagnostics = {}, active = false) {
+    if (!active) return t('targetNotUsed');
+    const name = diagnostics.target_name || diagnostics.target || 'target';
+    const exists = diagnostics.target_exists ? t('targetExists') : t('targetMissing');
+    if (diagnostics.release_startup_ready) {
+        return t('targetReleaseReady', { name, exists });
+    }
+    if (diagnostics.target_is_exe) {
+        return t('targetExeNeedsReview', { name, exists });
+    }
+    return t('targetNotPackagedExe', { name, exists });
 }
 
 function resolveTheme(data) {
@@ -469,9 +489,9 @@ async function exportSettings() {
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
-        showToast('Settings exported', 'success');
+        showToast(t('settingsExported'), 'success');
     } catch (err) {
-        showToast('Export failed: ' + err.message, 'error');
+        showToast(t('exportFailed') + err.message, 'error');
     }
 }
 
@@ -485,11 +505,11 @@ async function importSettingsFromFile(input) {
             method: 'POST',
             body: JSON.stringify(payload),
         });
-        if (!result.success) throw new Error(result.error || 'Import failed');
-        showToast('Settings imported', 'success');
+        if (!result.success) throw new Error(result.error || t('settingsImportFailed'));
+        showToast(t('settingsImported'), 'success');
         await loadSettings();
     } catch (err) {
-        showToast('Import failed: ' + err.message, 'error');
+        showToast(t('settingsImportFailed') + ': ' + err.message, 'error');
     } finally {
         input.value = '';
     }
@@ -513,9 +533,9 @@ async function exportTheme() {
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
-        showToast('Theme exported', 'success');
+        showToast(t('themeExported'), 'success');
     } catch (err) {
-        showToast('Theme export failed: ' + err.message, 'error');
+        showToast(t('themeExportFailed') + err.message, 'error');
     }
 }
 
@@ -534,12 +554,12 @@ async function importThemeFromFile(input) {
             method: 'POST',
             body: JSON.stringify(nextTheme),
         });
-        if (!result.success) throw new Error(result.error || 'Theme import failed');
+        if (!result.success) throw new Error(result.error || t('themeImportFailed'));
         populateSettingsForm(await api('/api/settings'));
         applyThemeSettings(nextTheme);
-        showToast('Theme imported', 'success');
+        showToast(t('themeImported'), 'success');
     } catch (err) {
-        showToast('Theme import failed: ' + err.message, 'error');
+        showToast(t('themeImportFailed') + err.message, 'error');
     } finally {
         input.value = '';
     }
@@ -556,14 +576,14 @@ async function loadStorageInfo() {
     try {
         const data = await api('/api/settings/storage');
         const rows = [
-            ['App Data', data.app_data_dir],
-            ['Config', data.config_file],
-            ['Provider Registry', data.provider_store_path],
-            ['Backups', data.backup_dir],
-            ['Temp', data.temp_dir],
-            ['Diagnostics', data.diagnostics_dir],
-            ['Exports', data.exports_dir],
-            ['Legacy Config', data.legacy_config_exists ? data.legacy_config_file : 'not present'],
+            [t('appDataStorage'), data.app_data_dir],
+            [t('configStorage'), data.config_file],
+            [t('providerRegistryStorage'), data.provider_store_path],
+            [t('backupsStorage'), data.backup_dir],
+            [t('tempDir'), data.temp_dir],
+            [t('diagnosticsDir'), data.diagnostics_dir],
+            [t('exportsDir'), data.exports_dir],
+            [t('legacyConfig'), data.legacy_config_exists ? data.legacy_config_file : t('notPresent')],
         ];
         container.innerHTML = rows.map(([label, value]) => `
             <div class="flex gap-3 py-2 border-b border-dark-800 last:border-b-0">
@@ -589,9 +609,9 @@ async function loadCleanupPreview() {
 
 async function executeCleanup() {
     const selected = Array.from(document.querySelectorAll('[data-cleanup-target]:checked')).map(el => el.value);
-    const confirmation = prompt('Type CLEAN_LOCAL_CACHE to clean selected local cache targets.');
+    const confirmation = prompt(t('cleanupConfirm'));
     if (confirmation !== 'CLEAN_LOCAL_CACHE') {
-        showToast('Cleanup cancelled', 'warning');
+        showToast(t('cleanupCancelled'), 'warning');
         return;
     }
     try {
@@ -601,7 +621,7 @@ async function executeCleanup() {
         });
         renderCleanupResults('cleanup-result', result.results || []);
         await loadCleanupPreview();
-        showToast('Cleanup completed', 'success');
+        showToast(t('cleanupCompleted'), 'success');
     } catch (err) {
         renderInlineError('cleanup-result', err.message);
     }
@@ -620,9 +640,9 @@ async function loadUninstallPreview() {
 }
 
 async function executeUninstallCleanup() {
-    const confirmation = prompt('Type UNINSTALL_CLEANUP to remove app-owned local data and lock writes until restart.');
+    const confirmation = prompt(t('uninstallConfirm'));
     if (confirmation !== 'UNINSTALL_CLEANUP') {
-        showToast('Uninstall cleanup cancelled', 'warning');
+        showToast(t('uninstallCancelled'), 'warning');
         return;
     }
     try {
@@ -632,7 +652,7 @@ async function executeUninstallCleanup() {
         });
         renderCleanupResults('uninstall-cleanup-result', result.results || []);
         renderWriteLockState(true, result.reason || '');
-        showToast('Uninstall cleanup completed; writes locked until restart.', 'success', 5000);
+        showToast(t('uninstallCompleted'), 'success', 5000);
     } catch (err) {
         renderInlineError('uninstall-cleanup-result', err.message);
     }
@@ -642,7 +662,7 @@ function renderCleanupTargets(container, targets, options = {}) {
     const selectable = options.selectable !== false;
     const prefix = options.prefix || 'target';
     if (!targets.length) {
-        container.innerHTML = '<div class="text-sm text-dark-500">No targets.</div>';
+        container.innerHTML = `<div class="text-sm text-dark-500">${escapeHtml(t('noTargets'))}</div>`;
         return;
     }
     container.innerHTML = targets.map(target => {
@@ -659,8 +679,8 @@ function renderCleanupTargets(container, targets, options = {}) {
                 <div class="min-w-0 flex-1">
                     <div class="flex flex-wrap items-center gap-2">
                         <span class="text-sm font-medium text-dark-100">${escapeHtml(target.description || target.id)}</span>
-                        <span class="text-xs ${safeClass}">${target.safe ? 'allowlisted' : 'manual'}</span>
-                        <span class="text-xs text-dark-500">${target.exists ? formatBytes(target.size_bytes || 0) : 'not present'}</span>
+                        <span class="text-xs ${safeClass}">${escapeHtml(target.safe ? t('allowlisted') : t('manualLabel'))}</span>
+                        <span class="text-xs text-dark-500">${escapeHtml(target.exists ? formatBytes(target.size_bytes || 0) : t('notPresent'))}</span>
                     </div>
                     <div class="mt-1 font-mono text-xs text-dark-400 break-all">${escapeHtml(target.path || '')}</div>
                     ${target.effect ? `<div class="mt-1 text-xs text-dark-500">${escapeHtml(target.effect)}</div>` : ''}
@@ -674,7 +694,7 @@ function renderCleanupResults(containerId, results) {
     const container = document.getElementById(containerId);
     if (!container) return;
     container.innerHTML = results.map(result => {
-        const status = result.success ? (result.skipped ? 'Skipped' : 'Removed') : 'Failed';
+        const status = result.success ? (result.skipped ? t('skippedStatus') : t('removedStatus')) : t('failedStatus');
         const cls = result.success ? 'text-emerald-400' : 'text-red-400';
         return `
             <div class="flex gap-2 py-1 text-xs">
@@ -697,7 +717,7 @@ function renderWriteLockState(locked, reason) {
     strip.className = locked
         ? 'mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200'
         : 'mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200';
-    strip.textContent = locked ? (reason || 'Writes are locked until restart.') : 'Writes are enabled.';
+    strip.textContent = locked ? (reason || t('writesLockedRestart')) : t('writesEnabled');
 }
 
 function formatBytes(bytes) {
@@ -751,8 +771,8 @@ function renderDetectResults(data) {
 
     if (data.codex_config) {
         items.push(
-            { label: 'Config Provider', value: data.codex_config.model_provider },
-            { label: 'Config Model', value: data.codex_config.model },
+            { label: t('configProvider'), value: data.codex_config.model_provider },
+            { label: t('configModel'), value: data.codex_config.model },
         );
     }
 
@@ -764,7 +784,7 @@ function renderDetectResults(data) {
             <div class="flex items-center gap-3 py-2 px-3 rounded-lg bg-dark-900/50">
                 <div class="flex-1 min-w-0">
                     <div class="text-xs text-dark-400">${escapeHtml(item.label)}</div>
-                    <div class="text-sm font-mono text-dark-200 truncate">${escapeHtml(item.value || '(empty)')}</div>
+                    <div class="text-sm font-mono text-dark-200 truncate">${escapeHtml(item.value || t('emptyValue'))}</div>
                 </div>
                 <span class="text-xs ${statusClass}">${escapeHtml(statusText)}</span>
             </div>

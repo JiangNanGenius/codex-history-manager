@@ -26,6 +26,8 @@ import copy
 import re
 from typing import Any, Dict, List, Optional, Set
 
+from capabilities import merge_provider_model_capabilities
+
 
 class UnifiedModelCatalog:
     """
@@ -173,7 +175,7 @@ class UnifiedModelCatalog:
             "api_format": provider.get("api_format"),
             "responses_profile": provider.get("responses_profile", {}),
             "context_window": model.get("context_window", 0),
-            "capabilities": model.get("capabilities") or provider.get("capabilities", {}),
+            "capabilities": merge_provider_model_capabilities(provider, model),
             "native_currency": model.get("native_currency") or provider.get("native_currency") or pricing.get("native_currency"),
             "pricing": pricing,
             "has_model_pricing": bool(isinstance(model.get("pricing"), dict) and model.get("pricing")),

@@ -65,6 +65,8 @@ function navigateTo(page) {
     const target = document.getElementById('page-' + page);
     if (target) {
         target.classList.add('active');
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+        document.querySelector('main')?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
         // 3) 延迟触发内部交错动画与 ripple 绑定
         setTimeout(() => {
             triggerStaggerAnimations(target);

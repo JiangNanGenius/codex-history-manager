@@ -18,6 +18,7 @@ from approval_broker import (
     parse_approval_decision,
 )
 from media_adapters import build_media_adapter_preview, summarize_media_adapter_preview
+from capabilities import effective_provider_capabilities, merge_provider_model_capabilities
 from providers import normalize_approval_profile
 
 
@@ -164,7 +165,7 @@ def resolve_media_route(
 
 def provider_supports_media(provider: Dict[str, Any], media_kind: str) -> bool:
     capability = "images" if media_kind == MEDIA_KIND_IMAGE else "videos"
-    capabilities = provider.get("capabilities") if isinstance(provider.get("capabilities"), dict) else {}
+    capabilities = effective_provider_capabilities(provider)
     if capabilities.get(capability):
         return True
     api_format = str(provider.get("api_format") or "")
@@ -207,6 +208,40 @@ def media_forwarding_status(provider: Dict[str, Any], media_kind: str) -> Dict[s
             ),
         }
     return {"can_forward": True, "error_type": "", "message": ""}
+
+
+def build_media_route_readiness(provider: Dict[str, Any], model_id: str = "") -> Dict[str, Any]:
+    """Preview whether OpenAI-compatible media proxy routes can be forwarded."""
+    provider = provider if isinstance(provider, dict) else {}
+    media_profile = provider.get("media_profile") if isinstance(provider.get("media_profile"), dict) else {}
+    capabilities = effective_provider_capabilities(provider)
+    checks = [
+        _media_route_readiness_check(provider, MEDIA_KIND_IMAGE, model_id),
+        _media_route_readiness_check(provider, MEDIA_KIND_VIDEO, model_id),
+    ]
+    ready_checks = [item for item in checks if item.get("can_forward")]
+    blocked_checks = [item for item in checks if not item.get("can_forward")]
+    return {
+        "success": True,
+        "preview": True,
+        "provider_id": str(provider.get("id") or ""),
+        "api_format": str(provider.get("api_format") or ""),
+        "base_url": str(provider.get("base_url") or ""),
+        "capabilities": {
+            "images": bool(capabilities.get("images")),
+            "videos": bool(capabilities.get("videos")),
+        },
+        "media_profile": {
+            "default_image_provider": bool(media_profile.get("default_image_provider")),
+            "default_video_provider": bool(media_profile.get("default_video_provider")),
+            "openai_compatible_media": bool(media_profile.get("openai_compatible_media")),
+            "adapter_required": bool(media_profile.get("adapter_required")),
+        },
+        "live_forwarding_enabled": bool(ready_checks),
+        "ready_count": len(ready_checks),
+        "blocked_count": len(blocked_checks),
+        "checks": checks,
+    }
 
 
 def build_media_approval_action(
@@ -335,22 +370,64 @@ def extract_json_model(body: bytes, content_type: str) -> str:
     return str(payload.get("model") or "")
 
 
+def _media_route_readiness_check(provider: Dict[str, Any], media_kind: str, model_id: str = "") -> Dict[str, Any]:
+    canonical_path = "/images/generations" if media_kind == MEDIA_KIND_IMAGE else "/videos"
+    proxy_paths = (
+        ["/v1/images/generations", "/v1/images/edits", "/v1/images/variations"]
+        if media_kind == MEDIA_KIND_IMAGE
+        else ["/v1/videos", "/v1/videos/{video_id}"]
+    )
+    status = media_forwarding_status(provider, media_kind)
+    upstream_url = media_endpoint_url(str(provider.get("base_url") or ""), canonical_path)
+    can_forward = bool(status.get("can_forward")) and bool(upstream_url)
+    error_type = str(status.get("error_type") or "")
+    message = str(status.get("message") or "")
+    if status.get("can_forward") and not upstream_url:
+        error_type = "media_base_url_missing"
+        message = "Provider has media pass-through enabled, but base_url is empty."
+    elif can_forward:
+        message = f"OpenAI-compatible {media_kind} media pass-through is ready."
+
+    result = {
+        "media_kind": media_kind,
+        "operation": MEDIA_OPERATION_SUBMIT,
+        "can_forward": can_forward,
+        "error_type": "" if can_forward else error_type,
+        "message": message,
+        "proxy_paths": proxy_paths,
+        "canonical_path": canonical_path,
+        "upstream_url": upstream_url,
+        "model": str(model_id or ""),
+        "route_mode": _media_route_mode(provider),
+    }
+    if status.get("adapter_preview"):
+        result["adapter_preview"] = status["adapter_preview"]
+    return result
+
+
+def _media_route_mode(provider: Dict[str, Any]) -> str:
+    media_profile = provider.get("media_profile") if isinstance(provider.get("media_profile"), dict) else {}
+    api_format = str(provider.get("api_format") or "")
+    if media_profile.get("openai_compatible_media") or api_format in {"openai_images", "openai_videos"}:
+        return "openai_compatible_pass_through"
+    if media_profile.get("adapter_required"):
+        return "adapter_required"
+    return "disabled"
+
+
 def _provider_for_model(providers: List[Dict[str, Any]], model_id: str, media_kind: str) -> Optional[Dict[str, Any]]:
     model_id_lower = model_id.lower().strip()
     capability = "images" if media_kind == MEDIA_KIND_IMAGE else "videos"
-    fallback: Optional[Dict[str, Any]] = None
     for provider in providers:
         for model in provider.get("models", []):
             if not isinstance(model, dict) or not model.get("enabled", True):
                 continue
             if str(model.get("id") or "").lower().strip() != model_id_lower:
                 continue
-            model_caps = model.get("capabilities") if isinstance(model.get("capabilities"), dict) else {}
+            model_caps = merge_provider_model_capabilities(provider, model)
             if model_caps.get(capability):
                 return provider
-            if fallback is None:
-                fallback = provider
-    return fallback
+    return None
 
 
 def _provider_for_model_override(

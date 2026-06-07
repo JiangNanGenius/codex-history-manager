@@ -1,0 +1,80 @@
+name: Windows Release EXE
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-release-exe:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Build release EXE
+        run: python build_exe.py --no-desktop-copy
+
+      - name: Verify release assets and smoke test EXE
+        run: python build_exe.py --verify-only --smoke-test --write-release-manifest
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CodexHistoryManager-windows
+          if-no-files-found: error
+          path: |
+            dist/CodexHistoryManager.exe
+            dist/release-manifest.json
+
+      - name: Attach assets to GitHub Release
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPLOAD_URL: ${{ github.event.release.upload_url }}
+          ASSETS_URL: ${{ github.event.release.assets_url }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baseHeaders = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $uploadHeaders = $baseHeaders.Clone()
+          $uploadHeaders["Content-Type"] = "application/octet-stream"
+          $files = @(
+            "dist/CodexHistoryManager.exe",
+            "dist/release-manifest.json"
+          )
+          $assets = Invoke-RestMethod -Method Get -Uri $env:ASSETS_URL -Headers $baseHeaders
+          foreach ($file in $files) {
+            if (!(Test-Path $file)) {
+              throw "Required release asset missing: $file"
+            }
+            $name = Split-Path $file -Leaf
+            foreach ($asset in @($assets | Where-Object { $_.name -eq $name })) {
+              Invoke-RestMethod -Method Delete -Uri $asset.url -Headers $baseHeaders
+            }
+            $uploadBase = $env:UPLOAD_URL -replace '\{.*\}', ''
+            $uploadUri = $uploadBase + "?name=$([Uri]::EscapeDataString($name))"
+            Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $uploadHeaders -InFile $file
+          }

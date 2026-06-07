@@ -92,8 +92,15 @@ class AdaptiveModelRotation:
                     "explanation": ["Group has zero enabled candidates."],
                 }
 
-            # Sort by priority, then by id for stable tie-breaking
-            candidates = sorted(candidates, key=lambda c: (c.get("priority", 100), c.get("id", "")))
+            # Same-priority candidates keep the saved list order, so background
+            # reorder changes take effect on the next request without surprises.
+            candidates = [
+                candidate
+                for _, candidate in sorted(
+                    enumerate(candidates),
+                    key=lambda item: (item[1].get("priority", 100), item[0]),
+                )
+            ]
 
             # Filter by capability
             capable = [

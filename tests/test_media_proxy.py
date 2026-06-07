@@ -1,8 +1,10 @@
 import unittest
 
+from capabilities import normalize_capabilities
 from media_proxy import (
     MEDIA_KIND_IMAGE,
     MEDIA_KIND_VIDEO,
+    build_media_route_readiness,
     build_media_approval_action,
     canonical_media_path,
     evaluate_media_approval,
@@ -92,6 +94,52 @@ class MediaProxyHelperTest(unittest.TestCase):
         self.assertEqual(route["upstream_model_id"], "gpt-image-1.5")
         self.assertIn("Matched image model override", route["route_explanation"][0])
 
+    def test_media_model_match_uses_provider_images_with_legacy_model_caps(self):
+        providers = [
+            {
+                "id": "text",
+                "short_alias": "txt",
+                "enabled": True,
+                "capabilities": {"text": True, "images": False},
+                "models": [{"id": "auto", "enabled": True, "capabilities": normalize_capabilities(None)}],
+            },
+            {
+                "id": "image",
+                "short_alias": "img",
+                "enabled": True,
+                "capabilities": {"text": True, "images": True},
+                "media_profile": {"openai_compatible_media": True},
+                "models": [{"id": "auto", "enabled": True, "capabilities": normalize_capabilities(None)}],
+            },
+        ]
+
+        route = resolve_media_route(providers, MEDIA_KIND_IMAGE, model_id="auto")
+
+        self.assertEqual(route["provider"]["id"], "image")
+
+    def test_text_model_name_does_not_block_default_image_provider(self):
+        providers = [
+            {
+                "id": "text",
+                "short_alias": "txt",
+                "enabled": True,
+                "capabilities": {"text": True, "images": False},
+                "models": [{"id": "gpt-5", "enabled": True}],
+            },
+            {
+                "id": "image",
+                "short_alias": "img",
+                "enabled": True,
+                "capabilities": {"images": True},
+                "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+            },
+        ]
+
+        route = resolve_media_route(providers, MEDIA_KIND_IMAGE, model_id="gpt-5")
+
+        self.assertEqual(route["provider"]["id"], "image")
+        self.assertIn("Using default image provider", route["route_explanation"][0])
+
     def test_adapter_required_provider_is_blocked_for_pass_through(self):
         status = media_forwarding_status(
             {
@@ -106,6 +154,79 @@ class MediaProxyHelperTest(unittest.TestCase):
         self.assertEqual(status["error_type"], "media_adapter_required")
         self.assertEqual(status["adapter_preview"]["adapter_id"], "volcengine_ark")
         self.assertIn("/contents/generations/tasks", status["message"])
+
+    def test_responses_provider_with_openai_compatible_media_forwards_images(self):
+        status = media_forwarding_status(
+            {
+                "id": "mixed",
+                "api_format": "openai_responses",
+                "capabilities": {"images": True},
+                "media_profile": {"openai_compatible_media": True},
+            },
+            MEDIA_KIND_IMAGE,
+        )
+
+        self.assertTrue(status["can_forward"])
+        self.assertEqual(status["error_type"], "")
+
+    def test_default_openai_compatible_image_provider_infers_support(self):
+        status = media_forwarding_status(
+            {
+                "id": "native",
+                "api_format": "openai_responses",
+                "capabilities": {"text": True},
+                "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+            },
+            MEDIA_KIND_IMAGE,
+        )
+
+        self.assertTrue(status["can_forward"])
+        self.assertEqual(status["error_type"], "")
+
+    def test_media_route_readiness_shows_openai_image_upstream_url(self):
+        readiness = build_media_route_readiness({
+            "id": "native-image",
+            "base_url": "https://api.example.test/v1",
+            "api_format": "openai_responses",
+            "capabilities": {"images": True},
+            "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+        })
+
+        image_check = next(item for item in readiness["checks"] if item["media_kind"] == MEDIA_KIND_IMAGE)
+        video_check = next(item for item in readiness["checks"] if item["media_kind"] == MEDIA_KIND_VIDEO)
+        self.assertTrue(readiness["live_forwarding_enabled"])
+        self.assertTrue(image_check["can_forward"])
+        self.assertEqual(image_check["upstream_url"], "https://api.example.test/v1/images/generations")
+        self.assertIn("/v1/images/generations", image_check["proxy_paths"])
+        self.assertFalse(video_check["can_forward"])
+        self.assertEqual(video_check["error_type"], "media_capability_unsupported")
+
+    def test_media_route_readiness_blocks_missing_base_url(self):
+        readiness = build_media_route_readiness({
+            "id": "native-image",
+            "api_format": "openai_responses",
+            "capabilities": {"images": True},
+            "media_profile": {"openai_compatible_media": True},
+        })
+
+        image_check = next(item for item in readiness["checks"] if item["media_kind"] == MEDIA_KIND_IMAGE)
+        self.assertFalse(readiness["live_forwarding_enabled"])
+        self.assertFalse(image_check["can_forward"])
+        self.assertEqual(image_check["error_type"], "media_base_url_missing")
+
+    def test_media_route_readiness_exposes_adapter_required_blocker(self):
+        readiness = build_media_route_readiness({
+            "id": "volcengine-ark",
+            "base_url": "https://ark.example.test/api/v3",
+            "capabilities": {"images": True, "videos": True},
+            "media_profile": {"adapter_required": True, "openai_compatible_media": False},
+        })
+
+        image_check = next(item for item in readiness["checks"] if item["media_kind"] == MEDIA_KIND_IMAGE)
+        self.assertFalse(image_check["can_forward"])
+        self.assertEqual(image_check["error_type"], "media_adapter_required")
+        self.assertEqual(image_check["route_mode"], "adapter_required")
+        self.assertEqual(image_check["adapter_preview"]["adapter_id"], "volcengine_ark")
 
     def test_media_operation_detects_submit_poll_cancel(self):
         self.assertEqual(media_operation_for_request("POST", "/v1/images/generations"), "submit")

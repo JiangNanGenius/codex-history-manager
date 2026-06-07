@@ -6,6 +6,7 @@ from codex_approval_bridge import (
     MCP_ELICITATION_METHOD,
     PERMISSIONS_APPROVAL_METHOD,
     build_codex_approval_result,
+    build_codex_approval_bridge_preview,
     build_codex_jsonrpc_response,
     codex_request_to_broker_action,
     is_codex_approval_request,
@@ -179,6 +180,34 @@ class CodexApprovalBridgeTest(unittest.TestCase):
         )
 
         self.assertEqual(response["result"], {"action": "cancel", "content": None})
+
+    def test_bridge_preview_is_side_effect_free_and_metadata_only(self):
+        request = {
+            "jsonrpc": "2.0",
+            "id": 50,
+            "method": COMMAND_APPROVAL_METHOD,
+            "params": {
+                "threadId": "thr_1",
+                "turnId": "turn_1",
+                "approvalId": "approval_50",
+                "command": "python -m pytest",
+                "cwd": "C:/repo",
+                "reason": "Run tests",
+            },
+        }
+
+        preview = build_codex_approval_bridge_preview(
+            request,
+            {"decision": "accept", "risk_level": "low", "reason": "Local command."},
+        )
+
+        self.assertTrue(preview["success"])
+        self.assertTrue(preview["preview"])
+        self.assertFalse(preview["live_transport_connected"])
+        self.assertEqual(preview["method"], COMMAND_APPROVAL_METHOD)
+        self.assertEqual(preview["broker_action"]["kind"], "command")
+        self.assertEqual(preview["jsonrpc_response"]["id"], 50)
+        self.assertEqual(preview["jsonrpc_response"]["result"], {"decision": "accept"})
 
 
 if __name__ == "__main__":

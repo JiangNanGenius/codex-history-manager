@@ -28,6 +28,7 @@ Windows 平台特殊性：
 import sys
 import os
 import threading
+import traceback
 import webview
 
 try:
@@ -43,6 +44,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 PORT = 51234
 URL = f"http://127.0.0.1:{PORT}"
 APP_TITLE = "Codex 历史记录管理器"
+SMOKE_TEST_ARG = "--smoke-test"
+SMOKE_TEST_ENV = "CODEX_ENHANCE_MANAGER_SMOKE_TEST"
+WEBVIEW_MONITOR_BACKGROUND = "#111827"
+MONITOR_WINDOW_WIDTH = 300
+MONITOR_WINDOW_EXPANDED_HEIGHT = 226
+MONITOR_WINDOW_COMPACT_HEIGHT = 92
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 IDYES = 6
 IDNO = 7
@@ -51,11 +58,12 @@ tray_icon = None
 allow_exit = False
 main_window = None
 monitor_window = None
+desktop_api = None
 
 
 class DesktopApi:
     def show_monitor(self):
-        _show_monitor()
+        _show_monitor(self)
 
     def hide_monitor(self):
         _hide_monitor()
@@ -63,6 +71,9 @@ class DesktopApi:
     def show_main(self):
         if main_window is not None:
             _show_window(main_window)
+
+    def resize_monitor(self, width: int = MONITOR_WINDOW_WIDTH, height: int = MONITOR_WINDOW_EXPANDED_HEIGHT):
+        return _resize_monitor(width, height)
 
     def notify_monitor_alert(self, message: str):
         try:
@@ -121,8 +132,11 @@ def _hide_to_tray(window):
         pass
 
 
-def _show_monitor():
+def _show_monitor(api=None):
+    global monitor_window
     try:
+        if monitor_window is None:
+            monitor_window = _create_monitor_window(api or desktop_api or DesktopApi())
         if monitor_window is not None:
             monitor_window.show()
             monitor_window.restore()
@@ -136,6 +150,50 @@ def _hide_monitor():
             monitor_window.hide()
     except Exception:
         pass
+
+
+def _resize_monitor(width: int, height: int) -> dict[str, int]:
+    safe_width = min(max(int(width or MONITOR_WINDOW_WIDTH), 260), 520)
+    safe_height = min(max(int(height or MONITOR_WINDOW_EXPANDED_HEIGHT), MONITOR_WINDOW_COMPACT_HEIGHT), 360)
+    try:
+        if monitor_window is not None:
+            monitor_window.resize(safe_width, safe_height)
+    except Exception:
+        try:
+            if monitor_window is not None:
+                monitor_window.set_window_size(safe_width, safe_height)
+        except Exception:
+            pass
+    return {"width": safe_width, "height": safe_height}
+
+
+def _default_monitor_position() -> tuple[int, int]:
+    width = MONITOR_WINDOW_WIDTH
+    margin = 28
+    fallback = (960, 96)
+    if os.name != "nt":
+        return fallback
+    try:
+        import ctypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        rect = RECT()
+        spi_get_work_area = 0x0030
+        if ctypes.windll.user32.SystemParametersInfoW(spi_get_work_area, 0, ctypes.byref(rect), 0):
+            return (
+                max(int(rect.right) - width - margin, margin),
+                max(int(rect.top) + margin, margin),
+            )
+    except Exception:
+        pass
+    return fallback
 
 
 def _exit_app(window):
@@ -290,6 +348,102 @@ def _wait_for_flask(host="127.0.0.1", port=PORT, timeout=10):
     return False
 
 
+def _create_main_window(api):
+    window = webview.create_window(
+        title=APP_TITLE,
+        url=URL,
+        js_api=api,
+        width=1280,
+        height=800,
+        min_size=(900, 600),
+        confirm_close=False,
+        text_select=True,
+    )
+    return window
+
+
+def _create_monitor_window(api):
+    monitor_x, monitor_y = _default_monitor_position()
+    monitor = webview.create_window(
+        title="Token Monitor",
+        url=f"{URL}/monitor",
+        js_api=api,
+        width=MONITOR_WINDOW_WIDTH,
+        height=MONITOR_WINDOW_EXPANDED_HEIGHT,
+        x=monitor_x,
+        y=monitor_y,
+        resizable=False,
+        frameless=True,
+        easy_drag=True,
+        on_top=True,
+        transparent=False,
+        background_color=WEBVIEW_MONITOR_BACKGROUND,
+        hidden=False,
+        focus=False,
+        text_select=False,
+    )
+    return monitor
+
+
+def _create_desktop_windows(api):
+    return _create_main_window(api), _create_monitor_window(api)
+
+
+def _smoke_test_webview_window_creation() -> bool:
+    original_windows = list(webview.windows)
+    try:
+        _create_desktop_windows(DesktopApi())
+        return True
+    except Exception:
+        traceback.print_exc()
+        return False
+    finally:
+        webview.windows[:] = original_windows
+
+
+def run_smoke_test() -> int:
+    """
+    Run a packaged-EXE smoke test without opening the WebView window.
+
+    The release workflow launches the built EXE with --smoke-test. Keeping this
+    in the real entrypoint verifies PyInstaller hidden imports, Flask app
+    construction, and bundled static files while avoiding GUI flakiness in CI.
+    """
+    os.environ[SMOKE_TEST_ENV] = "1"
+    try:
+        if not _smoke_test_webview_window_creation():
+            print("Smoke test failed: WebView window options are invalid")
+            return 1
+
+        from app import create_app
+
+        flask_app = create_app()
+        checks = [
+            ("/", "html"),
+            ("/monitor", "html"),
+            ("/api/diagnostics", "json"),
+        ]
+        with flask_app.test_client() as client:
+            for path, expected in checks:
+                response = client.get(path)
+                if response.status_code != 200:
+                    print(f"Smoke test failed: {path} returned {response.status_code}")
+                    return 1
+                if expected == "json":
+                    payload = response.get_json(silent=True)
+                    if not isinstance(payload, dict) or "providers" not in payload:
+                        print(f"Smoke test failed: {path} did not return diagnostics JSON")
+                        return 1
+                elif not response.get_data():
+                    print(f"Smoke test failed: {path} returned an empty body")
+                    return 1
+        print("Packaged EXE smoke test passed.")
+        return 0
+    except Exception:
+        traceback.print_exc()
+        return 1
+
+
 def main():
     """
     应用程序主入口。
@@ -313,7 +467,7 @@ def main():
       - 若 Flask 启动超时（如端口被占用），打印错误并 sys.exit(1)，
         避免用户看到空白窗口。
     """
-    global main_window, monitor_window
+    global main_window, desktop_api
     # 启动 Flask 后台线程
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
@@ -324,39 +478,14 @@ def main():
         sys.exit(1)
 
     # 创建 PyWebView 窗口（内嵌 Edge WebView2）
-    api = DesktopApi()
-    window = webview.create_window(
-        title=APP_TITLE,
-        url=URL,
-        js_api=api,
-        width=1280,
-        height=800,
-        min_size=(900, 600),
-        confirm_close=False,
-        text_select=True,
-    )
+    desktop_api = DesktopApi()
+    window = _create_main_window(desktop_api)
     main_window = window
-    monitor_window = webview.create_window(
-        title="Token Monitor",
-        url=f"{URL}/monitor",
-        js_api=api,
-        width=300,
-        height=178,
-        x=40,
-        y=80,
-        resizable=False,
-        frameless=True,
-        easy_drag=True,
-        on_top=True,
-        transparent=True,
-        background_color="#00000000",
-        hidden=True,
-        focus=False,
-        text_select=False,
-    )
     _setup_tray(window)
     webview.start(gui="edgechromium")
 
 
 if __name__ == "__main__":
+    if SMOKE_TEST_ARG in sys.argv:
+        sys.exit(run_smoke_test())
     main()

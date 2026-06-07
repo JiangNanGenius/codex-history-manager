@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 STARTUP_CONFIRMATION = "MODIFY_WINDOWS_STARTUP"
 STARTUP_MODES = {"disabled", "startup_folder", "scheduled_task_highest"}
+PACKAGED_RELEASE_EXE_NAME = "CodexHistoryManager.exe"
 STARTUP_CONFIG_KEYS = (
     "startup_enabled",
     "startup_mode",
@@ -115,10 +116,15 @@ class StartupManager:
         startup_path = self.startup_entry_path(normalized)
         task_name = normalized["startup_task_name"]
         task_status = self._task_exists(task_name) if self.is_windows else {"exists": False, "checked": False}
+        target_diagnostics = self.target_diagnostics(
+            normalized["startup_target_path"],
+            normalized["startup_arguments"],
+        )
         return {
             "supported": self.is_windows,
             "platform": self._platform_name,
             "configured": normalized,
+            "target_diagnostics": target_diagnostics,
             "startup_folder": str(self.startup_dir()),
             "startup_entry_path": str(startup_path),
             "startup_entry_exists": startup_path.exists(),
@@ -135,6 +141,7 @@ class StartupManager:
         target = normalized["startup_target_path"]
         arguments = normalized["startup_arguments"]
         command_line = self.command_line(target, arguments)
+        target_diagnostics = self.target_diagnostics(target, arguments)
         startup_path = self.startup_entry_path(normalized)
         task_name = normalized["startup_task_name"]
         actions: List[Dict[str, Any]] = []
@@ -157,6 +164,8 @@ class StartupManager:
             notes.append("Scheduled-task mode uses ONLOGON with run level HIGHEST.")
         elif mode == "startup_folder":
             notes.append("Startup-folder mode runs for the current user at logon without elevation.")
+        if mode != "disabled":
+            notes.extend(target_diagnostics.get("warnings", []))
 
         return {
             "supported": self.is_windows,
@@ -165,6 +174,7 @@ class StartupManager:
             "auto_elevate": normalized["startup_auto_elevate"],
             "target": target,
             "arguments": arguments,
+            "target_diagnostics": target_diagnostics,
             "command_line": command_line,
             "startup_folder": str(self.startup_dir()),
             "startup_entry_path": str(startup_path),
@@ -231,6 +241,43 @@ class StartupManager:
         command = subprocess.list2cmdline([target])
         args = str(arguments or "").strip()
         return f"{command} {args}".strip()
+
+    def target_diagnostics(self, target: str, arguments: str = "") -> Dict[str, Any]:
+        target_text = str(target or "").strip()
+        path = Path(target_text).expanduser() if target_text else None
+        name = path.name if path is not None else ""
+        suffix = path.suffix.lower() if path is not None else ""
+        exists = bool(path and path.exists())
+        is_exe = suffix == ".exe"
+        name_matches_release = name.lower() == PACKAGED_RELEASE_EXE_NAME.lower()
+        lower_name = name.lower()
+        is_python_runtime = lower_name in {"python.exe", "pythonw.exe"} or lower_name.startswith("python")
+        warnings: List[str] = []
+
+        if not target_text:
+            warnings.append("Startup target is empty; apply will use the detected runtime target.")
+        elif not exists:
+            warnings.append("Startup target does not exist yet; verify the packaged EXE path before applying.")
+        if target_text and not is_exe:
+            warnings.append("Startup target is not a Windows EXE; packaged release startup verification will not be covered.")
+        elif is_python_runtime:
+            warnings.append("Startup target is a Python runtime; use the packaged EXE for release/manual startup verification.")
+        elif is_exe and not name_matches_release:
+            warnings.append(f"Startup target EXE name differs from the standard release asset {PACKAGED_RELEASE_EXE_NAME}.")
+
+        return {
+            "target": str(path) if path is not None else "",
+            "arguments": str(arguments or "").strip(),
+            "target_exists": exists,
+            "target_is_exe": is_exe,
+            "target_name": name,
+            "expected_release_exe_name": PACKAGED_RELEASE_EXE_NAME,
+            "target_matches_release_exe_name": name_matches_release,
+            "target_is_python_runtime": is_python_runtime,
+            "release_startup_ready": exists and is_exe and not is_python_runtime,
+            "warnings": warnings,
+            "warning_count": len(warnings),
+        }
 
     def create_task_argv(self, task_name: str, command_line: str) -> List[str]:
         return [

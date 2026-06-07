@@ -72,6 +72,48 @@ def build_media_adapter_preview(
     return preview
 
 
+def build_media_adapter_preview_bundle(
+    provider: Dict[str, Any],
+    request_json: Optional[Dict[str, Any]] = None,
+    media_kind: str = "",
+    model_id: str = "",
+) -> Dict[str, Any]:
+    """Return all metadata-only adapter previews useful for a provider draft."""
+    normalized_kind = str(media_kind or "").strip().lower()
+    media_kinds = [normalized_kind] if normalized_kind in {MEDIA_KIND_IMAGE, MEDIA_KIND_VIDEO} else [MEDIA_KIND_IMAGE, MEDIA_KIND_VIDEO]
+    operations = {
+        MEDIA_KIND_IMAGE: [OPERATION_SUBMIT],
+        MEDIA_KIND_VIDEO: [OPERATION_SUBMIT, OPERATION_POLL, OPERATION_CANCEL],
+    }
+    request = request_json if isinstance(request_json, dict) else {}
+    request_model = str(request.get("model") or model_id or "").strip()
+    previews: List[Dict[str, Any]] = []
+    for kind in media_kinds:
+        for operation in operations.get(kind, [OPERATION_SUBMIT]):
+            preview = build_media_adapter_preview(
+                provider,
+                kind,
+                operation,
+                model_id=request_model,
+                upstream_model_id=request_model,
+                request_json=request,
+            )
+            preview["summary"] = summarize_media_adapter_preview(preview)
+            previews.append(preview)
+
+    media_profile = provider.get("media_profile") if isinstance(provider.get("media_profile"), dict) else {}
+    return {
+        "success": True,
+        "preview": True,
+        "provider_id": str(provider.get("id") or ""),
+        "adapter_id": resolve_media_adapter_id(provider),
+        "adapter_required": bool(media_profile.get("adapter_required")),
+        "openai_compatible_media": bool(media_profile.get("openai_compatible_media")),
+        "live_forwarding_enabled": False,
+        "previews": previews,
+    }
+
+
 def summarize_media_adapter_preview(preview: Dict[str, Any]) -> str:
     adapter_id = str(preview.get("adapter_id") or "unknown")
     endpoint = preview.get("endpoint") if isinstance(preview.get("endpoint"), dict) else {}

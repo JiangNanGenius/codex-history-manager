@@ -4,6 +4,7 @@ import unittest
 from media_adapters import (
     ADAPTER_ALIBABA_BAILIAN,
     ADAPTER_VOLCENGINE_ARK,
+    build_media_adapter_preview_bundle,
     build_media_adapter_preview,
     resolve_media_adapter_id,
     summarize_media_adapter_preview,
@@ -75,6 +76,29 @@ class MediaAdapterPreviewTest(unittest.TestCase):
         self.assertIn("volcengine_ark", summary)
         self.assertIn("POST /contents/generations/tasks", summary)
         self.assertIn("Live vendor media conversion is not enabled yet", summary)
+
+    def test_preview_bundle_redacts_request_body_and_lists_operations(self):
+        bundle = build_media_adapter_preview_bundle(
+            {
+                "id": "ark",
+                "media_profile": {"adapter": "volcengine_ark", "adapter_required": True},
+            },
+            request_json={"model": "seedream", "prompt": "private prompt"},
+        )
+
+        self.assertTrue(bundle["success"])
+        self.assertTrue(bundle["preview"])
+        self.assertEqual(bundle["adapter_id"], ADAPTER_VOLCENGINE_ARK)
+        self.assertTrue(bundle["adapter_required"])
+        operations = {(item["media_kind"], item["operation"]) for item in bundle["previews"]}
+        self.assertEqual(operations, {
+            ("image", "submit"),
+            ("video", "submit"),
+            ("video", "poll"),
+            ("video", "cancel"),
+        })
+        self.assertIn("prompt", bundle["previews"][0]["redacted_fields"])
+        self.assertNotIn("private prompt", json.dumps(bundle, ensure_ascii=False))
 
 
 if __name__ == "__main__":

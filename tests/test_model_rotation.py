@@ -167,7 +167,7 @@ class AdaptiveModelRotationTest(unittest.TestCase):
         self.assertTrue(decision["success"])
         self.assertEqual(decision["candidate_id"], "c1")
 
-    def test_equal_priority_tie_break_by_id(self):
+    def test_equal_priority_uses_saved_list_order(self):
         groups = [
             {
                 "id": "tie-group",
@@ -180,7 +180,7 @@ class AdaptiveModelRotationTest(unittest.TestCase):
         amr = AdaptiveModelRotation(groups)
         decision = amr.route("tie-group", required_capabilities={"text"})
         self.assertTrue(decision["success"])
-        self.assertEqual(decision["candidate_id"], "c1")
+        self.assertEqual(decision["candidate_id"], "c2")
 
     def test_disabled_candidate_excluded(self):
         groups = [

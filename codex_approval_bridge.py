@@ -125,6 +125,39 @@ def build_codex_jsonrpc_response(
     }
 
 
+def build_codex_approval_bridge_preview(
+    message: Any,
+    broker_decision: Any = None,
+    provider_or_profile: Any = None,
+) -> Dict[str, Any]:
+    """
+    Build a side-effect-free preview of the Codex approval bridge mapping.
+
+    This does not send a JSON-RPC response. It only shows the normalized broker
+    action and the simulated Codex app-server response envelope.
+    """
+    decision = broker_decision if broker_decision is not None else {
+        "decision": "ask_user",
+        "risk_level": "unknown",
+        "reason": "Dry-run preview default; no live approval decision was made.",
+    }
+    request = normalize_codex_server_request(message)
+    action = codex_request_to_broker_action(message)
+    response = build_codex_jsonrpc_response(message, decision, provider_or_profile)
+    return {
+        "success": True,
+        "preview": True,
+        "supported": True,
+        "method": request["method"],
+        "jsonrpc_id": request["jsonrpc_id"],
+        "broker_action": action,
+        "simulated_decision": parse_approval_decision(decision, provider_or_profile),
+        "jsonrpc_response": response,
+        "source_notes": SOURCE_NOTES,
+        "live_transport_connected": False,
+    }
+
+
 def _command_action(params: Dict[str, Any], request_id: Any) -> Dict[str, Any]:
     network_context = params.get("networkApprovalContext")
     kind = "network" if isinstance(network_context, dict) and not params.get("command") else "command"

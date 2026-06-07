@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from providers import ProviderRegistry, REDACTED_VALUE, normalize_provider, is_secret_key
+from providers import ProviderRegistry, REDACTED_VALUE, normalize_provider, is_secret_key, validate_provider
 
 
 class ProviderRegistryTest(unittest.TestCase):
@@ -71,6 +71,69 @@ class ProviderRegistryTest(unittest.TestCase):
             model_ids = [entry["codex_model_id"] for entry in preview["entries"]]
             self.assertEqual(model_ids, [f"{provider['short_alias']}/visible"])
 
+    def test_update_provider_preserves_model_metadata_from_text_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.create_provider({
+                "display_name": "Metadata Provider",
+                "short_alias": "meta",
+                "models": [
+                    {
+                        "id": "image-model",
+                        "display_name": "Image Model",
+                        "selected": False,
+                        "context_window": 64000,
+                        "capabilities": {"text": False, "images": True},
+                        "pricing": {"input_per_million": 1.25},
+                        "tags": ["media"],
+                    },
+                ],
+            })
+
+            updated = registry.update_provider(provider["id"], {
+                "models": [
+                    {
+                        "id": "image-model",
+                        "display_name": "Image Model Renamed",
+                        "selected": True,
+                        "context_window": 128000,
+                        "enabled": True,
+                    },
+                ],
+            })
+
+            model = updated["models"][0]
+            self.assertEqual(model["display_name"], "Image Model Renamed")
+            self.assertTrue(model["selected"])
+            self.assertEqual(model["context_window"], 128000)
+            self.assertTrue(model["capabilities"]["images"])
+            self.assertEqual(model["pricing"]["input_per_million"], 1.25)
+            self.assertEqual(model["tags"], ["media"])
+
+    def test_test_provider_payload_validates_draft_without_writing_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            saved = registry.create_provider({
+                "display_name": "Saved Provider",
+                "short_alias": "saved",
+                "base_url": "https://saved.example.test/v1",
+                "api_key": "secret",
+            })
+
+            result = registry.test_provider(provider_data={
+                "display_name": "Draft Provider",
+                "short_alias": "draft",
+                "base_url": "https://draft.example.test/v1",
+                "api_key": "",
+                "native_currency": "USD",
+            })
+
+            self.assertTrue(result["success"])
+            self.assertEqual(result["mode"], "local_validation")
+            self.assertIn("api_key is empty", "; ".join(result["warnings"]))
+            loaded = registry.get_provider(saved["id"], include_secrets=True)
+            self.assertEqual(loaded["status"]["last_tested"], "")
+
     def test_catalog_preview_resolves_duplicate_alias_collisions(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "providers.json"
@@ -122,6 +185,48 @@ class ProviderRegistryTest(unittest.TestCase):
             preview = registry.preview_catalog(focus_provider_id=provider["id"])
             self.assertEqual(preview["entry_count"], 2)
 
+    def test_catalog_preview_with_provider_draft_uses_unsaved_models_without_saving(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.create_provider({
+                "display_name": "Draft Catalog Provider",
+                "short_alias": "draft",
+                "api_key": "saved-secret",
+                "catalog_visibility": "focused_only",
+                "capabilities": {"text": True, "images": False},
+                "models": [{"id": "saved-only", "selected": False, "context_window": 1000}],
+            })
+
+            preview = registry.preview_catalog_with_provider_draft(provider["id"], {
+                "api_key": REDACTED_VALUE,
+                "catalog_visibility": "selected_models",
+                "capabilities": {"text": True, "images": True},
+                "models": [{
+                    "id": "unsaved-image",
+                    "display_name": "Unsaved Image",
+                    "selected": True,
+                    "context_window": 256000,
+                    "capabilities": {"text": True, "images": True},
+                    "pricing": {"input_per_million": 0.5, "per_image": 0.02},
+                    "native_currency": "CNY",
+                }],
+            })
+
+            self.assertTrue(preview["success"])
+            self.assertTrue(preview["preview"])
+            self.assertEqual(preview["focus_provider_id"], provider["id"])
+            self.assertEqual(preview["entry_count"], 1)
+            entry = preview["entries"][0]
+            self.assertEqual(entry["codex_model_id"], "draft/unsaved-image")
+            self.assertEqual(entry["context_window"], 256000)
+            self.assertTrue(entry["capabilities"]["images"])
+            self.assertEqual(entry["native_currency"], "CNY")
+            self.assertEqual(entry["pricing"]["per_image"], 0.02)
+
+            saved = registry.get_provider(provider["id"], include_secrets=True)
+            self.assertEqual(saved["api_key"], "saved-secret")
+            self.assertEqual([model["id"] for model in saved["models"]], ["saved-only"])
+
     def test_anthropic_api_format_is_valid(self):
         provider = normalize_provider({
             "display_name": "Anthropic",
@@ -167,6 +272,34 @@ class ProviderRegistryTest(unittest.TestCase):
 
         self.assertEqual(provider["media_profile"]["image_model_overrides"]["cover-art"], "gpt-image-1.5")
         self.assertEqual(provider["media_profile"]["video_model_overrides"]["storyboard"], "sora-2")
+        self.assertTrue(provider["capabilities"]["images"])
+
+    def test_media_profile_infers_catalog_capability(self):
+        provider = normalize_provider({
+            "display_name": "Native Media",
+            "short_alias": "native",
+            "api_format": "openai_responses",
+            "capabilities": {"text": True},
+            "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+            "models": [{"id": "auto", "selected": True}],
+        })
+
+        self.assertTrue(provider["capabilities"]["images"])
+        self.assertEqual(provider["models"][0]["capability_overrides"], {})
+
+    def test_validate_warns_when_media_mode_has_no_media_capability(self):
+        provider = normalize_provider({
+            "display_name": "Media Mode Only",
+            "short_alias": "media-only",
+            "api_format": "openai_responses",
+            "capabilities": {"text": True, "images": False, "videos": False},
+            "media_profile": {"openai_compatible_media": True},
+            "models": [{"id": "auto"}],
+        })
+
+        _errors, warnings = validate_provider(provider)
+
+        self.assertTrue(any("no Images/Videos capability" in warning for warning in warnings))
 
     def test_proxy_profile_preserves_bypass_and_network_policy(self):
         provider = normalize_provider({
@@ -318,6 +451,21 @@ class ProviderRegistryTest(unittest.TestCase):
             model_ids = [m["id"] for m in provider["models"]]
             self.assertIn("sora-2", model_ids)
             self.assertIn("sora-2-pro", model_ids)
+
+    def test_codex_api_key_mixin_preset_enables_image_passthrough(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.import_preset("codex-api-key-mixin")
+
+            self.assertEqual(provider["api_format"], "openai_responses")
+            self.assertTrue(provider["capabilities"]["images"])
+            self.assertTrue(provider["media_profile"]["default_image_provider"])
+            self.assertTrue(provider["media_profile"]["openai_compatible_media"])
+            self.assertEqual(provider["models"][0]["capability_overrides"], {})
+
+            preview = registry.preview_catalog()
+            entry = next(item for item in preview["entries"] if item["provider_id"] == provider["id"])
+            self.assertTrue(entry["capabilities"]["images"])
 
     def test_moonshot_kimi_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:

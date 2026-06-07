@@ -44,7 +44,7 @@ The project is intentionally local-first: provider settings, backups, request-lo
 | --- | --- |
 | History and usage | Browse sessions, inspect heavy conversations, read Codex DB totals, and add cache read/write usage from rollout events, proxy logs, and compatible proxy DBs. |
 | Provider setup | Manage provider presets with `short_alias`, region, currency, custom headers, `User-Agent`, approval profile, media profile, quota template, and catalog visibility. |
-| Unified Model Catalog | Preview and filter Codex-visible model IDs such as `qwen/qwen3-coder-plus` by provider, capability, context window, cost hint, currency, visibility, focus, AMR entries, and collision-safe IDs. |
+| Unified Model Catalog | Preview and filter Codex-visible model IDs such as `qwen/qwen3-coder-plus` by provider, capability, context window, token/media cost hints, currency, visibility, focus, AMR entries, and collision-safe IDs. |
 | Adaptive Model Rotation | Edit local rotation groups, bulk-add selected provider models, tune candidate priorities/capabilities/context limits, and run read-only route previews. |
 | Local proxy | Run an independent localhost proxy with occupied-port backoff, capability-aware AMR group routing, provider network policy, timeout/retry policy, Auto Approval broker settings, route diagnostics, metadata-only request logs, and OpenAI-compatible routes. |
 | Protocol adapters | Convert verified Responses, Chat, Anthropic Messages, tools, images, SSE events, and domestic Responses profiles only where behavior is sourced. |
@@ -58,12 +58,12 @@ The app is organized as an operational console rather than a marketing dashboard
 
 - **Overview**: health, current paths, guardrails, and high-signal status.
 - **Token Dashboard**: Codex totals, cache read/write, request-log summaries, cost snapshots, and floating token monitor controls.
-- **Providers**: preset-first setup, focused editing, section-local testing, network health checks, status strips, custom `User-Agent`, Auto Approval, media mode controls, visibility policy, selected-model AMR import, and read-only Route Simulator.
+- **Providers**: preset-first setup, focused editing, draft-aware validation/quota/network/media-route/media-adapter previews that do not wipe unsaved form edits, status strips, custom `User-Agent`, Auto Approval, media mode controls, visibility policy, selected-model AMR import, and read-only Route Simulator.
 - **Unified Model Catalog**: filtered preview before writing anything into Codex.
 - **Adaptive Model Rotation**: group and candidate editor with selected-model import, request capability detection, and saved-state route preview.
 - **Local Proxy**: start/stop/status, actual bound port, route explanations, and log retention.
 - **Settings**: storage paths, theme editor, import/export, startup/elevation controls, safe cleanup, uninstall cleanup, currency settings, and monitor field customization.
-- **Diagnostics and Recovery**: redacted diagnostics, exchange-rate status, approval/sandbox audit, backup/restore, rollback, and move repair.
+- **Diagnostics and Recovery**: redacted diagnostics, exchange-rate status, provider media-route readiness details, approval/sandbox audit, approval bridge dry-run preview, backup/restore, rollback, and move repair.
 
 ## Safety Model
 
@@ -104,6 +104,15 @@ python build_exe.py
 
 The build script creates a single-file Windows EXE with bundled static assets, icon, PyWebView, Flask, Pillow, and tray support.
 
+For release verification, build with:
+
+```bash
+python build_exe.py --no-desktop-copy --smoke-test --write-release-manifest
+```
+
+Release checklist: every GitHub Release must upload the packaged EXE from `dist/CodexHistoryManager.exe` (or the current `EXE_NAME` in `build_exe.py`). Source archives alone are not a valid user release.
+The `Windows Release EXE` GitHub workflow builds this asset on Windows, smoke-tests the packaged EXE with `--smoke-test`, and attaches the EXE plus `dist/release-manifest.json` when a GitHub Release is published.
+
 ## Local Storage
 
 New user data defaults to:
@@ -143,6 +152,8 @@ always-visible models
 + Adaptive Model Rotation groups
 ```
 
+For Code++-style API-key mix-ins, use the `Codex Native + API Key Mix-in` preset: Codex keeps the official OAuth login while the local proxy forwards provider-key requests. Image generation is routed through OpenAI-compatible media paths (`/v1/images/*`), so a provider must be marked as an image provider and set Media Mode to `OpenAI-compatible` or `Adapter required`; media profile defaults and dedicated image/video API formats are reflected back into catalog and AMR capabilities.
+
 ## Local Proxy Logging
 
 The local proxy writes non-streaming and streaming request metadata into `logs/proxy_requests.jsonl`.
@@ -153,6 +164,9 @@ Recorded:
 - endpoint, provider, model, status, duration
 - normalized input/output/cache/reasoning/media usage
 - local cost estimate and FX snapshot
+- provider-reported cost metadata when upstream responses expose invoice-like cost fields
+- media route request/error aggregates for image/video proxy troubleshooting
+- filters for provider, endpoint, media kind, error type, and success status
 - safe route diagnostics
 
 Never recorded:
@@ -189,18 +203,18 @@ After sync, sessions remain visible across account/provider switches.
 | `proxy_server.py` | Local OpenAI-compatible proxy server. |
 | `approval_broker.py` | Auto Approval prompt builder, strict decision parser, and metadata-only approval records. |
 | `auto_approval_runtime.py` | Runtime model reviewer for Auto Approval through verified Chat, Responses, and Anthropic request shapes. |
-| `codex_approval_bridge.py` | Source-verified Codex app-server approval request/result mapping for mocked Auto Approval responses. |
-| `request_logs.py` | Metadata-only proxy request logs, retention, summaries, and cost snapshots. |
+| `codex_approval_bridge.py` | Source-verified Codex app-server approval request/result mapping plus a side-effect-free dry-run preview for mocked Auto Approval responses. |
+| `request_logs.py` | Metadata-only proxy request logs, retention, media route error summaries, and cost snapshots. |
 | `responses_adapter.py` | Responses <-> Chat conversion and SSE normalization. |
 | `anthropic_adapter.py` | Anthropic Messages adapter foundation. |
 | `domestic_responses.py` | Alibaba Bailian and Volcengine Ark Responses profiles and guardrails. |
-| `media_proxy.py` | OpenAI-compatible image/video route helpers plus metadata-only media Auto Approval hooks. |
-| `media_adapters.py` | Source-backed dry-run previews and guards for adapter-required media providers. |
+| `media_proxy.py` | OpenAI-compatible image/video route helpers, media-route readiness previews, and metadata-only media Auto Approval hooks. |
+| `media_adapters.py` | Source-backed dry-run previews and guards for adapter-required media providers, surfaced in the Provider page as metadata-only image/video adapter previews. |
 | `codex_config.py` | Codex config/auth backup, diff preview, write, and restore. |
 | `codex_permissions.py` | Source-verified Codex approval/sandbox config audit and diff preview. |
 | `codex_rollout_usage.py`, `token_stats.py` | Token/cache usage readers. |
 | `currency.py`, `costing.py`, `quota.py` | FX snapshots, local cost estimates, and generic quota probes. |
-| `diagnostics.py`, `move_repair.py` | Safe diagnostics and project/thread move repair. |
+| `diagnostics.py`, `move_repair.py` | Safe diagnostics with provider media-route readiness details, plus project/thread move repair. |
 
 ## References
 
@@ -223,13 +237,13 @@ After sync, sessions remain visible across account/provider switches.
 | --- | --- |
 | Protocol verification | Continue source/doc comparison for official Codex, domestic Responses, Anthropic, tools, SSE, compacting, and media item behavior. |
 | Media adapters | Add real Alibaba Bailian and Volcengine Ark image/video adapters after payload, polling, cancel, and response formats are verified. |
-| Approval broker wiring | Connect the source-verified approval bridge to the real local proxy/app-server transport after interception behavior is verified. |
+| Approval broker wiring | Use the dry-run approval bridge preview to verify request/result shapes, then connect it to the real local proxy/app-server transport after interception behavior is verified. |
 | Approval and sandbox repair | Expand the source-verified approval/sandbox audit into corruption repair presets once user-manual write testing is complete. |
 | Startup integration | Manually verify Startup folder and Task Scheduler highest-privilege flows from the packaged EXE, then polish UX around UAC/task errors. |
-| Cost dashboard | Add deeper native/display currency comparison, stale FX warnings, provider-reported-vs-estimated cost, and media pricing tiers. |
+| Cost dashboard | Continue polishing cost variance views, stale FX warnings, and media pricing tiers. |
 | Quota integrations | Layer provider-specific balance/quota endpoints on top of the generic probe scaffold. |
 | UI polish | Continue cleaning legacy copy, icons, i18n coverage, screenshots, and narrow-window layout checks. |
-| Packaging | Build and publish a fresh EXE once the proxy/protocol layer reaches a stable milestone. |
+| Packaging | Keep the Windows Release workflow green and publish fresh Releases with the packaged EXE asset once the proxy/protocol layer reaches a stable milestone. |
 
 ## License
 

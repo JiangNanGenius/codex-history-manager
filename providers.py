@@ -37,6 +37,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app_paths import app_data_path
+from capabilities import (
+    effective_provider_capabilities,
+    merge_provider_model_capabilities,
+    model_capability_overrides,
+    normalize_capabilities as _normalize_capabilities,
+)
 from model_catalog import resolve_catalog_id_collisions
 
 
@@ -392,7 +398,7 @@ class ProviderRegistry:
             elif action == "deselect_all":
                 new_val = False
             elif action == "select_vision":
-                caps = model.get("capabilities") or provider.get("capabilities", {})
+                caps = merge_provider_model_capabilities(provider, model)
                 new_val = bool(caps.get("vision", False))
             elif action == "select_low_cost":
                 # 低成本：模型标签含 "low-cost" 或 pricing 中未设置价格（假设开源/低成本）
@@ -459,59 +465,45 @@ class ProviderRegistry:
             包含 entries、entry_count、route_explanation 的字典。
         """
         store = self._load_store()
-        providers = store.get("providers", [])
-        entries: List[Dict[str, Any]] = []
-        explanations: List[str] = []
-        # seen 用于去重：同一 provider 下的同一模型不应出现两次
-        seen: set[str] = set()
+        return build_catalog_preview_from_providers(
+            store.get("providers", []),
+            focus_provider_id=focus_provider_id,
+        )
 
-        for provider in providers:
-            if not provider.get("enabled", True):
-                continue
-            visibility = provider.get("catalog_visibility", "focused_only")
-            is_focused = bool(focus_provider_id and provider.get("id") == focus_provider_id)
-            if visibility == "hidden":
-                continue
+    def preview_catalog_with_provider_draft(self, provider_id: str, draft: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Preview UMC with one provider replaced by an unsaved form draft.
 
-            selected_only = visibility == "selected_models" and not is_focused
-            include_all = visibility == "always_visible" or is_focused
-            if not include_all and visibility not in {"selected_models", "focused_only"}:
-                continue
-            if visibility == "focused_only" and not is_focused:
-                continue
+        This is read-only: it merges the draft with the saved provider in memory
+        so redacted secrets are preserved, then builds the same catalog preview.
+        """
+        store = self._load_store()
+        providers: List[Dict[str, Any]] = []
+        found = False
+        for provider in store.get("providers", []):
+            if provider.get("id") == provider_id:
+                merged = merge_provider_update(provider, draft if isinstance(draft, dict) else {})
+                merged["id"] = provider_id
+                providers.append(merged)
+                found = True
+            else:
+                providers.append(provider)
+        if not found:
+            return {
+                "success": False,
+                "error": "Provider not found",
+                "focus_provider_id": provider_id,
+                "entries": [],
+                "entry_count": 0,
+                "route_explanation": [],
+                "generated_at": now_iso(),
+                "preview": True,
+            }
 
-            for model in provider.get("models", []):
-                if not model.get("enabled", True):
-                    continue
-                if selected_only and not model.get("selected", False):
-                    continue
-
-                key = f"{provider.get('id')}::{model.get('id')}"
-                if key in seen:
-                    continue
-                seen.add(key)
-
-                entry = _catalog_entry(provider, model, is_focused=is_focused)
-                entries.append(entry)
-                if is_focused:
-                    reason = "focus provider"
-                elif visibility == "always_visible":
-                    reason = "always visible provider"
-                elif visibility == "selected_models":
-                    reason = "selected model"
-                else:
-                    reason = visibility
-                explanations.append(f"{entry['codex_model_id']} included by {reason}.")
-
-        explanations.extend(resolve_catalog_id_collisions(entries))
-
-        return {
-            "focus_provider_id": focus_provider_id,
-            "entries": entries,
-            "entry_count": len(entries),
-            "route_explanation": explanations,
-            "generated_at": now_iso(),
-        }
+        preview = build_catalog_preview_from_providers(providers, focus_provider_id=provider_id)
+        preview["success"] = True
+        preview["preview"] = True
+        return preview
 
     def export_bundle(self) -> Dict[str, Any]:
         """
@@ -726,6 +718,7 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         "created_at": raw.get("created_at") or "",
         "updated_at": raw.get("updated_at") or "",
     }
+    provider["capabilities"] = effective_provider_capabilities(provider)
 
     if not provider["models"]:
         provider["models"] = [normalize_model({"id": "default", "display_name": "Default model"})]
@@ -764,14 +757,51 @@ def merge_provider_update(existing: Dict[str, Any], update: Dict[str, Any]) -> D
                 merged_headers[header_key] = header_value
             merged[key] = merged_headers
             continue
+        if key == "models" and isinstance(value, list):
+            merged[key] = merge_model_updates(merged.get("models", []), value)
+            continue
         merged[key] = value
     # 最终再过 normalize：确保合并后的数据仍然符合最新 schema
     return normalize_provider(merged)
 
 
+def merge_model_updates(existing_models: Any, update_models: Any) -> List[Dict[str, Any]]:
+    """
+    Merge text-area model edits while preserving per-model metadata.
+
+    The provider UI edits models as id|display|context|selected rows, so updates
+    may omit capabilities, pricing, tags, aliases, and capability_overrides.
+    Preserve those fields for models whose id still matches.
+    """
+    existing_by_id: Dict[str, List[Dict[str, Any]]] = {}
+    if isinstance(existing_models, list):
+        for model in existing_models:
+            if not isinstance(model, dict):
+                continue
+            model_id = str(model.get("id") or "").strip()
+            if not model_id:
+                continue
+            existing_by_id.setdefault(model_id, []).append(copy.deepcopy(model))
+
+    merged_models: List[Dict[str, Any]] = []
+    if not isinstance(update_models, list):
+        return merged_models
+    for update_model in update_models:
+        if not isinstance(update_model, dict):
+            continue
+        model_id = str(update_model.get("id") or "").strip()
+        base: Dict[str, Any] = {}
+        if model_id and existing_by_id.get(model_id):
+            base = existing_by_id[model_id].pop(0)
+        base.update(copy.deepcopy(update_model))
+        merged_models.append(base)
+    return merged_models
+
+
 def normalize_model(data: Dict[str, Any]) -> Dict[str, Any]:
     model_id = str(data.get("id") or data.get("model") or "default").strip()
     capabilities = normalize_capabilities(data.get("capabilities"))
+    capability_overrides = model_capability_overrides(data)
     context_window = int(data.get("context_window") or data.get("context") or 0)
     return {
         "id": model_id,
@@ -780,6 +810,7 @@ def normalize_model(data: Dict[str, Any]) -> Dict[str, Any]:
         "selected": bool(data.get("selected", False)),
         "context_window": max(context_window, 0),
         "capabilities": capabilities,
+        "capability_overrides": capability_overrides,
         "native_currency": normalize_currency(data.get("native_currency") or ""),
         "pricing": data.get("pricing") if isinstance(data.get("pricing"), dict) else {},
         "tags": data.get("tags") if isinstance(data.get("tags"), list) else [],
@@ -806,33 +837,7 @@ def normalize_capabilities(data: Any) -> Dict[str, bool]:
     Returns:
         完整的 capabilities 字典，所有已知键均为 bool 类型。
     """
-    defaults = {
-        "text": True,
-        "vision": False,
-        "tools": False,
-        "custom_tools": False,
-        "reasoning": False,
-        "streaming": True,
-        "compact": False,
-        "images": False,
-        "videos": False,
-        "embeddings": False,
-        "models": True,
-        "balance": False,
-        "quota": False,
-    }
-    if isinstance(data, list):
-        for item in data:
-            key = str(item)
-            if key in defaults:
-                defaults[key] = True
-            else:
-                # 保留自定义 capability，不静默丢弃
-                defaults[key] = True
-    elif isinstance(data, dict):
-        for key, value in data.items():
-            defaults[key] = bool(value)
-    return defaults
+    return _normalize_capabilities(data)
 
 
 def normalize_string_map(value: Any) -> Dict[str, str]:
@@ -1064,6 +1069,23 @@ def validate_provider(provider: Dict[str, Any]) -> Tuple[List[str], List[str]]:
         warnings.append("base_url is empty; network health checks will be skipped until configured")
     if provider.get("auth_mode") == "provider_api_key" and not provider.get("api_key"):
         warnings.append("api_key is empty; save a key before enabling real upstream calls")
+    capabilities = provider.get("capabilities") if isinstance(provider.get("capabilities"), dict) else {}
+    media_profile = provider.get("media_profile") if isinstance(provider.get("media_profile"), dict) else {}
+    media_requested = bool(
+        capabilities.get("images")
+        or capabilities.get("videos")
+        or media_profile.get("default_image_provider")
+        or media_profile.get("default_video_provider")
+    )
+    media_route_enabled = bool(
+        media_profile.get("openai_compatible_media")
+        or media_profile.get("adapter_required")
+        or provider.get("api_format") in {"openai_images", "openai_videos"}
+    )
+    if media_requested and not media_route_enabled:
+        warnings.append("media capability is enabled, but Media Mode is disabled; image/video routes will not be forwarded")
+    if media_route_enabled and not media_requested and provider.get("api_format") not in {"openai_images", "openai_videos"}:
+        warnings.append("Media Mode is enabled, but no Images/Videos capability or default media provider is selected; media routes will still appear unsupported")
     if not provider.get("models"):
         warnings.append("no models configured")
     return errors, warnings
@@ -1200,6 +1222,69 @@ def _empty_store() -> Dict[str, Any]:
     }
 
 
+def build_catalog_preview_from_providers(
+    providers: List[Dict[str, Any]],
+    focus_provider_id: str = "",
+) -> Dict[str, Any]:
+    """
+    Build a Unified Model Catalog preview from an in-memory provider list.
+
+    Keeping this pure makes saved previews and unsaved draft previews share the
+    exact same inclusion, capability inheritance, and collision logic.
+    """
+    entries: List[Dict[str, Any]] = []
+    explanations: List[str] = []
+    seen: set[str] = set()
+
+    for provider in providers:
+        if not isinstance(provider, dict) or not provider.get("enabled", True):
+            continue
+        visibility = provider.get("catalog_visibility", "focused_only")
+        is_focused = bool(focus_provider_id and provider.get("id") == focus_provider_id)
+        if visibility == "hidden":
+            continue
+
+        selected_only = visibility == "selected_models" and not is_focused
+        include_all = visibility == "always_visible" or is_focused
+        if not include_all and visibility not in {"selected_models", "focused_only"}:
+            continue
+        if visibility == "focused_only" and not is_focused:
+            continue
+
+        for model in provider.get("models", []):
+            if not isinstance(model, dict) or not model.get("enabled", True):
+                continue
+            if selected_only and not model.get("selected", False):
+                continue
+
+            key = f"{provider.get('id')}::{model.get('id')}"
+            if key in seen:
+                continue
+            seen.add(key)
+
+            entry = _catalog_entry(provider, model, is_focused=is_focused)
+            entries.append(entry)
+            if is_focused:
+                reason = "focus provider"
+            elif visibility == "always_visible":
+                reason = "always visible provider"
+            elif visibility == "selected_models":
+                reason = "selected model"
+            else:
+                reason = visibility
+            explanations.append(f"{entry['codex_model_id']} included by {reason}.")
+
+    explanations.extend(resolve_catalog_id_collisions(entries))
+
+    return {
+        "focus_provider_id": focus_provider_id,
+        "entries": entries,
+        "entry_count": len(entries),
+        "route_explanation": explanations,
+        "generated_at": now_iso(),
+    }
+
+
 def _catalog_entry(provider: Dict[str, Any], model: Dict[str, Any], is_focused: bool = False) -> Dict[str, Any]:
     """
     生成单个 UMC Catalog 条目。
@@ -1221,6 +1306,11 @@ def _catalog_entry(provider: Dict[str, Any], model: Dict[str, Any], is_focused: 
     """
     alias = provider.get("short_alias") or provider.get("id")
     upstream_model_id = model.get("id") or "default"
+    pricing: Dict[str, Any] = {}
+    if isinstance(provider.get("pricing"), dict):
+        pricing.update(copy.deepcopy(provider["pricing"]))
+    if isinstance(model.get("pricing"), dict):
+        pricing.update(copy.deepcopy(model["pricing"]))
     return {
         "codex_model_id": f"{alias}/{upstream_model_id}",
         "display_name": model.get("display_name") or upstream_model_id,
@@ -1231,8 +1321,10 @@ def _catalog_entry(provider: Dict[str, Any], model: Dict[str, Any], is_focused: 
         "api_format": provider.get("api_format"),
         "responses_profile": provider.get("responses_profile", {}),
         "context_window": model.get("context_window", 0),
-        "capabilities": model.get("capabilities") or provider.get("capabilities", {}),
-        "native_currency": model.get("native_currency") or provider.get("native_currency"),
+        "capabilities": merge_provider_model_capabilities(provider, model),
+        "native_currency": model.get("native_currency") or provider.get("native_currency") or pricing.get("native_currency"),
+        "pricing": pricing,
+        "has_model_pricing": bool(isinstance(model.get("pricing"), dict) and model.get("pricing")),
         "catalog_visibility": provider.get("catalog_visibility"),
         "focused": is_focused,
     }
@@ -1431,6 +1523,57 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "models": [{"id": "custom-responses-model", "display_name": "Custom Responses Model", "selected": True, "context_window": 128000}],
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
+        },
+    },
+    {
+        "preset_id": "codex-api-key-mixin",
+        "name": "Codex Native + API Key Mix-in",
+        "category": "media",
+        "description": "Keep official Codex OAuth while adding a provider API key through the local proxy. Responses text plus OpenAI-compatible image pass-through.",
+        "provider": {
+            "id": "codex-api-key-mixin",
+            "display_name": "Codex Native + API Key Mix-in",
+            "kind": "custom",
+            "short_alias": "mix",
+            "base_url": "https://your-custom-gateway.example.com/v1",
+            "api_format": "openai_responses",
+            "auth_mode": "provider_api_key",
+            "native_currency": "USD",
+            "country_region": "",
+            "catalog_visibility": "selected_models",
+            "capabilities": {
+                "text": True,
+                "vision": True,
+                "tools": True,
+                "reasoning": True,
+                "streaming": True,
+                "images": True,
+                "models": True,
+            },
+            "responses_profile": {
+                "domestic_responses": False,
+                "partial_compatibility": False,
+                "requires_adapter": False,
+                "compatibility_notes": "Mix-in mode: Codex can stay logged in with official OAuth while local proxy forwards provider-key requests. Verify upstream Responses/tools support before enabling production routing.",
+                "unsupported_fields": [],
+            },
+            "media_profile": {
+                "default_image_provider": True,
+                "default_video_provider": False,
+                "openai_compatible_media": True,
+                "adapter_required": False,
+                "async_submit": False,
+                "poll_required": False,
+                "supports_url_output": True,
+                "supports_base64_output": True,
+            },
+            "models": [
+                {"id": "auto", "display_name": "Auto / upstream default", "selected": True, "context_window": 128000},
+            ],
+            "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
+            "user_agent": "Codex-Enhance-Manager/0.1",
+            "caveat": "混入 API key 模式：本应用只写 Codex config.toml 的本地代理 provider，不修改 auth.json；图片生成需要上游兼容 /v1/images/*。",
+            "notes": "类似 Code++ 的 mix-in API key 工作流：保留官方账号态，把第三方 key 放在本地代理层。",
         },
     },
     {

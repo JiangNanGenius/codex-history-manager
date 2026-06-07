@@ -1,5 +1,6 @@
 import unittest
 
+from capabilities import normalize_capabilities
 from app import (
     _normalize_route_capabilities,
     _route_candidate_matches_model,
@@ -96,6 +97,48 @@ class RouteSimulatorHelpersTest(unittest.TestCase):
         self.assertTrue(candidates[0]["capabilities"]["text"])
         self.assertTrue(candidates[0]["capabilities"]["vision"])
         self.assertTrue(candidates[0]["capabilities"]["tools"])
+
+    def test_selected_provider_models_to_amr_candidates_inherits_provider_images_from_legacy_model_caps(self):
+        provider = {
+            "id": "provider-1",
+            "enabled": True,
+            "capabilities": {"text": True, "images": True},
+            "models": [
+                {
+                    "id": "auto",
+                    "selected": True,
+                    "enabled": True,
+                    "capabilities": normalize_capabilities(None),
+                },
+            ],
+        }
+
+        candidates = _selected_provider_models_to_amr_candidates(provider, 2)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0]["capabilities"]["images"])
+
+    def test_selected_provider_models_to_amr_candidates_infers_media_profile_images(self):
+        provider = {
+            "id": "provider-1",
+            "enabled": True,
+            "api_format": "openai_responses",
+            "capabilities": {"text": True},
+            "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+            "models": [
+                {
+                    "id": "auto",
+                    "selected": True,
+                    "enabled": True,
+                    "capabilities": normalize_capabilities(None),
+                },
+            ],
+        }
+
+        candidates = _selected_provider_models_to_amr_candidates(provider, 2)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0]["capabilities"]["images"])
 
     def test_selected_provider_models_to_amr_candidates_skips_disabled_provider(self):
         provider = {

@@ -19,6 +19,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from capabilities import normalize_capabilities
 from amr_registry import AMRRegistry, normalize_group, normalize_candidate, _empty_store
 
 
@@ -269,6 +270,53 @@ class TestBuildFromProviders:
         assert len(groups) == 1
         assert groups[0]["id"] == "default"
 
+    def test_build_from_providers_inherits_provider_images_from_legacy_model_caps(self, tmp_path):
+        reg = AMRRegistry(str(tmp_path / "amr.json"))
+        mock_pr = MagicMock()
+        mock_pr.list_providers.return_value = {
+            "providers": [
+                {
+                    "id": "mixed",
+                    "enabled": True,
+                    "catalog_visibility": "selected_models",
+                    "capabilities": {"text": True, "images": True},
+                    "models": [
+                        {"id": "auto", "enabled": True, "context_window": 128000, "capabilities": normalize_capabilities(None)},
+                    ],
+                },
+            ]
+        }
+
+        group = reg.build_from_providers(mock_pr)
+
+        candidate = group["candidates"][0]
+        assert candidate["id"] == "mixed/auto"
+        assert candidate["capabilities"]["images"] is True
+
+    def test_build_from_providers_infers_images_from_media_profile(self, tmp_path):
+        reg = AMRRegistry(str(tmp_path / "amr.json"))
+        mock_pr = MagicMock()
+        mock_pr.list_providers.return_value = {
+            "providers": [
+                {
+                    "id": "native",
+                    "enabled": True,
+                    "api_format": "openai_responses",
+                    "capabilities": {"text": True},
+                    "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+                    "models": [
+                        {"id": "auto", "enabled": True, "context_window": 128000, "capabilities": normalize_capabilities(None)},
+                    ],
+                },
+            ]
+        }
+
+        group = reg.build_from_providers(mock_pr)
+
+        candidate = group["candidates"][0]
+        assert candidate["id"] == "native/auto"
+        assert candidate["capabilities"]["images"] is True
+
 
 # ─────────────── Route Integration ───────────────
 
@@ -357,6 +405,22 @@ class TestRouteIntegration:
         result2 = reg.route("test", {"vision"}, 0)
         assert result2["success"] is True
         assert result2["candidate_id"] == "c2"  # 只有 c2 支持 vision
+
+    def test_same_priority_uses_saved_candidate_order(self, tmp_path):
+        reg = AMRRegistry(str(tmp_path / "amr.json"))
+        reg.create_group({
+            "id": "test",
+            "display_name": "Test",
+            "candidates": [
+                {"id": "z-provider/m2", "provider_id": "z-provider", "model_id": "m2", "priority": 1, "enabled": True, "context_window": 1000, "capabilities": {"text": True}},
+                {"id": "a-provider/m1", "provider_id": "a-provider", "model_id": "m1", "priority": 1, "enabled": True, "context_window": 1000, "capabilities": {"text": True}},
+            ],
+        })
+
+        result = reg.route("test", {"text"}, 0)
+
+        assert result["success"] is True
+        assert result["candidate_id"] == "z-provider/m2"
 
     def test_route_context_window_failure(self, tmp_path):
         """上下文窗口不足时应返回失败。"""

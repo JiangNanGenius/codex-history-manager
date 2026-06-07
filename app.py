@@ -42,7 +42,7 @@ from sync import full_sync, is_codex_running, kill_codex, start_codex, resolve_c
 from auto_detect import detect_all
 from token_stats import TokenStats
 from codex_rollout_usage import get_codex_rollout_cache_stats
-from providers import ProviderRegistry, DEFAULT_STORE_PATH, normalize_capabilities
+from providers import ProviderRegistry, DEFAULT_STORE_PATH, merge_provider_update
 from amr_registry import AMRRegistry
 from codex_config import (
     CodexConfigManager,
@@ -66,10 +66,14 @@ from currency import (
     update_currency_config,
 )
 from costing import estimate_request_cost, pricing_preview_payload
-from quota import QuotaManager
+from quota import QuotaManager, refresh_provider_quota_preview
 from request_logs import RequestLogStore
 from startup_manager import STARTUP_CONFIG_KEYS, StartupManager
 from auto_approval_runtime import AutoApprovalModelReviewer
+from capabilities import merge_provider_model_capabilities
+from media_adapters import build_media_adapter_preview_bundle
+from media_proxy import build_media_route_readiness
+from codex_approval_bridge import CodexApprovalBridgeError, build_codex_approval_bridge_preview
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -192,7 +196,7 @@ def create_app() -> Flask:
         return None
 
     # 启动自动备份
-    if config.get("auto_backup"):
+    if config.get("auto_backup") and os.environ.get("CODEX_ENHANCE_MANAGER_SMOKE_TEST") != "1":
         backup_mgr.start_auto_backup()
 
     # 尝试连接数据库
@@ -831,6 +835,8 @@ def create_app() -> Flask:
                 limit=int(request.args.get("limit", 100)),
                 provider_id=request.args.get("provider_id", ""),
                 endpoint=request.args.get("endpoint", ""),
+                media_kind=request.args.get("media_kind", ""),
+                error_type=request.args.get("error_type", ""),
                 since=request.args.get("since", ""),
                 success=success_filter,
             ))
@@ -881,6 +887,21 @@ def create_app() -> Flask:
             body = request.get_json(silent=True) or {}
             result = quota_manager.refresh_provider_quota(provider_id, force=bool(body.get("force", True)))
             return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/quota/refresh-draft", methods=["POST"])
+    def refresh_provider_quota_draft(provider_id):
+        """Run quota_check from the current provider form draft without saving it."""
+        try:
+            _refresh_provider_registry_path()
+            existing = provider_registry.get_provider(provider_id, include_secrets=True)
+            if not existing:
+                return jsonify({"error": "Provider not found"}), 404
+            body = request.get_json(silent=True) or {}
+            draft = body.get("provider") if isinstance(body.get("provider"), dict) else body
+            provider = merge_provider_update(existing, draft if isinstance(draft, dict) else {})
+            return jsonify(refresh_provider_quota_preview(provider))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -1102,6 +1123,45 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/providers/<provider_id>/media-adapter/preview-draft", methods=["POST"])
+    def preview_media_adapter_draft(provider_id):
+        """Preview adapter-required media routes from the current provider form draft."""
+        try:
+            _refresh_provider_registry_path()
+            existing = provider_registry.get_provider(provider_id, include_secrets=True)
+            if not existing:
+                return jsonify({"error": "Provider not found"}), 404
+            body = request.get_json(silent=True) or {}
+            draft = body.get("provider") if isinstance(body.get("provider"), dict) else body
+            provider = merge_provider_update(existing, draft if isinstance(draft, dict) else {})
+            request_json = body.get("request") if isinstance(body.get("request"), dict) else {}
+            return jsonify(build_media_adapter_preview_bundle(
+                provider,
+                request_json=request_json,
+                media_kind=str(body.get("media_kind") or ""),
+                model_id=str(body.get("model") or ""),
+            ))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/media-route/preview-draft", methods=["POST"])
+    def preview_media_route_draft(provider_id):
+        """Preview OpenAI-compatible media proxy readiness from the current provider form draft."""
+        try:
+            _refresh_provider_registry_path()
+            existing = provider_registry.get_provider(provider_id, include_secrets=True)
+            if not existing:
+                return jsonify({"error": "Provider not found"}), 404
+            body = request.get_json(silent=True) or {}
+            draft = body.get("provider") if isinstance(body.get("provider"), dict) else body
+            provider = merge_provider_update(existing, draft if isinstance(draft, dict) else {})
+            return jsonify(build_media_route_readiness(
+                provider,
+                model_id=str(body.get("model") or ""),
+            ))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/providers/export")
     def export_provider_bundle():
         """导出脱敏 provider bundle，供诊断/备份使用。"""
@@ -1118,6 +1178,23 @@ def create_app() -> Flask:
             _refresh_provider_registry_path()
             focus_provider_id = request.args.get("focus_provider_id", "")
             return jsonify(provider_registry.preview_catalog(focus_provider_id=focus_provider_id))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/model-catalog/preview-draft", methods=["POST"])
+    def preview_model_catalog_draft(provider_id):
+        """Preview Unified Model Catalog with the current provider form draft."""
+        try:
+            _refresh_provider_registry_path()
+            body = request.get_json(silent=True) or {}
+            draft = body.get("provider") if isinstance(body.get("provider"), dict) else body
+            result = provider_registry.preview_catalog_with_provider_draft(
+                provider_id,
+                draft if isinstance(draft, dict) else {},
+            )
+            if not result.get("success", True):
+                return jsonify(result), 404 if result.get("error") == "Provider not found" else 400
+            return jsonify(result)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -1230,21 +1307,12 @@ def create_app() -> Flask:
             for p in providers_data.get("providers", []):
                 if not p.get("enabled"):
                     continue
-                caps = p.get("capabilities", {})
                 alias = str(p.get("short_alias") or p.get("id") or "").strip()
                 for m in p.get("models", []):
                     if not m.get("enabled", True):
                         continue
                     model_id = str(m.get("id") or "").strip()
-                    model_caps = m.get("capabilities") if isinstance(m.get("capabilities"), dict) else {}
-                    merged_caps = {
-                        "text": model_caps.get("text", caps.get("text", True)),
-                        "vision": model_caps.get("vision", caps.get("vision", False)),
-                        "tools": model_caps.get("tools", caps.get("tools", False)),
-                        "reasoning": model_caps.get("reasoning", caps.get("reasoning", False)),
-                        "images": model_caps.get("images", caps.get("images", False)),
-                        "videos": model_caps.get("videos", caps.get("videos", False)),
-                    }
+                    merged_caps = merge_provider_model_capabilities(p, m)
                     candidates.append({
                         "id": f"{p['id']}/{model_id}",
                         "provider_id": p["id"],
@@ -1458,6 +1526,23 @@ def create_app() -> Flask:
                 sandbox_workspace_write=workspace_update,
             )
             return jsonify(preview)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/approval-bridge-preview", methods=["POST"])
+    def codex_integration_approval_bridge_preview():
+        """Preview Codex app-server approval JSON-RPC bridge mapping without replying to Codex."""
+        try:
+            body = request.get_json(silent=True) or {}
+            message = body.get("message") if isinstance(body.get("message"), dict) else body.get("request")
+            if not isinstance(message, dict) and isinstance(body.get("method"), str):
+                message = body
+            if not isinstance(message, dict):
+                return jsonify({"success": False, "error": "JSON-RPC approval message is required"}), 400
+            decision = body.get("decision") if isinstance(body.get("decision"), dict) else None
+            return jsonify(build_codex_approval_bridge_preview(message, decision))
+        except (CodexApprovalBridgeError, ValueError) as e:
+            return jsonify({"success": False, "preview": True, "error": str(e)}), 400
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -1797,6 +1882,21 @@ def create_app() -> Flask:
         _refresh_provider_registry_path()
         return diagnostics_collector.check_provider_connectivity(provider_id)
 
+    def _provider_draft_connectivity_result(provider_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        _refresh_provider_registry_path()
+        existing = provider_registry.get_provider(provider_id, include_secrets=True)
+        if not existing:
+            return {
+                "success": False,
+                "reachable": False,
+                "provider_id": provider_id,
+                "error": f"Provider not found: {provider_id}",
+                "preview": True,
+            }
+        draft = body.get("provider") if isinstance(body.get("provider"), dict) else body
+        provider = merge_provider_update(existing, draft if isinstance(draft, dict) else {})
+        return diagnostics_collector.check_provider_payload_connectivity(provider)
+
     @app.route("/api/providers/<provider_id>/health-check", methods=["POST"])
     def provider_health_check(provider_id):
         """
@@ -1810,6 +1910,16 @@ def create_app() -> Flask:
             return jsonify(_provider_connectivity_result(provider_id))
         except Exception as e:
             diagnostics_collector.record_error("api.providers.health_check", str(e))
+            return jsonify({"success": False, "reachable": False, "provider_id": provider_id, "error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/health-check-draft", methods=["POST"])
+    def provider_health_check_draft(provider_id):
+        """Run the provider network health check against the current form draft."""
+        try:
+            body = request.get_json(silent=True) or {}
+            return jsonify(_provider_draft_connectivity_result(provider_id, body))
+        except Exception as e:
+            diagnostics_collector.record_error("api.providers.health_check_draft", str(e))
             return jsonify({"success": False, "reachable": False, "provider_id": provider_id, "error": str(e)}), 500
 
     @app.route("/api/diagnostics/test-provider/<provider_id>", methods=["POST"])
@@ -1845,7 +1955,6 @@ def _selected_provider_models_to_amr_candidates(provider: Dict[str, Any], priori
     if not provider.get("enabled", True):
         return []
     provider_id = str(provider.get("id") or "").strip()
-    provider_caps = provider.get("capabilities") if isinstance(provider.get("capabilities"), dict) else {}
     candidates: list[Dict[str, Any]] = []
     for model in provider.get("models", []):
         if not isinstance(model, dict):
@@ -1855,9 +1964,6 @@ def _selected_provider_models_to_amr_candidates(provider: Dict[str, Any], priori
         model_id = str(model.get("id") or "").strip()
         if not provider_id or not model_id:
             continue
-        model_caps = model.get("capabilities") if isinstance(model.get("capabilities"), dict) else {}
-        merged_caps = dict(provider_caps)
-        merged_caps.update(model_caps)
         candidates.append({
             "id": f"{provider_id}/{model_id}",
             "provider_id": provider_id,
@@ -1865,7 +1971,7 @@ def _selected_provider_models_to_amr_candidates(provider: Dict[str, Any], priori
             "priority": int(priority),
             "enabled": True,
             "context_window": _clamp_int(model.get("context_window", 0), 0, 0, 10_000_000),
-            "capabilities": normalize_capabilities(merged_caps),
+            "capabilities": merge_provider_model_capabilities(provider, model),
         })
     return candidates
 

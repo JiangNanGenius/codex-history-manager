@@ -62,7 +62,7 @@
             </button>
             <button onclick="navigateTo('amr')" data-nav="amr" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h7m0 0L8 3m3 3L8 9m8 9h4m-4 0l3-3m-3 3l3 3M4 18h7a4 4 0 004-4V6h5"/></svg>
-                <span>AMR</span>
+                <span data-i18n="amrTitle">模型轮换</span>
             </button>
             <button onclick="navigateTo('codex-integration')" data-nav="codex-integration" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
@@ -133,7 +133,7 @@
                 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
                         <h2 class="text-lg font-semibold text-white" data-i18n="realtimeStats">Token 实时统计</h2>
-                        <p class="text-sm text-dark-400 mt-1" data-i18n="realtimeDesc">Codex DB 统计实时性取决于 Codex 写入 state_5.sqlite 的频率；缓存统计来自代理缓存数据库，官方 API 和自定义 API 只要经过代理都可统计。</p>
+                        <p class="text-sm text-dark-400 mt-1" data-i18n="realtimeDesc">用量会自动跟随 Codex 更新；启用本地连接后，缓存节省也会一起记录。</p>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
                         <span class="status-dot bg-emerald-500 pulse-dot"></span>
@@ -166,7 +166,7 @@
                         <div id="stopwatch-elapsed" class="card-value font-mono">00:00:00</div>
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label" data-i18n="tokenDiff">Token 增量</div>
+                        <div class="card-label" data-i18n="tokenDiff">本次新增 Token</div>
                         <div id="stopwatch-token-diff" class="card-value text-accent-400">0</div>
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
@@ -174,8 +174,8 @@
                         <div id="stopwatch-current-total" class="card-value">0</div>
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label" data-i18n="cacheUsage">缓存读/写</div>
-                        <div id="stopwatch-cache-hits" class="card-value text-dark-400" data-i18n="cacheUsageUnavailable">缓存读: -- · 缓存写: -- · 缓存总计: -- · 不支持</div>
+                        <div class="card-label" data-i18n="cacheUsage">复用节省</div>
+                        <div id="stopwatch-cache-hits" class="card-value text-dark-400" data-i18n="cacheUsageUnavailable">复用: -- · 新增: -- · 合计: -- · 不支持</div>
                     </div>
                 </div>
                 <div id="stopwatch-note" class="text-xs text-dark-500 mt-3" data-i18n="noDataYet">暂无数据，请点击"开始追踪"。</div>
@@ -277,7 +277,7 @@
                 </div>
             </div>
 
-            <!-- Local Proxy Request Logs -->
+            <!-- Local usage records -->
             <div id="request-logs-root" class="card"></div>
         </div>
 
@@ -353,7 +353,7 @@
                     <div class="flex flex-wrap gap-2 mb-4">
                         <button onclick="exportCurrentSession('md')" class="btn btn-secondary text-xs" data-i18n="exportMarkdown">导出 Markdown</button>
                         <button onclick="exportCurrentSession('txt')" class="btn btn-secondary text-xs" data-i18n="exportText">导出 Text</button>
-                        <button onclick="exportCurrentSession('json')" class="btn btn-secondary text-xs" data-i18n="exportJson">导出 JSON</button>
+                        <button onclick="exportCurrentSession('json')" class="btn btn-secondary text-xs" data-i18n="exportJson">导出数据文件</button>
                     </div>
                     <div id="detail-meta" class="flex flex-wrap gap-2 mb-4 text-xs text-dark-400"></div>
                     <div id="detail-messages" class="space-y-3 max-h-[60vh] overflow-y-auto pr-2"></div>
@@ -379,7 +379,7 @@
             </div>
             <!-- Provider Distribution -->
             <div class="card">
-                <h3 class="card-title" data-i18n="dbProviderDist">DB Provider Distribution</h3>
+                <h3 class="card-title" data-i18n="dbProviderDist">供应商分布</h3>
                 <div id="sync-provider-dist" class="mt-3 space-y-2"></div>
             </div>
             <!-- Codex Process -->
@@ -399,18 +399,18 @@
                 <h3 class="card-title" data-i18n="syncTarget">Sync Target</h3>
                 <div class="grid grid-cols-2 gap-4 mt-3">
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="targetProvider">目标提供商（留空使用 config.toml）</label>
+                        <label class="text-xs text-dark-400" data-i18n="targetProvider">目标供应商（留空则使用当前设置）</label>
                         <input id="sync-target-provider" type="text" class="input mt-1" placeholder="e.g. custom">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="targetModel">目标模型（留空使用 config.toml）</label>
+                        <label class="text-xs text-dark-400" data-i18n="targetModel">目标模型（留空则使用当前设置）</label>
                         <input id="sync-target-model" type="text" class="input mt-1" placeholder="e.g. gpt-5">
                     </div>
                 </div>
             </div>
             <!-- Actions -->
             <div class="flex flex-wrap gap-3">
-                <button onclick="syncPreview()" class="btn btn-secondary" data-i18n="previewDryRun">Preview (Dry Run)</button>
+                <button onclick="syncPreview()" class="btn btn-secondary" data-i18n="previewDryRun">预览</button>
                 <button onclick="syncExecute()" class="btn btn-warning" data-i18n="executeSync">Execute Sync</button>
                 <button onclick="oneClickSyncRestart()" class="btn btn-primary" data-i18n="oneClickSyncRestartBtn">One-Click Sync + Restart</button>
             </div>
@@ -462,10 +462,10 @@
                 </div>
             </div>
             <div class="card">
-                <h3 class="card-title" data-i18n="configuration">Configuration</h3>
+                <h3 class="card-title" data-i18n="configuration">基础设置</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="dbPath">DB Path</label>
+                        <label class="text-xs text-dark-400" data-i18n="dbPath">数据文件路径</label>
                         <input id="setting-db-path" type="text" class="input mt-1">
                     </div>
                     <div>
@@ -489,53 +489,53 @@
                         <input id="setting-codex-pp" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="ccSwitchDbPath">代理缓存数据库路径（可选）</label>
-                        <input id="setting-cc-switch-db" type="text" class="input mt-1" placeholder="proxy_request_logs 所在数据库路径">
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">用于读取代理数据库中的 cache/token 字段；官方 API 和自定义 API 只要经过代理都可统计。</p>
+                        <label class="text-xs text-dark-400" data-i18n="ccSwitchDbPath">本地复用记录位置（可选）</label>
+                        <input id="setting-cc-switch-db" type="text" class="input mt-1" placeholder="本地复用记录位置" data-i18n-placeholder="ccSwitchDbPlaceholder">
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">用于补充复用节省统计；留空也不影响基础用量统计。</p>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="providerStorePath">Provider Registry Path</label>
+                        <label class="text-xs text-dark-400" data-i18n="providerStorePath">供应商保存位置</label>
                         <input id="setting-provider-store-path" type="text" class="input mt-1">
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="providerStoreDesc">Stores local provider registry only; it does not write Codex auth or config.</p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="providerStoreDesc">只保存本应用的供应商设置，不会直接改动 Codex 登录信息。</p>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Temp Dir</label>
+                        <label class="text-xs text-dark-400" data-i18n="tempDir">临时文件位置</label>
                         <input id="setting-temp-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Diagnostics Dir</label>
+                        <label class="text-xs text-dark-400" data-i18n="diagnosticsDir">检查文件位置</label>
                         <input id="setting-diagnostics-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Exports Dir</label>
+                        <label class="text-xs text-dark-400" data-i18n="exportsDir">导出保存位置</label>
                         <input id="setting-exports-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Request Log Path</label>
+                        <label class="text-xs text-dark-400" data-i18n="requestLogPath">使用记录位置</label>
                         <input id="setting-request-log-path" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Request Log Retention Days</label>
+                        <label class="text-xs text-dark-400" data-i18n="requestLogRetentionDays">记录保留天数</label>
                         <input id="setting-request-log-retention-days" type="number" min="1" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Request Log Max MB</label>
+                        <label class="text-xs text-dark-400" data-i18n="requestLogMaxMb">记录最大大小（MB）</label>
                         <input id="setting-request-log-max-mb" type="number" min="1" step="1" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Proxy Upstream Timeout Seconds</label>
+                        <label class="text-xs text-dark-400" data-i18n="proxyUpstreamTimeout">供应商响应超时</label>
                         <input id="setting-proxy-upstream-timeout" type="number" min="1" max="3600" step="1" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Proxy Retry Attempts</label>
+                        <label class="text-xs text-dark-400" data-i18n="proxyRetryAttempts">失败重试次数</label>
                         <input id="setting-proxy-retry-attempts" type="number" min="0" max="5" step="1" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Proxy Retry Backoff ms</label>
+                        <label class="text-xs text-dark-400" data-i18n="proxyRetryBackoffMs">重试等待时间</label>
                         <input id="setting-proxy-retry-backoff-ms" type="number" min="0" max="30000" step="50" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Theme Preset</label>
+                        <label class="text-xs text-dark-400" data-i18n="themePreset">Theme Preset</label>
                         <select id="setting-theme-preset" class="input mt-1 w-full">
                             <option value="dark">Dark</option>
                             <option value="midnight">Midnight</option>
@@ -550,39 +550,39 @@
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Custom Accent</label>
+                        <label class="text-xs text-dark-400" data-i18n="customAccent">Custom Accent</label>
                         <input id="setting-theme-accent" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Custom Deep</label>
+                        <label class="text-xs text-dark-400" data-i18n="customDeep">Custom Deep</label>
                         <input id="setting-theme-deep" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Custom Background</label>
+                        <label class="text-xs text-dark-400" data-i18n="customBackground">Custom Background</label>
                         <input id="setting-theme-background" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Custom Elevated</label>
+                        <label class="text-xs text-dark-400" data-i18n="customElevated">Custom Elevated</label>
                         <input id="setting-theme-elevated" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Custom Surface</label>
+                        <label class="text-xs text-dark-400" data-i18n="customSurface">Custom Surface</label>
                         <input id="setting-theme-surface" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Custom Border</label>
+                        <label class="text-xs text-dark-400" data-i18n="customBorder">Custom Border</label>
                         <input id="setting-theme-border" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Text Primary</label>
+                        <label class="text-xs text-dark-400" data-i18n="textPrimary">Text Primary</label>
                         <input id="setting-theme-text-primary" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Text Secondary</label>
+                        <label class="text-xs text-dark-400" data-i18n="textSecondary">Text Secondary</label>
                         <input id="setting-theme-text-secondary" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Text Muted</label>
+                        <label class="text-xs text-dark-400" data-i18n="textMuted">Text Muted</label>
                         <input id="setting-theme-text-muted" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
@@ -621,142 +621,142 @@
                     </label>
                 </div>
                 <div class="mt-4 flex flex-wrap gap-2">
-                    <button onclick="exportTheme()" class="btn btn-secondary text-xs">Export Theme</button>
-                    <button onclick="document.getElementById('theme-import-file').click()" class="btn btn-secondary text-xs">Import Theme</button>
+                    <button onclick="exportTheme()" class="btn btn-secondary text-xs" data-i18n="exportTheme">Export Theme</button>
+                    <button onclick="document.getElementById('theme-import-file').click()" class="btn btn-secondary text-xs" data-i18n="importTheme">Import Theme</button>
                     <input id="theme-import-file" type="file" accept="application/json,.json" class="hidden" onchange="importThemeFromFile(this)">
                 </div>
                 <div class="mt-4">
-                    <div class="text-xs text-dark-400 mb-2">Floating Monitor Fields</div>
+                    <div class="text-xs text-dark-400 mb-2" data-i18n="floatingMonitorFields">Floating Monitor Fields</div>
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-tokens" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Tokens</label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-progress" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Progress</label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-threshold" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Threshold</label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-cache" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Cache</label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-context" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Context Window</label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-updated" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Updated Time</label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-tokens" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorTokens">Tokens</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-progress" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorProgress">Progress</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-threshold" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorThreshold">Threshold</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-cache" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorCache">复用节省</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-context" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorContextWindow">Context Window</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-updated" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorUpdatedTime">Updated Time</span></label>
                     </div>
                 </div>
             </div>
             <div class="card">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h3 class="card-title">Cost & Currency</h3>
-                        <p class="text-xs text-dark-500 mt-1">Manual FX overrides are used immediately. Online apiforex fetching stays disabled until its docs/API shape are verified.</p>
+                        <h3 class="card-title" data-i18n="costCurrencyTitle">Cost & Currency</h3>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="costCurrencyDesc">可手动设置汇率；在线汇率暂时关闭，避免不确定结果。</p>
                     </div>
-                    <button onclick="saveCurrencySettings()" class="btn btn-secondary text-xs">Save Currency</button>
+                    <button onclick="saveCurrencySettings()" class="btn btn-secondary text-xs" data-i18n="saveCurrency">Save Currency</button>
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 mt-4">
                     <div>
-                        <label class="text-xs text-dark-400">Display Currency</label>
+                        <label class="text-xs text-dark-400" data-i18n="displayCurrency">Display Currency</label>
                         <input id="currency-display" class="input mt-1" value="USD" maxlength="3">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Exchange Source</label>
+                        <label class="text-xs text-dark-400" data-i18n="exchangeSource">Exchange Source</label>
                         <select id="currency-source" class="input mt-1 w-full">
-                            <option value="manual">Manual</option>
-                            <option value="apiforex">apiforex.cn (disabled until verified)</option>
-                            <option value="disabled">Disabled</option>
+                            <option value="manual" data-i18n="exchangeSourceManual">Manual</option>
+                            <option value="apiforex" data-i18n="exchangeSourceApiforex">apiforex.cn (disabled until verified)</option>
+                            <option value="disabled" data-i18n="disabled">Disabled</option>
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">FX API Key</label>
-                        <input id="currency-api-key" type="password" class="input mt-1" placeholder="Stored locally, exported redacted">
+                        <label class="text-xs text-dark-400" data-i18n="fxApiKey">汇率服务密钥</label>
+                        <input id="currency-api-key" type="password" class="input mt-1" placeholder="保存在本地，导出时会隐藏" data-i18n-placeholder="fxApiKeyPlaceholder">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">TTL Hours</label>
+                        <label class="text-xs text-dark-400" data-i18n="ttlHours">保存小时数</label>
                         <input id="currency-ttl-hours" type="number" class="input mt-1" min="1" value="24">
                     </div>
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                     <div>
-                        <label class="text-xs text-dark-400">Manual FX Overrides JSON</label>
+                        <label class="text-xs text-dark-400" data-i18n="manualFxOverridesJson">手动汇率</label>
                         <textarea id="currency-manual-overrides" class="input mt-1 w-full font-mono" rows="7" placeholder='{"USD:CNY": 7.2, "CNY:AUD": 0.21}'></textarea>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Rate Preview</label>
+                        <label class="text-xs text-dark-400" data-i18n="ratePreview">Rate Preview</label>
                         <div class="grid grid-cols-3 gap-2 mt-1">
                             <input id="currency-preview-from" class="input" value="USD" maxlength="3">
                             <input id="currency-preview-to" class="input" value="CNY" maxlength="3">
                             <input id="currency-preview-amount" class="input" type="number" value="1" min="0" step="0.01">
                         </div>
                         <div class="flex flex-wrap gap-2 mt-3">
-                            <button onclick="previewCurrencyRate()" class="btn btn-secondary text-xs">Preview Rate</button>
+                            <button onclick="previewCurrencyRate()" class="btn btn-secondary text-xs" data-i18n="previewRate">Preview Rate</button>
                         </div>
-                        <pre id="currency-preview-result" class="preview-code mt-3">No preview yet.</pre>
+                        <pre id="currency-preview-result" class="preview-code mt-3" data-i18n="noPreviewYet">No preview yet.</pre>
                     </div>
                 </div>
             </div>
             <div class="card">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h3 class="card-title">Startup & Elevation</h3>
-                        <p class="text-xs text-dark-500 mt-1">Windows startup changes require explicit confirmation; preview and status are read-only.</p>
+                        <h3 class="card-title" data-i18n="startupElevation">Startup & Elevation</h3>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="startupElevationDesc">Windows startup changes require explicit confirmation; preview and status are read-only.</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="loadStartupStatus()" class="btn btn-secondary text-xs">Refresh Status</button>
-                        <button onclick="previewStartupSettings()" class="btn btn-secondary text-xs">Preview</button>
+                        <button onclick="loadStartupStatus()" class="btn btn-secondary text-xs" data-i18n="refreshStatus">Refresh Status</button>
+                        <button onclick="previewStartupSettings()" class="btn btn-secondary text-xs" data-i18n="previewAction">Preview</button>
                     </div>
                 </div>
-                <div id="startup-status-strip" class="mt-4 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-2 text-sm text-dark-300">Status not loaded.</div>
+                <div id="startup-status-strip" class="mt-4 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-2 text-sm text-dark-300" data-i18n="startupStatusNotLoaded">Status not loaded.</div>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
                     <div>
-                        <label class="text-xs text-dark-400">Mode</label>
+                        <label class="text-xs text-dark-400" data-i18n="startupMode">Mode</label>
                         <select id="setting-startup-mode" class="input mt-1 w-full">
-                            <option value="disabled">Disabled</option>
-                            <option value="startup_folder">Startup Folder</option>
-                            <option value="scheduled_task_highest">Task Scheduler: Highest</option>
+                            <option value="disabled" data-i18n="startupModeDisabled">Disabled</option>
+                            <option value="startup_folder" data-i18n="startupModeFolder">Startup Folder</option>
+                            <option value="scheduled_task_highest" data-i18n="startupModeScheduled">Task Scheduler: Highest</option>
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Task Name</label>
+                        <label class="text-xs text-dark-400" data-i18n="taskName">Task Name</label>
                         <input id="setting-startup-task-name" type="text" class="input mt-1" placeholder="CodexEnhanceManager">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Startup File Name</label>
+                        <label class="text-xs text-dark-400" data-i18n="startupFileName">Startup File Name</label>
                         <input id="setting-startup-shortcut-name" type="text" class="input mt-1" placeholder="CodexEnhanceManager.cmd">
                     </div>
                     <div class="lg:col-span-2">
-                        <label class="text-xs text-dark-400">Target Path</label>
-                        <input id="setting-startup-target-path" type="text" class="input mt-1" placeholder="Leave empty to use this app">
+                        <label class="text-xs text-dark-400" data-i18n="targetPath">Target Path</label>
+                        <input id="setting-startup-target-path" type="text" class="input mt-1" placeholder="Leave empty to use this app" data-i18n-placeholder="targetPathPlaceholder">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400">Arguments</label>
-                        <input id="setting-startup-arguments" type="text" class="input mt-1" placeholder="Optional">
+                        <label class="text-xs text-dark-400" data-i18n="argumentsLabel">Arguments</label>
+                        <input id="setting-startup-arguments" type="text" class="input mt-1" placeholder="Optional" data-i18n-placeholder="optionalPlaceholder">
                     </div>
                 </div>
                 <div class="flex flex-wrap items-center gap-4 mt-4">
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-startup-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span>Enable at Logon</span>
+                        <span data-i18n="enableAtLogon">Enable at Logon</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-startup-auto-elevate" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span>Request Highest Privileges</span>
+                        <span data-i18n="requestHighestPrivileges">Request Highest Privileges</span>
                     </label>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="applyStartupSettings()" class="btn btn-warning text-xs">Apply Startup Change</button>
-                        <button onclick="removeStartupSettings()" class="btn btn-danger text-xs">Remove Startup Entry</button>
+                        <button onclick="applyStartupSettings()" class="btn btn-warning text-xs" data-i18n="applyStartupChange">Apply Startup Change</button>
+                        <button onclick="removeStartupSettings()" class="btn btn-danger text-xs" data-i18n="removeStartupEntry">Remove Startup Entry</button>
                     </div>
                 </div>
-                <pre id="startup-preview-result" class="preview-code mt-4">No preview yet.</pre>
+                <pre id="startup-preview-result" class="preview-code mt-4" data-i18n="noPreviewYet">No preview yet.</pre>
             </div>
             <div class="card">
                 <div class="flex flex-wrap items-center justify-between gap-3">
-                    <h3 class="card-title">Storage & Cleanup</h3>
+                    <h3 class="card-title" data-i18n="storageCleanup">Storage & Cleanup</h3>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="loadStorageInfo()" class="btn btn-secondary text-xs">Refresh</button>
-                        <button onclick="exportSettings()" class="btn btn-secondary text-xs">Export Config</button>
-                        <button onclick="document.getElementById('settings-import-file').click()" class="btn btn-secondary text-xs">Import Config</button>
+                        <button onclick="loadStorageInfo()" class="btn btn-secondary text-xs" data-i18n="refresh">Refresh</button>
+                        <button onclick="exportSettings()" class="btn btn-secondary text-xs" data-i18n="exportConfig">Export Config</button>
+                        <button onclick="document.getElementById('settings-import-file').click()" class="btn btn-secondary text-xs" data-i18n="importConfig">Import Config</button>
                         <input id="settings-import-file" type="file" accept="application/json,.json" class="hidden" onchange="importSettingsFromFile(this)">
                     </div>
                 </div>
                 <div id="storage-locations" class="mt-4 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-2"></div>
                 <div class="mt-5">
                     <div class="flex flex-wrap items-center justify-between gap-3">
-                        <h4 class="text-sm font-semibold text-dark-200">Local Cleanup</h4>
+                        <h4 class="text-sm font-semibold text-dark-200" data-i18n="localCleanup">Local Cleanup</h4>
                         <div class="flex flex-wrap gap-2">
-                            <button onclick="loadCleanupPreview()" class="btn btn-secondary text-xs">Preview</button>
-                            <button onclick="executeCleanup()" class="btn btn-warning text-xs">Clean Selected</button>
+                            <button onclick="loadCleanupPreview()" class="btn btn-secondary text-xs" data-i18n="previewAction">Preview</button>
+                            <button onclick="executeCleanup()" class="btn btn-warning text-xs" data-i18n="cleanSelected">Clean Selected</button>
                         </div>
                     </div>
                     <div id="cleanup-targets" class="mt-3 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-1"></div>
@@ -764,10 +764,10 @@
                 </div>
                 <div class="mt-5 border-t border-dark-800 pt-5">
                     <div class="flex flex-wrap items-center justify-between gap-3">
-                        <h4 class="text-sm font-semibold text-amber-200">Uninstall Cleanup</h4>
+                        <h4 class="text-sm font-semibold text-amber-200" data-i18n="uninstallCleanup">Uninstall Cleanup</h4>
                         <div class="flex flex-wrap gap-2">
-                            <button onclick="loadUninstallPreview()" class="btn btn-secondary text-xs">Preview</button>
-                            <button onclick="executeUninstallCleanup()" class="btn btn-danger text-xs">Clean & Lock Writes</button>
+                            <button onclick="loadUninstallPreview()" class="btn btn-secondary text-xs" data-i18n="previewAction">Preview</button>
+                            <button onclick="executeUninstallCleanup()" class="btn btn-danger text-xs" data-i18n="cleanAndLockWrites">Clean & Lock Writes</button>
                         </div>
                     </div>
                     <div id="uninstall-write-lock-state" class="mt-3"></div>

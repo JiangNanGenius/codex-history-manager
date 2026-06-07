@@ -792,6 +792,45 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(upstream_body["model"], "gpt-image-1")
 
     @patch("proxy_server._upstream_request")
+    def test_image_generation_infers_support_from_media_profile(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "native-mixin",
+                    "short_alias": "mix",
+                    "display_name": "Native Mix-in",
+                    "enabled": True,
+                    "base_url": "https://native.example.test/v1",
+                    "api_format": "openai_responses",
+                    "api_key": "sk-native",
+                    "capabilities": {"text": True},
+                    "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+                    "models": [{"id": "auto", "enabled": True}],
+                },
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"created": 1, "data": [{"url": "https://example.test/native.png"}]}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/images/generations",
+            body={"model": "gpt-image-1", "prompt": "native image"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body.decode())["data"][0]["url"], "https://example.test/native.png")
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://native.example.test/v1/images/generations")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "gpt-image-1")
+
+    @patch("proxy_server._upstream_request")
     def test_image_generation_uses_per_model_media_override(self, mock_upstream):
         self._write_providers({
             "providers": [
@@ -1231,6 +1270,48 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(args[0][1], "https://custom.example.test/v1/chat/completions")
         upstream_body = json.loads(args[1]["body"])
         self.assertEqual(upstream_body["model"], "custom-model")
+
+    def test_amr_route_reloads_saved_order_between_requests(self):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "a-provider",
+                    "short_alias": "a",
+                    "display_name": "A",
+                    "enabled": True,
+                    "base_url": "https://a.example.test/v1",
+                    "api_key": "sk-a",
+                    "models": [{"id": "m1", "enabled": True}],
+                },
+                {
+                    "id": "z-provider",
+                    "short_alias": "z",
+                    "display_name": "Z",
+                    "enabled": True,
+                    "base_url": "https://z.example.test/v1",
+                    "api_key": "sk-z",
+                    "models": [{"id": "m2", "enabled": True}],
+                },
+            ]
+        })
+        first = [
+            {"id": "z-provider/m2", "provider_id": "z-provider", "model_id": "m2", "priority": 1, "enabled": True, "context_window": 128000, "capabilities": {"text": True}},
+            {"id": "a-provider/m1", "provider_id": "a-provider", "model_id": "m1", "priority": 1, "enabled": True, "context_window": 128000, "capabilities": {"text": True}},
+        ]
+        second = list(reversed(first))
+
+        self._write_amr([{"id": "coder-pro", "display_name": "Coder Pro", "candidates": first}])
+        first_route = _resolve_provider_route_for_model("coder-pro", {"capabilities": ["text"]})
+
+        self._write_amr([{"id": "coder-pro", "display_name": "Coder Pro", "candidates": second}])
+        second_route = _resolve_provider_route_for_model("coder-pro", {"capabilities": ["text"]})
+
+        self.assertTrue(first_route["success"])
+        self.assertEqual(first_route["provider"]["id"], "z-provider")
+        self.assertEqual(first_route["upstream_model"], "m2")
+        self.assertTrue(second_route["success"])
+        self.assertEqual(second_route["provider"]["id"], "a-provider")
+        self.assertEqual(second_route["upstream_model"], "m1")
 
     @patch("proxy_server._upstream_request")
     def test_responses_endpoint_with_native_responses_provider(self, mock_upstream):

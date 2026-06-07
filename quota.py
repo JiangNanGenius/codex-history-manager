@@ -47,27 +47,24 @@ class QuotaManager:
                 "error": "Quota check is not enabled for this provider.",
                 "snapshot": None,
             }
-            self._cache[provider_id] = _cache_entry(result, quota_check.get("ttl_seconds"))
-            return redact_quota_result(result)
+            entry = _cache_entry(result, quota_check.get("ttl_seconds"))
+            self._cache[provider_id] = entry
+            return redact_quota_result(_with_cache_metadata(result, entry, cache_hit=False))
 
         cached = self._cache.get(provider_id)
         if cached and not force and not _is_expired(cached):
-            result = copy.deepcopy(cached["result"])
-            result["cache_hit"] = True
-            return redact_quota_result(result)
+            return redact_quota_result(_with_cache_metadata(cached["result"], cached, cache_hit=True))
 
         result = run_quota_probe(provider, quota_check)
-        self._cache[provider_id] = _cache_entry(result, quota_check.get("ttl_seconds"))
-        return redact_quota_result(result)
+        entry = _cache_entry(result, quota_check.get("ttl_seconds"))
+        self._cache[provider_id] = entry
+        return redact_quota_result(_with_cache_metadata(result, entry, cache_hit=False))
 
     def cached_provider_quota(self, provider_id: str) -> Dict[str, Any]:
         cached = self._cache.get(provider_id)
         if not cached:
             return {"success": False, "provider_id": provider_id, "cache_hit": False, "error": "No quota snapshot cached."}
-        result = copy.deepcopy(cached["result"])
-        result["cache_hit"] = True
-        result["cache_expires_at"] = cached.get("expires_at")
-        return redact_quota_result(result)
+        return redact_quota_result(_with_cache_metadata(cached["result"], cached, cache_hit=True))
 
     def list_cached(self) -> Dict[str, Any]:
         return {
@@ -157,6 +154,26 @@ def run_quota_probe(provider: Dict[str, Any], quota_check: Dict[str, Any]) -> Di
     }
 
 
+def refresh_provider_quota_preview(provider: Dict[str, Any]) -> Dict[str, Any]:
+    """Run a one-off quota probe for an unsaved provider draft without caching it."""
+    provider_id = str((provider or {}).get("id") or "")
+    quota_check = normalize_quota_check((provider or {}).get("quota_check"))
+    if not quota_check.get("enabled"):
+        result = {
+            "success": False,
+            "provider_id": provider_id,
+            "enabled": False,
+            "error": "Quota check is not enabled for this provider.",
+            "snapshot": None,
+            "preview": True,
+        }
+    else:
+        result = run_quota_probe(provider or {}, quota_check)
+        result["preview"] = True
+    entry = _cache_entry(result, quota_check.get("ttl_seconds"))
+    return redact_quota_result(_with_cache_metadata(result, entry, cache_hit=False))
+
+
 def build_quota_headers(provider: Dict[str, Any], quota_check: Dict[str, Any]) -> Dict[str, str]:
     headers: Dict[str, str] = {}
     configured = provider.get("headers") if isinstance(provider.get("headers"), dict) else {}
@@ -233,6 +250,21 @@ def _cache_entry(result: Dict[str, Any], ttl_seconds: int) -> Dict[str, Any]:
         "created_at": now,
         "expires_at": now + max(int(ttl_seconds or DEFAULT_TTL_SECONDS), 1),
     }
+
+
+def _with_cache_metadata(result: Dict[str, Any], entry: Dict[str, Any], cache_hit: bool) -> Dict[str, Any]:
+    copy_result = copy.deepcopy(result)
+    expires_at = float(entry.get("expires_at") or 0)
+    created_at = float(entry.get("created_at") or 0)
+    remaining = max(0, int(expires_at - time.time())) if expires_at else 0
+    copy_result.update({
+        "cache_hit": cache_hit,
+        "cache_created_at": created_at,
+        "cache_expires_at": expires_at,
+        "cache_ttl_remaining_seconds": remaining,
+        "cache_expired": _is_expired(entry),
+    })
+    return copy_result
 
 
 def _is_expired(entry: Dict[str, Any]) -> bool:

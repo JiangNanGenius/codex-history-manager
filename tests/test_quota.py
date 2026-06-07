@@ -9,6 +9,7 @@ from quota import (
     extract_json_path,
     normalize_quota_check,
     redact_quota_result,
+    refresh_provider_quota_preview,
 )
 
 
@@ -91,10 +92,19 @@ class QuotaTest(unittest.TestCase):
         second = manager.refresh_provider_quota("p1", force=False)
 
         self.assertTrue(first["success"])
+        self.assertFalse(first["cache_hit"])
+        self.assertIn("cache_expires_at", first)
+        self.assertIn("cache_ttl_remaining_seconds", first)
         self.assertEqual(first["values"], {"balance": 3.5, "limit": 10})
         self.assertEqual(first["raw_redacted"]["api_key"], "********")
         self.assertTrue(second["cache_hit"])
+        self.assertFalse(second["cache_expired"])
+        self.assertEqual(second["cache_expires_at"], first["cache_expires_at"])
         self.assertEqual(mock_urlopen.call_count, 1)
+
+        cached = manager.cached_provider_quota("p1")
+        self.assertTrue(cached["cache_hit"])
+        self.assertEqual(cached["cache_expires_at"], first["cache_expires_at"])
 
     @patch("quota.urllib.request.urlopen")
     def test_failed_quota_probe_returns_snapshot(self, mock_urlopen):
@@ -112,6 +122,26 @@ class QuotaTest(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertIn("network down", result["error"])
         self.assertIn("fetched_at", result)
+
+    @patch("quota.urllib.request.urlopen")
+    def test_refresh_provider_quota_preview_uses_draft_without_cache_hit(self, mock_urlopen):
+        mock_urlopen.return_value = FakeResponse({"balance": 12, "token": "secret"})
+
+        result = refresh_provider_quota_preview({
+            "id": "draft",
+            "api_key": "secret",
+            "quota_check": {
+                "enabled": True,
+                "url": "https://example.test/draft-quota",
+                "json_paths": {"balance": "$.balance"},
+            },
+        })
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["preview"])
+        self.assertFalse(result["cache_hit"])
+        self.assertEqual(result["values"], {"balance": 12})
+        self.assertEqual(result["raw_redacted"]["token"], "********")
 
     def test_redact_quota_result_redacts_nested_secrets(self):
         redacted = redact_quota_result({
