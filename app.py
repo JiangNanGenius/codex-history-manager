@@ -1445,6 +1445,8 @@ def _merge_cache_usage_sources(
     data["cc_switch_cache_total_tokens"] = cc_read + cc_creation
     data["cc_switch_cache_tables"] = cc_cache_data.get("cache_tables", [])
     data["cc_switch_cache_note"] = cc_cache_data.get("cache_note", "")
+    data["cc_switch_cache_strategy"] = cc_cache_data.get("cache_strategy", "")
+    data["cc_switch_cache_rollup_used"] = bool(cc_cache_data.get("cache_rollup_used"))
 
     data["cache_supported"] = data["codex_rollout_cache_supported"] or data["cc_switch_cache_supported"]
     data["cache_tables"] = data["cc_switch_cache_tables"]
@@ -1493,6 +1495,7 @@ def _attach_usage_source_summary(data: Dict[str, Any], proxy_status: Dict[str, A
     rollout_scanned = _safe_int(data.get("codex_rollout_files_scanned"))
     cc_configured = bool(data.get("cc_switch_db_configured"))
     cc_supported = bool(data.get("cc_switch_cache_supported"))
+    cc_strategy = str(data.get("cc_switch_cache_strategy") or "")
     proxy_running = bool(proxy_status.get("running"))
 
     sources = [
@@ -1542,7 +1545,11 @@ def _attach_usage_source_summary(data: Dict[str, Any], proxy_status: Dict[str, A
             "active": cc_supported,
             "kind": "cache_tokens",
             "tooltip": (
-                data.get("cc_switch_cache_note")
+                (
+                    f"{data.get('cc_switch_cache_note')} Strategy: {cc_strategy}."
+                    if cc_strategy
+                    else data.get("cc_switch_cache_note")
+                )
                 or "Configure a proxy cache database to read cache_read_tokens/cache_creation_tokens."
             ),
         },

@@ -186,6 +186,8 @@ class TokenStats:
             "cache_creation_tokens": 0,
             "cache_tables": [],
             "cache_note": "",
+            "cache_strategy": "",
+            "cache_rollup_used": False,
         }
 
         if not cc_switch_db_path:
@@ -205,61 +207,53 @@ class TokenStats:
             conn = sqlite3.connect(cc_switch_db_path, timeout=10)
             conn.row_factory = sqlite3.Row
             try:
-                for table in self._list_tables(conn):
+                tables = self._list_tables(conn)
+                rollup_used = False
+                for table in tables:
+                    if not _is_usage_daily_rollup_table(table):
+                        continue
                     columns = self._table_columns(conn, table)
-                    cache_cols = [
-                        col for col in columns
-                        if "cache" in col.lower() and "token" in col.lower()
-                    ]
-                    if not cache_cols:
+                    table_stats = _aggregate_cc_cache_table(
+                        conn,
+                        table,
+                        columns,
+                        start_ts,
+                        end_ts,
+                        prefer_day_filter=True,
+                    )
+                    if not table_stats:
                         continue
-
-                    time_col = _pick_time_column(columns)
-                    where_sql, params = _build_cc_time_filter(time_col, start_ts, end_ts)
-                    select_parts = []
-                    for col in cache_cols:
-                        alias = _safe_alias(col)
-                        select_parts.append(f'COALESCE(SUM(CAST("{col}" AS INTEGER)), 0) AS "{alias}"')
-                    row = conn.execute(
-                        f'SELECT {", ".join(select_parts)} FROM "{table}"{where_sql}',
-                        params,
-                    ).fetchone()
-
-                    table_total = 0
-                    table_read = 0
-                    table_creation = 0
-                    table_explicit_total = 0
-                    table_other = 0
-                    col_values: Dict[str, int] = {}
-                    for col in cache_cols:
-                        value = int(row[_safe_alias(col)] or 0)
-                        col_values[col] = value
-                        lower = col.lower()
-                        if "read" in lower or "hit" in lower:
-                            table_read += value
-                        elif "creation" in lower or "create" in lower or "write" in lower:
-                            table_creation += value
-                        elif "total" in lower:
-                            table_explicit_total += value
-                        else:
-                            table_other += value
-
-                    table_total = table_read + table_creation
-                    if table_total <= 0:
-                        table_total = table_explicit_total + table_other
-
-                    if table_total <= 0 and not col_values:
-                        continue
-
+                    rollup_used = True
                     result["cache_supported"] = True
-                    result["cache_total_tokens"] += table_total
-                    result["cache_read_tokens"] += table_read
-                    result["cache_creation_tokens"] += table_creation
-                    result["cache_tables"].append({
-                        "table": table,
-                        "time_column": time_col or "",
-                        "columns": col_values,
-                    })
+                    result["cache_total_tokens"] += table_stats["cache_total_tokens"]
+                    result["cache_read_tokens"] += table_stats["cache_read_tokens"]
+                    result["cache_creation_tokens"] += table_stats["cache_creation_tokens"]
+                    result["cache_tables"].append(table_stats["cache_table"])
+
+                if rollup_used:
+                    result["cache_strategy"] = "usage_daily_rollups"
+                    result["cache_rollup_used"] = True
+                else:
+                    result["cache_strategy"] = "table_scan"
+                    result["cache_rollup_used"] = False
+                    for table in tables:
+                        columns = self._table_columns(conn, table)
+                        table_stats = _aggregate_cc_cache_table(
+                            conn,
+                            table,
+                            columns,
+                            start_ts,
+                            end_ts,
+                            prefer_day_filter=False,
+                        )
+                        if not table_stats:
+                            continue
+
+                        result["cache_supported"] = True
+                        result["cache_total_tokens"] += table_stats["cache_total_tokens"]
+                        result["cache_read_tokens"] += table_stats["cache_read_tokens"]
+                        result["cache_creation_tokens"] += table_stats["cache_creation_tokens"]
+                        result["cache_tables"].append(table_stats["cache_table"])
             finally:
                 conn.close()
         except Exception as exc:
@@ -537,6 +531,89 @@ class TokenStats:
         return results
 
 
+def _is_usage_daily_rollup_table(table: str) -> bool:
+    lower = table.lower()
+    return lower == "usage_daily_rollups" or ("usage" in lower and "daily" in lower and "rollup" in lower)
+
+
+def _aggregate_cc_cache_table(
+    conn: sqlite3.Connection,
+    table: str,
+    columns: List[str],
+    start_ts: Optional[int],
+    end_ts: Optional[int],
+    prefer_day_filter: bool = False,
+) -> Optional[Dict[str, Any]]:
+    cache_cols = [
+        col for col in columns
+        if "cache" in col.lower() and "token" in col.lower()
+    ]
+    if not cache_cols:
+        return None
+
+    time_col = _pick_rollup_day_column(columns) if prefer_day_filter else ""
+    if time_col:
+        where_sql, params = _build_cc_day_filter(time_col, start_ts, end_ts)
+    else:
+        time_col = _pick_time_column(columns)
+        where_sql, params = _build_cc_time_filter(time_col, start_ts, end_ts)
+
+    select_parts = []
+    for col in cache_cols:
+        alias = _safe_alias(col)
+        select_parts.append(f'COALESCE(SUM(CAST("{col}" AS INTEGER)), 0) AS "{alias}"')
+    row = conn.execute(
+        f'SELECT {", ".join(select_parts)} FROM "{table}"{where_sql}',
+        params,
+    ).fetchone()
+
+    table_read = 0
+    table_creation = 0
+    table_explicit_total = 0
+    table_other = 0
+    col_values: Dict[str, int] = {}
+    for col in cache_cols:
+        value = int(row[_safe_alias(col)] or 0)
+        col_values[col] = value
+        lower = col.lower()
+        if "read" in lower or "hit" in lower:
+            table_read += value
+        elif "creation" in lower or "create" in lower or "write" in lower:
+            table_creation += value
+        elif "total" in lower:
+            table_explicit_total += value
+        else:
+            table_other += value
+
+    table_total = table_read + table_creation
+    if table_total <= 0:
+        table_total = table_explicit_total + table_other
+
+    if table_total <= 0 and not col_values:
+        return None
+
+    return {
+        "cache_total_tokens": table_total,
+        "cache_read_tokens": table_read,
+        "cache_creation_tokens": table_creation,
+        "cache_table": {
+            "table": table,
+            "time_column": time_col or "",
+            "columns": col_values,
+            "rollup": _is_usage_daily_rollup_table(table),
+        },
+    }
+
+
+def _pick_rollup_day_column(columns: List[str]) -> str:
+    candidates = ["day", "date", "usage_date", "bucket", "bucket_date"]
+    lowered = {col.lower(): col for col in columns}
+    for candidate in candidates:
+        if candidate in lowered:
+            return lowered[candidate]
+    return ""
+
+
 def _pick_time_column(columns: List[str]) -> str:
     candidates = [
         "created_at", "createdAt", "timestamp", "time", "request_time",
@@ -581,6 +658,23 @@ def _build_cc_time_filter(time_col: str, start_ts: Optional[int], end_ts: Option
             f"OR ({is_text} AND {text_expr} <= ?))"
         )
         params.extend([end_ts * 1000, end_ts, iso_end])
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def _build_cc_day_filter(day_col: str, start_ts: Optional[int], end_ts: Optional[int]) -> Tuple[str, List[Any]]:
+    if not day_col or (start_ts is None and end_ts is None):
+        return "", []
+
+    clauses = []
+    params: List[Any] = []
+    col_expr = f'"{day_col}"'
+    day_expr = f"substr(CAST({col_expr} AS TEXT), 1, 10)"
+    if start_ts is not None:
+        clauses.append(f"{day_expr} >= ?")
+        params.append(datetime.fromtimestamp(start_ts).strftime("%Y-%m-%d"))
+    if end_ts is not None:
+        clauses.append(f"{day_expr} <= ?")
+        params.append(datetime.fromtimestamp(end_ts).strftime("%Y-%m-%d"))
     return " WHERE " + " AND ".join(clauses), params
 
 

@@ -254,6 +254,8 @@ class CodexRolloutUsageTest(unittest.TestCase):
                 "cache_creation_tokens": 1,
                 "cache_tables": [{"table": "proxy_request_logs"}],
                 "cache_note": "cc note",
+                "cache_strategy": "usage_daily_rollups",
+                "cache_rollup_used": True,
             },
         )
 
@@ -267,6 +269,8 @@ class CodexRolloutUsageTest(unittest.TestCase):
         self.assertTrue(data["cache_overlap_risk"])
         self.assertEqual(data["cache_merge_strategy"], "codex_rollout_primary_cc_switch_separate")
         self.assertEqual(data["cache_tables"], [{"table": "proxy_request_logs"}])
+        self.assertEqual(data["cc_switch_cache_strategy"], "usage_daily_rollups")
+        self.assertTrue(data["cc_switch_cache_rollup_used"])
 
     def test_merge_cache_usage_sources_uses_cc_switch_when_rollout_missing(self):
         data = {}
