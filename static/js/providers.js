@@ -473,6 +473,10 @@ function renderProviderEditor(provider) {
                     ${renderCapabilityToggle('media-poll-required', 'Poll Required', provider.media_profile.poll_required)}
                     ${renderCapabilityToggle('media-cancel-supported', 'Cancel Supported', provider.media_profile.cancel_supported)}
                 </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                    ${renderTextarea('media-image-overrides-json', 'Image Model Overrides JSON', JSON.stringify(provider.media_profile.image_model_overrides || {}, null, 2), 5)}
+                    ${renderTextarea('media-video-overrides-json', 'Video Model Overrides JSON', JSON.stringify(provider.media_profile.video_model_overrides || {}, null, 2), 5)}
+                </div>
             </details>
 
             <div class="flex flex-wrap gap-2 mt-5">
@@ -821,6 +825,8 @@ function getSelectedProvider() {
 function readProviderForm(existing) {
     try {
         const headers = JSON.parse(document.getElementById('provider-headers-json')?.value || '{}');
+        const imageModelOverrides = JSON.parse(document.getElementById('media-image-overrides-json')?.value || '{}');
+        const videoModelOverrides = JSON.parse(document.getElementById('media-video-overrides-json')?.value || '{}');
         const models = parseModelsText(document.getElementById('provider-models-text')?.value || '');
         return {
             ...existing,
@@ -856,6 +862,8 @@ function readProviderForm(existing) {
                 async_submit: document.getElementById('media-async-submit')?.checked || false,
                 poll_required: document.getElementById('media-poll-required')?.checked || false,
                 cancel_supported: document.getElementById('media-cancel-supported')?.checked || false,
+                image_model_overrides: imageModelOverrides,
+                video_model_overrides: videoModelOverrides,
             },
             responses_profile: {
                 ...(existing.responses_profile || {}),

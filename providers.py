@@ -823,6 +823,18 @@ def normalize_capabilities(data: Any) -> Dict[str, bool]:
     return defaults
 
 
+def normalize_string_map(value: Any) -> Dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: Dict[str, str] = {}
+    for key, item in value.items():
+        key_str = str(key).strip()
+        item_str = str(item).strip()
+        if key_str and item_str:
+            normalized[key_str] = item_str
+    return normalized
+
+
 def normalize_media_profile(data: Any) -> Dict[str, Any]:
     raw = data if isinstance(data, dict) else {}
     return {
@@ -836,6 +848,8 @@ def normalize_media_profile(data: Any) -> Dict[str, Any]:
         "cancel_supported": bool(raw.get("cancel_supported", False)),
         "supports_url_output": bool(raw.get("supports_url_output", True)),
         "supports_base64_output": bool(raw.get("supports_base64_output", True)),
+        "image_model_overrides": normalize_string_map(raw.get("image_model_overrides") or raw.get("image_overrides")),
+        "video_model_overrides": normalize_string_map(raw.get("video_model_overrides") or raw.get("video_overrides")),
     }
 
 

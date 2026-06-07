@@ -93,6 +93,21 @@ class ProviderRegistryTest(unittest.TestCase):
 
         self.assertEqual(provider["api_format"], "anthropic")
 
+    def test_media_profile_preserves_model_overrides(self):
+        provider = normalize_provider({
+            "display_name": "Media Overrides",
+            "short_alias": "media",
+            "api_format": "openai_images",
+            "media_profile": {
+                "image_model_overrides": {"cover-art": "gpt-image-1.5"},
+                "video_model_overrides": {"storyboard": "sora-2"},
+            },
+            "models": [{"id": "gpt-image-1.5"}],
+        })
+
+        self.assertEqual(provider["media_profile"]["image_model_overrides"]["cover-art"], "gpt-image-1.5")
+        self.assertEqual(provider["media_profile"]["video_model_overrides"]["storyboard"], "sora-2")
+
     def test_secret_key_word_boundary(self):
         # Should match true secrets
         self.assertTrue(is_secret_key("api_key"))

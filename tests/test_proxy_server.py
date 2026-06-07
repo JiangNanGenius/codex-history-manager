@@ -487,6 +487,59 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(upstream_body["model"], "gpt-image-1")
 
     @patch("proxy_server._upstream_request")
+    def test_image_generation_uses_per_model_media_override(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "default-image",
+                    "short_alias": "default",
+                    "display_name": "Default Image Provider",
+                    "enabled": True,
+                    "base_url": "https://default-image.example.test/v1",
+                    "api_format": "openai_images",
+                    "api_key": "sk-default",
+                    "capabilities": {"images": True},
+                    "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+                    "models": [{"id": "gpt-image-1", "enabled": True, "capabilities": {"images": True}}],
+                },
+                {
+                    "id": "special-image",
+                    "short_alias": "special",
+                    "display_name": "Special Image Provider",
+                    "enabled": True,
+                    "base_url": "https://special-image.example.test/v1",
+                    "api_format": "openai_images",
+                    "api_key": "sk-special",
+                    "capabilities": {"images": True},
+                    "media_profile": {
+                        "openai_compatible_media": True,
+                        "image_model_overrides": {"cover-art": "gpt-image-1.5"},
+                    },
+                    "models": [{"id": "gpt-image-1.5", "enabled": True, "capabilities": {"images": True}}],
+                },
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"created": 1, "data": [{"b64_json": "..."}]}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/images/generations",
+            body={"model": "cover-art", "prompt": "album cover"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://special-image.example.test/v1/images/generations")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "gpt-image-1.5")
+
+    @patch("proxy_server._upstream_request")
     def test_video_create_uses_default_video_provider(self, mock_upstream):
         self._write_providers({
             "providers": [

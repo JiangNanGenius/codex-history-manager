@@ -64,9 +64,20 @@ def resolve_media_provider(
     model_id: str = "",
 ) -> Optional[Dict[str, Any]]:
     """Resolve an enabled provider for an image/video request."""
+    route = resolve_media_route(providers, media_kind, model_id=model_id)
+    provider = route.get("provider")
+    return provider if isinstance(provider, dict) else None
+
+
+def resolve_media_route(
+    providers: List[Dict[str, Any]],
+    media_kind: str,
+    model_id: str = "",
+) -> Dict[str, Any]:
+    """Resolve a provider and upstream model rewrite for a media request."""
     enabled = [p for p in providers if isinstance(p, dict) and p.get("enabled", True)]
     if not enabled:
-        return None
+        return {"provider": None, "upstream_model_id": "", "route_explanation": ["No enabled providers."]}
 
     prefix = ""
     upstream_model = str(model_id or "").strip()
@@ -75,22 +86,52 @@ def resolve_media_provider(
         prefix = prefix.lower().strip()
         for provider in enabled:
             if str(provider.get("short_alias") or "").lower() == prefix or str(provider.get("id") or "").lower() == prefix:
-                return provider
-        return None
+                return {
+                    "provider": provider,
+                    "upstream_model_id": upstream_model,
+                    "route_explanation": [f"Hard-routed by provider prefix '{prefix}'."],
+                }
+        return {"provider": None, "upstream_model_id": "", "route_explanation": [f"No provider matched prefix '{prefix}'."]}
 
     if upstream_model:
+        override_match = _provider_for_model_override(enabled, upstream_model, media_kind)
+        if override_match:
+            provider, rewritten_model = override_match
+            return {
+                "provider": provider,
+                "upstream_model_id": rewritten_model,
+                "route_explanation": [
+                    f"Matched {media_kind} model override '{upstream_model}' -> '{rewritten_model}' on provider '{provider.get('id')}'."
+                ],
+            }
         model_match = _provider_for_model(enabled, upstream_model, media_kind)
         if model_match:
-            return model_match
+            return {
+                "provider": model_match,
+                "upstream_model_id": upstream_model,
+                "route_explanation": [f"Matched enabled provider model '{upstream_model}'."],
+            }
 
     default_match = _default_media_provider(enabled, media_kind)
     if default_match:
-        return default_match
+        return {
+            "provider": default_match,
+            "upstream_model_id": upstream_model,
+            "route_explanation": [f"Using default {media_kind} provider '{default_match.get('id')}'."],
+        }
 
     for provider in enabled:
         if provider_supports_media(provider, media_kind):
-            return provider
-    return None
+            return {
+                "provider": provider,
+                "upstream_model_id": upstream_model,
+                "route_explanation": [f"Using first enabled provider with {media_kind} capability."],
+            }
+    return {
+        "provider": None,
+        "upstream_model_id": "",
+        "route_explanation": [f"No provider supports {media_kind} media."],
+    }
 
 
 def provider_supports_media(provider: Dict[str, Any], media_kind: str) -> bool:
@@ -141,7 +182,12 @@ def media_forwarding_status(provider: Dict[str, Any], media_kind: str) -> Dict[s
     return {"can_forward": True, "error_type": "", "message": ""}
 
 
-def prepare_media_body(body: bytes, content_type: str, provider: Dict[str, Any]) -> bytes:
+def prepare_media_body(
+    body: bytes,
+    content_type: str,
+    provider: Dict[str, Any],
+    upstream_model_id: str = "",
+) -> bytes:
     """Strip provider aliases from JSON media request model IDs."""
     if "application/json" not in str(content_type or "").lower():
         return body
@@ -152,10 +198,13 @@ def prepare_media_body(body: bytes, content_type: str, provider: Dict[str, Any])
     if not isinstance(payload, dict):
         return body
     payload = copy.deepcopy(payload)
-    model = str(payload.get("model") or "")
-    alias = str(provider.get("short_alias") or "").strip()
-    if alias and model.startswith(alias + "/"):
-        payload["model"] = model[len(alias) + 1:]
+    if upstream_model_id:
+        payload["model"] = upstream_model_id
+    else:
+        model = str(payload.get("model") or "")
+        alias = str(provider.get("short_alias") or "").strip()
+        if alias and model.startswith(alias + "/"):
+            payload["model"] = model[len(alias) + 1:]
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
@@ -187,6 +236,27 @@ def _provider_for_model(providers: List[Dict[str, Any]], model_id: str, media_ki
             if fallback is None:
                 fallback = provider
     return fallback
+
+
+def _provider_for_model_override(
+    providers: List[Dict[str, Any]],
+    model_id: str,
+    media_kind: str,
+) -> Optional[tuple[Dict[str, Any], str]]:
+    override_key = "image_model_overrides" if media_kind == MEDIA_KIND_IMAGE else "video_model_overrides"
+    model_id_lower = model_id.lower().strip()
+    for provider in providers:
+        media_profile = provider.get("media_profile") if isinstance(provider.get("media_profile"), dict) else {}
+        overrides = media_profile.get(override_key) if isinstance(media_profile.get(override_key), dict) else {}
+        for public_model, upstream_model in overrides.items():
+            if str(public_model).lower().strip() != model_id_lower:
+                continue
+            rewritten = str(upstream_model or "").strip()
+            alias = str(provider.get("short_alias") or "").strip()
+            if alias and rewritten.startswith(alias + "/"):
+                rewritten = rewritten[len(alias) + 1:]
+            return provider, rewritten or model_id
+    return None
 
 
 def _default_media_provider(providers: List[Dict[str, Any]], media_kind: str) -> Optional[Dict[str, Any]]:

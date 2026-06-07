@@ -7,6 +7,7 @@ from media_proxy import (
     media_endpoint_url,
     media_forwarding_status,
     resolve_media_provider,
+    resolve_media_route,
 )
 
 
@@ -60,6 +61,33 @@ class MediaProxyHelperTest(unittest.TestCase):
 
         provider = resolve_media_provider(providers, MEDIA_KIND_IMAGE, model_id="b/image-model")
         self.assertEqual(provider["id"], "b")
+
+    def test_per_model_override_routes_to_media_provider_and_rewrites_model(self):
+        providers = [
+            {
+                "id": "default-image",
+                "short_alias": "default",
+                "enabled": True,
+                "capabilities": {"images": True},
+                "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+            },
+            {
+                "id": "special-image",
+                "short_alias": "special",
+                "enabled": True,
+                "capabilities": {"images": True},
+                "media_profile": {
+                    "openai_compatible_media": True,
+                    "image_model_overrides": {"cover-art": "gpt-image-1.5"},
+                },
+            },
+        ]
+
+        route = resolve_media_route(providers, MEDIA_KIND_IMAGE, model_id="cover-art")
+
+        self.assertEqual(route["provider"]["id"], "special-image")
+        self.assertEqual(route["upstream_model_id"], "gpt-image-1.5")
+        self.assertIn("Matched image model override", route["route_explanation"][0])
 
     def test_adapter_required_provider_is_blocked_for_pass_through(self):
         status = media_forwarding_status(

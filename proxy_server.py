@@ -60,7 +60,7 @@ from media_proxy import (
     media_forwarding_status,
     media_kind_for_path,
     prepare_media_body,
-    resolve_media_provider,
+    resolve_media_route,
 )
 from responses_adapter import (
     ChatSseToResponsesConverter,
@@ -532,7 +532,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         canonical_path = canonical_media_path(path)
         content_type = self.headers.get("Content-Type", "")
         model_id = extract_json_model(body, content_type)
-        provider = resolve_media_provider(_load_providers_with_secrets(), media_kind, model_id=model_id)
+        route = resolve_media_route(_load_providers_with_secrets(), media_kind, model_id=model_id)
+        provider = route.get("provider")
         if not provider:
             _send_error(
                 self,
@@ -552,7 +553,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             _send_error(self, 502, f"Provider '{provider.get('id')}' has no base_url configured.", "provider_misconfigured")
             return
 
-        upstream_body = prepare_media_body(body, content_type, provider) if body else None
+        upstream_body = prepare_media_body(
+            body,
+            content_type,
+            provider,
+            upstream_model_id=str(route.get("upstream_model_id") or ""),
+        ) if body else None
         upstream_url = media_endpoint_url(base_url, canonical_path)
         headers = _build_upstream_headers(provider)
         if content_type:
