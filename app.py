@@ -106,6 +106,9 @@ def create_app() -> Flask:
         request_log_retention_days=config.get("request_log_retention_days", 30),
         request_log_max_mb=config.get("request_log_max_mb", 50),
         currency_settings=config.get_all(),
+        upstream_timeout_seconds=config.get("proxy_upstream_timeout_seconds", 120),
+        retry_attempts=config.get("proxy_retry_attempts", 0),
+        retry_backoff_ms=config.get("proxy_retry_backoff_ms", 250),
     )
     amr_registry = AMRRegistry()
     quota_manager = QuotaManager(lambda: provider_registry.list_providers(include_secrets=True).get("providers", []))
@@ -145,6 +148,9 @@ def create_app() -> Flask:
         proxy_server.request_log_retention_days = config.get("request_log_retention_days", 30)
         proxy_server.request_log_max_mb = config.get("request_log_max_mb", 50)
         proxy_server.currency_settings = config.get_all()
+        proxy_server.upstream_timeout_seconds = config.get("proxy_upstream_timeout_seconds", 120)
+        proxy_server.retry_attempts = config.get("proxy_retry_attempts", 0)
+        proxy_server.retry_backoff_ms = config.get("proxy_retry_backoff_ms", 250)
 
     def _require_codex_mutation_confirmation(body: Dict, action: str):
         """Require a typed confirmation for endpoints that mutate Codex state."""

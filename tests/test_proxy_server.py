@@ -17,7 +17,9 @@ from proxy_server import (
     _set_media_approval_reviewer,
     _set_request_log_config,
     _set_provider_store_path,
+    _set_upstream_policy,
     _upstream_request,
+    _upstream_request_for_provider,
 )
 from request_logs import RequestLogStore
 
@@ -217,6 +219,9 @@ class LoadProvidersTest(unittest.TestCase):
 
 
 class UpstreamRequestTest(unittest.TestCase):
+    def tearDown(self):
+        _set_upstream_policy()
+
     @patch("proxy_server.urllib.request.build_opener")
     def test_disables_system_proxy(self, mock_build_opener):
         mock_opener = MagicMock()
@@ -245,6 +250,41 @@ class UpstreamRequestTest(unittest.TestCase):
         req = mock_opener.open.call_args[0][0]
         self.assertEqual(req.get_header("Accept"), "text/event-stream")
 
+    @patch("proxy_server.urllib.request.build_opener")
+    def test_global_timeout_and_retry_policy(self, mock_build_opener):
+        _set_upstream_policy(timeout_seconds=7, retry_attempts=1, retry_backoff_ms=0)
+        mock_opener = MagicMock()
+        mock_resp = MagicMock()
+        mock_opener.open.side_effect = [urllib.error.URLError("temporary"), mock_resp]
+        mock_build_opener.return_value = mock_opener
+
+        result = _upstream_request("POST", "https://api.test/v1", {}, b"{}")
+
+        self.assertIs(result, mock_resp)
+        self.assertEqual(mock_opener.open.call_count, 2)
+        self.assertEqual(mock_opener.open.call_args_list[0].kwargs["timeout"], 7)
+
+    @patch("proxy_server._upstream_request")
+    def test_provider_timeout_and_retry_policy_override_global(self, mock_upstream_request):
+        _set_upstream_policy(timeout_seconds=120, retry_attempts=0, retry_backoff_ms=250)
+        provider = {
+            "proxy_profile": {
+                "upstream_timeout_seconds": 9,
+                "retry_attempts": 2,
+                "retry_backoff_ms": 5,
+            }
+        }
+        mock_resp = MagicMock()
+        mock_upstream_request.return_value = mock_resp
+
+        result = _upstream_request_for_provider(provider, "POST", "https://api.test/v1", {}, body=b"{}")
+
+        self.assertIs(result, mock_resp)
+        kwargs = mock_upstream_request.call_args.kwargs
+        self.assertEqual(kwargs["timeout"], 9)
+        self.assertEqual(kwargs["retry_attempts"], 2)
+        self.assertEqual(kwargs["retry_backoff_ms"], 5)
+
 
 class LocalProxyServerTest(unittest.TestCase):
     def test_status_when_stopped(self):
@@ -255,6 +295,23 @@ class LocalProxyServerTest(unittest.TestCase):
         self.assertEqual(status["requested_port"], 18080)
         self.assertEqual(status["base_url"], "")
         self.assertFalse(status["port_backoff"]["used"])
+
+    def test_status_exposes_upstream_policy_after_start(self):
+        server = LocalProxyServer(
+            port=18085,
+            upstream_timeout_seconds=33,
+            retry_attempts=2,
+            retry_backoff_ms=10,
+        )
+        try:
+            self.assertTrue(server.start())
+            status = server.status()
+            self.assertEqual(status["upstream_timeout_seconds"], 33)
+            self.assertEqual(status["retry_attempts"], 2)
+            self.assertEqual(status["retry_backoff_ms"], 10)
+        finally:
+            server.stop()
+            _set_upstream_policy()
 
     def test_start_stop_cycle(self):
         server = LocalProxyServer(port=18081)

@@ -45,7 +45,7 @@ The project is intentionally local-first: provider settings, backups, request-lo
 | History and usage | Browse sessions, inspect heavy conversations, read Codex DB totals, and add cache read/write usage from rollout events, proxy logs, and compatible proxy DBs. |
 | Provider setup | Manage provider presets with `short_alias`, region, currency, custom headers, `User-Agent`, approval profile, media profile, quota template, and catalog visibility. |
 | Unified Model Catalog | Preview Codex-visible model IDs such as `qwen/qwen3-coder-plus` from always-visible, selected, focused-provider, and AMR entries. |
-| Local proxy | Run an independent localhost proxy with automatic occupied-port backoff, Auto Approval broker settings, route diagnostics, metadata-only request logs, and OpenAI-compatible route scaffolding. |
+| Local proxy | Run an independent localhost proxy with occupied-port backoff, timeout/retry policy, Auto Approval broker settings, route diagnostics, metadata-only request logs, and OpenAI-compatible routes. |
 | Protocol adapters | Convert verified Responses, Chat, Anthropic Messages, tools, images, SSE events, and domestic Responses profiles only where behavior is sourced. |
 | Cost and currency | Estimate input/output/cache/reasoning/media cost, preserve per-request FX snapshots, support manual FX overrides, and keep online FX blocked until verified. |
 | Config recovery | Preview Codex config diffs, audit approval/sandbox settings, create backups, restore config/auth, preserve official login state, and repair moved session/project metadata. |
@@ -197,6 +197,19 @@ After sync, sessions remain visible across account/provider switches.
 | `codex_rollout_usage.py`, `token_stats.py` | Token/cache usage readers. |
 | `currency.py`, `costing.py`, `quota.py` | FX snapshots, local cost estimates, and generic quota probes. |
 | `diagnostics.py`, `move_repair.py` | Safe diagnostics and project/thread move repair. |
+
+## References
+
+Primary protocol and provider references used for implementation decisions:
+
+- OpenAI Codex source: [openai/codex](https://github.com/openai/codex), especially `codex-rs/codex-api/src/endpoint/responses.rs`, `codex-rs/codex-api/src/sse/responses.rs`, `codex-rs/codex-api/src/endpoint/images.rs`, `codex-rs/protocol/src/models.rs`, `codex-rs/app-server/src/bespoke_event_handling.rs`, and `codex-rs/app-server-protocol/src/protocol/v2/*`.
+- OpenAI API docs: [Responses](https://platform.openai.com/docs/api-reference/responses), [Chat Completions](https://platform.openai.com/docs/api-reference/chat), and [Images](https://platform.openai.com/docs/api-reference/images).
+- Anthropic API docs: [Messages API](https://docs.anthropic.com/en/api/messages) for Anthropic-to-Codex adapter behavior.
+- Alibaba Bailian / Model Studio: [Qwen via OpenAI Responses](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses) and the user-supplied [Bailian console Responses entry](https://bailian.console.aliyun.com/cn-beijing?spm=5176.12818093_47.resourceCenter.1.52c916d0vlEMb0&tab=api#/api/?type=model&url=3016808).
+- Volcengine Ark: [Responses API](https://www.volcengine.com/docs/82379/1585128?lang=zh), [Seedream image generation](https://www.volcengine.com/docs/82379/1824121?lang=zh), and [Seedance video generation](https://www.volcengine.com/docs/82379/2291680?lang=zh).
+- Comparative implementation references:
+  - [cc-switch](https://github.com/farion1231/cc-switch) is MIT-licensed and is used with attribution for protocol and behavior comparison.
+  - [CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus) has no repository license file in the inspected local clone, so it is treated as a weak behavioral reference only. No code, assets, sponsor, recommendation, marketplace, or ad content is copied from it.
 
 ## Roadmap
 

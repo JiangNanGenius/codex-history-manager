@@ -98,6 +98,9 @@ _request_log_retention_days = 30
 _request_log_max_mb = 50.0
 _request_log_currency_settings: Dict[str, Any] = {}
 _media_approval_reviewer: Optional[Callable[[Dict[str, Any], Dict[str, Any], Dict[str, Any]], Any]] = None
+_upstream_timeout_seconds = DEFAULT_UPSTREAM_TIMEOUT
+_upstream_retry_attempts = 0
+_upstream_retry_backoff_ms = 250
 
 
 def _set_provider_store_path(path: str) -> None:
@@ -132,6 +135,18 @@ def _set_media_approval_reviewer(
     """Install an injectable media Auto Approval reviewer for tests/future runtime wiring."""
     global _media_approval_reviewer
     _media_approval_reviewer = reviewer
+
+
+def _set_upstream_policy(
+    timeout_seconds: Any = DEFAULT_UPSTREAM_TIMEOUT,
+    retry_attempts: Any = 0,
+    retry_backoff_ms: Any = 250,
+) -> None:
+    """Configure global upstream timeout/retry policy for proxy requests."""
+    global _upstream_timeout_seconds, _upstream_retry_attempts, _upstream_retry_backoff_ms
+    _upstream_timeout_seconds = _positive_int(timeout_seconds, DEFAULT_UPSTREAM_TIMEOUT, minimum=1, maximum=3600)
+    _upstream_retry_attempts = _positive_int(retry_attempts, 0, minimum=0, maximum=5)
+    _upstream_retry_backoff_ms = _positive_int(retry_backoff_ms, 250, minimum=0, maximum=30000)
 
 
 def _get_provider_store_path() -> Path:
@@ -328,13 +343,75 @@ def _native_responses_unsupported_reason(
     return format_domestic_unsupported_reason(report)
 
 
+def _provider_proxy_profile(provider: Dict[str, Any]) -> Dict[str, Any]:
+    profile = provider.get("proxy_profile")
+    if isinstance(profile, dict):
+        return profile
+    profile = provider.get("proxy")
+    return profile if isinstance(profile, dict) else {}
+
+
+def _provider_upstream_timeout(provider: Dict[str, Any]) -> int:
+    profile = _provider_proxy_profile(provider)
+    value = (
+        provider.get("upstream_timeout_seconds")
+        or provider.get("timeout_seconds")
+        or profile.get("upstream_timeout_seconds")
+        or profile.get("timeout_seconds")
+        or _upstream_timeout_seconds
+    )
+    return _positive_int(value, _upstream_timeout_seconds, minimum=1, maximum=3600)
+
+
+def _provider_retry_policy(provider: Dict[str, Any]) -> Dict[str, int]:
+    profile = _provider_proxy_profile(provider)
+    attempts = (
+        provider.get("retry_attempts")
+        or profile.get("retry_attempts")
+        or profile.get("max_retries")
+        or _upstream_retry_attempts
+    )
+    backoff_ms = (
+        provider.get("retry_backoff_ms")
+        or profile.get("retry_backoff_ms")
+        or _upstream_retry_backoff_ms
+    )
+    return {
+        "retry_attempts": _positive_int(attempts, _upstream_retry_attempts, minimum=0, maximum=5),
+        "retry_backoff_ms": _positive_int(backoff_ms, _upstream_retry_backoff_ms, minimum=0, maximum=30000),
+    }
+
+
+def _upstream_request_for_provider(
+    provider: Dict[str, Any],
+    method: str,
+    url: str,
+    headers: Dict[str, str],
+    body: Optional[bytes] = None,
+    stream: bool = False,
+) -> urllib.request.addinfourl:
+    retry_policy = _provider_retry_policy(provider)
+    return _upstream_request(
+        method,
+        url,
+        headers,
+        body=body,
+        timeout=_provider_upstream_timeout(provider),
+        stream=stream,
+        retry_attempts=retry_policy["retry_attempts"],
+        retry_backoff_ms=retry_policy["retry_backoff_ms"],
+    )
+
+
 def _upstream_request(
     method: str,
     url: str,
     headers: Dict[str, str],
     body: Optional[bytes] = None,
-    timeout: int = DEFAULT_UPSTREAM_TIMEOUT,
+    timeout: Optional[int] = None,
     stream: bool = False,
+    retry_attempts: Optional[int] = None,
+    retry_backoff_ms: Optional[int] = None,
 ) -> urllib.request.addinfourl:
     """
     执行上游 HTTP 请求。
@@ -361,16 +438,41 @@ def _upstream_request(
         urllib.error.URLError: 连接失败等网络错误。
         socket.timeout: 请求超时。
     """
-    req = urllib.request.Request(url, data=body, method=method)
-    for key, value in headers.items():
-        req.add_header(key, value)
-    if stream:
-        req.add_header("Accept", "text/event-stream")
+    timeout_value = _positive_int(timeout, _upstream_timeout_seconds, minimum=1, maximum=3600)
+    retries = _positive_int(retry_attempts, _upstream_retry_attempts, minimum=0, maximum=5)
+    backoff_ms = _positive_int(retry_backoff_ms, _upstream_retry_backoff_ms, minimum=0, maximum=30000)
+    last_error: Optional[BaseException] = None
 
-    # 禁用系统代理，确保直连上游
-    proxy_handler = urllib.request.ProxyHandler({})
-    opener = urllib.request.build_opener(proxy_handler)
-    return opener.open(req, timeout=timeout)
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(url, data=body, method=method)
+        for key, value in headers.items():
+            req.add_header(key, value)
+        if stream:
+            req.add_header("Accept", "text/event-stream")
+
+        # 禁用系统代理，确保直连上游
+        proxy_handler = urllib.request.ProxyHandler({})
+        opener = urllib.request.build_opener(proxy_handler)
+        try:
+            return opener.open(req, timeout=timeout_value)
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if not _should_retry_http_error(exc) or attempt >= retries:
+                raise
+        except (urllib.error.URLError, socket.timeout, OSError) as exc:
+            last_error = exc
+            if attempt >= retries:
+                raise
+        if backoff_ms > 0:
+            time.sleep((backoff_ms / 1000.0) * (attempt + 1))
+
+    if last_error:
+        raise last_error
+    raise urllib.error.URLError("upstream request failed without a response")
+
+
+def _should_retry_http_error(exc: urllib.error.HTTPError) -> bool:
+    return int(getattr(exc, "code", 0) or 0) in {408, 409, 425, 429, 500, 502, 503, 504}
 
 
 def _make_request_log_context(
@@ -461,6 +563,14 @@ def _safe_positive_int(value: Any, default: int = 0) -> int:
     except (TypeError, ValueError):
         return default
     return result if result > 0 else default
+
+
+def _positive_int(value: Any, default: int, minimum: int = 0, maximum: int = 2_147_483_647) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        result = default
+    return min(max(result, minimum), maximum)
 
 
 def _send_error(self: BaseHTTPRequestHandler, status: int, message: str, error_type: str = "proxy_error") -> None:
@@ -634,7 +744,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         )
 
         try:
-            upstream_resp = _upstream_request(
+            upstream_resp = _upstream_request_for_provider(
+                provider,
                 "POST",
                 upstream_url,
                 headers,
@@ -735,7 +846,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             headers["Content-Type"] = content_type
 
         try:
-            upstream_resp = _upstream_request(
+            upstream_resp = _upstream_request_for_provider(
+                provider,
                 method,
                 upstream_url,
                 headers,
@@ -834,7 +946,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         )
 
         try:
-            upstream_resp = _upstream_request(
+            upstream_resp = _upstream_request_for_provider(
+                provider,
                 "POST",
                 upstream_url,
                 headers,
@@ -893,7 +1006,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         )
 
         try:
-            upstream_resp = _upstream_request(
+            upstream_resp = _upstream_request_for_provider(
+                provider,
                 "POST",
                 upstream_url,
                 headers,
@@ -949,7 +1063,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         )
 
         try:
-            upstream_resp = _upstream_request(
+            upstream_resp = _upstream_request_for_provider(
+                provider,
                 "POST",
                 upstream_url,
                 headers,
@@ -1258,6 +1373,9 @@ class LocalProxyServer:
         request_log_retention_days: int = 30,
         request_log_max_mb: float = 50,
         currency_settings: Optional[Dict[str, Any]] = None,
+        upstream_timeout_seconds: int = DEFAULT_UPSTREAM_TIMEOUT,
+        retry_attempts: int = 0,
+        retry_backoff_ms: int = 250,
     ):
         self.port = port
         self.provider_store_path = provider_store_path
@@ -1265,6 +1383,9 @@ class LocalProxyServer:
         self.request_log_retention_days = request_log_retention_days
         self.request_log_max_mb = request_log_max_mb
         self.currency_settings = dict(currency_settings or {})
+        self.upstream_timeout_seconds = upstream_timeout_seconds
+        self.retry_attempts = retry_attempts
+        self.retry_backoff_ms = retry_backoff_ms
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._last_requested_port = port
@@ -1291,6 +1412,11 @@ class LocalProxyServer:
             retention_days=self.request_log_retention_days,
             max_mb=self.request_log_max_mb,
             currency_settings=self.currency_settings,
+        )
+        _set_upstream_policy(
+            self.upstream_timeout_seconds,
+            retry_attempts=self.retry_attempts,
+            retry_backoff_ms=self.retry_backoff_ms,
         )
 
         if not isinstance(self.port, int) or self.port < 1 or self.port > 65535:
@@ -1381,6 +1507,9 @@ class LocalProxyServer:
             "request_log_path": str(effective_log_path) if effective_log_path is not None else "",
             "request_log_retention_days": effective_retention_days,
             "request_log_max_mb": effective_max_mb,
+            "upstream_timeout_seconds": _upstream_timeout_seconds,
+            "retry_attempts": _upstream_retry_attempts,
+            "retry_backoff_ms": _upstream_retry_backoff_ms,
             "port_backoff": self._last_port_backoff,
             "last_start_error": self._last_start_error,
         }

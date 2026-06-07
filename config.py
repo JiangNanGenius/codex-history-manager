@@ -47,6 +47,9 @@ DEFAULT_CONFIG = {
     "request_log_path": str(app_data_path("logs", "proxy_requests.jsonl")),
     "request_log_retention_days": 30,
     "request_log_max_mb": 50,
+    "proxy_upstream_timeout_seconds": 120,
+    "proxy_retry_attempts": 0,
+    "proxy_retry_backoff_ms": 250,
     "startup_enabled": False,
     "startup_mode": "disabled",
     "startup_auto_elevate": False,
@@ -247,6 +250,18 @@ class Config:
             self._data["request_log_max_mb"] = max(float(self._data.get("request_log_max_mb", 50)), 1.0)
         except (TypeError, ValueError):
             self._data["request_log_max_mb"] = 50
+        try:
+            self._data["proxy_upstream_timeout_seconds"] = min(max(int(self._data.get("proxy_upstream_timeout_seconds", 120)), 1), 3600)
+        except (TypeError, ValueError):
+            self._data["proxy_upstream_timeout_seconds"] = 120
+        try:
+            self._data["proxy_retry_attempts"] = min(max(int(self._data.get("proxy_retry_attempts", 0)), 0), 5)
+        except (TypeError, ValueError):
+            self._data["proxy_retry_attempts"] = 0
+        try:
+            self._data["proxy_retry_backoff_ms"] = min(max(int(self._data.get("proxy_retry_backoff_ms", 250)), 0), 30000)
+        except (TypeError, ValueError):
+            self._data["proxy_retry_backoff_ms"] = 250
 
     def _auto_detect_if_needed(self):
         """Auto-fill Codex paths only when the user has not configured them."""
