@@ -304,6 +304,7 @@ def create_app() -> Flask:
                     "未配置代理缓存数据库；缓存统计需要请求经过代理数据源，官方 API 和自定义 API 都可被统计。"
                 )
             _merge_cache_usage_sources(data, rollout_cache_data, cc_cache_data)
+            _attach_usage_source_summary(data, proxy_server.status())
             data.update(_resolve_current_context_window(config, provider_registry))
             return jsonify(data)
         except Exception as e:
@@ -1484,6 +1485,79 @@ def _merge_cache_usage_sources(
     if not notes and not cc_cache_data:
         notes.append("No proxy cache database is configured.")
     data["cache_note"] = " ".join(notes)
+
+
+def _attach_usage_source_summary(data: Dict[str, Any], proxy_status: Dict[str, Any] | None = None) -> None:
+    proxy_status = proxy_status or {}
+    rollout_discovered = _safe_int(data.get("codex_rollout_paths_discovered"))
+    rollout_scanned = _safe_int(data.get("codex_rollout_files_scanned"))
+    cc_configured = bool(data.get("cc_switch_db_configured"))
+    cc_supported = bool(data.get("cc_switch_cache_supported"))
+    proxy_running = bool(proxy_status.get("running"))
+
+    sources = [
+        {
+            "id": "codex_db",
+            "label": "Codex DB",
+            "badge": "Codex DB",
+            "status": "active",
+            "active": True,
+            "kind": "total_tokens",
+            "tooltip": (
+                "Codex DB threads.tokens_used stores collapsed total tokens only; "
+                "cache read/write details require Codex rollout or proxy/CC Switch sources."
+            ),
+        },
+        {
+            "id": "codex_rollout",
+            "label": "Codex rollout",
+            "badge": "rollout",
+            "status": "active" if data.get("codex_rollout_cache_supported") else (
+                "available" if rollout_discovered else "missing"
+            ),
+            "active": bool(data.get("codex_rollout_cache_supported")),
+            "kind": "cache_tokens",
+            "tooltip": (
+                f"Scanned {rollout_scanned} of {rollout_discovered} discovered rollout files. "
+                "Reads token_count events and maps cached_input_tokens to cache read tokens."
+            ),
+        },
+        {
+            "id": "local_proxy",
+            "label": "Local proxy",
+            "badge": "local proxy",
+            "status": "running" if proxy_running else "stopped",
+            "active": proxy_running,
+            "kind": "proxy_runtime",
+            "tooltip": (
+                "Local proxy can observe routed requests. Request-log aggregation is a separate TODO; "
+                "CC Switch/proxy DB fields are shown when configured."
+            ),
+        },
+        {
+            "id": "cc_switch_db",
+            "label": "CC Switch DB",
+            "badge": "CC Switch DB",
+            "status": "active" if cc_supported else ("configured" if cc_configured else "not_configured"),
+            "active": cc_supported,
+            "kind": "cache_tokens",
+            "tooltip": (
+                data.get("cc_switch_cache_note")
+                or "Configure a proxy cache database to read cache_read_tokens/cache_creation_tokens."
+            ),
+        },
+    ]
+    data["usage_sources"] = sources
+    data["usage_source_badges"] = [
+        {
+            "id": source["id"],
+            "label": source["badge"],
+            "status": source["status"],
+            "active": source["active"],
+            "tooltip": source["tooltip"],
+        }
+        for source in sources
+    ]
 
 
 def _safe_int(value: Any) -> int:

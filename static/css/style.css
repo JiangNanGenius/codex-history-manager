@@ -992,6 +992,35 @@ tbody tr:hover::before {
   line-height: 1.45;
   word-break: break-word;
 }
+.usage-source-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.usage-source-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  color: var(--text-muted);
+  background: rgba(15, 23, 42, 0.5);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.usage-source-badge.active {
+  color: #cffafe;
+  border-color: rgba(34, 211, 238, 0.35);
+  background: rgba(8, 145, 178, 0.16);
+}
+.usage-source-badge.warning {
+  color: #fde68a;
+  border-color: rgba(245, 158, 11, 0.34);
+  background: rgba(146, 64, 14, 0.15);
+}
 
 @keyframes monitor-alert {
   0%, 100% { box-shadow: 0 20px 46px rgba(2, 6, 23, 0.42), 0 0 0 rgba(245, 158, 11, 0); }

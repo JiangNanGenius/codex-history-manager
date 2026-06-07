@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app import _merge_cache_usage_sources
+from app import _attach_usage_source_summary, _merge_cache_usage_sources
 from codex_rollout_usage import (
     discover_rollout_paths,
     get_codex_rollout_cache_stats,
@@ -286,6 +286,27 @@ class CodexRolloutUsageTest(unittest.TestCase):
         self.assertEqual(data["cache_sources"], ["cc_switch_db"])
         self.assertFalse(data["cache_overlap_risk"])
         self.assertEqual(data["cache_merge_strategy"], "cc_switch_db")
+
+    def test_attach_usage_source_summary_adds_badges_and_tooltips(self):
+        data = {
+            "cc_switch_db_configured": True,
+            "codex_rollout_cache_supported": True,
+            "codex_rollout_paths_discovered": 5,
+            "codex_rollout_files_scanned": 2,
+            "cc_switch_cache_supported": False,
+            "cc_switch_cache_note": "configured but no cache columns",
+        }
+
+        _attach_usage_source_summary(data, {"running": True})
+
+        badges = {badge["id"]: badge for badge in data["usage_source_badges"]}
+        self.assertEqual(set(badges), {"codex_db", "codex_rollout", "local_proxy", "cc_switch_db"})
+        self.assertTrue(badges["codex_db"]["active"])
+        self.assertIn("collapsed total tokens", badges["codex_db"]["tooltip"])
+        self.assertIn("cache read/write details require", badges["codex_db"]["tooltip"])
+        self.assertTrue(badges["codex_rollout"]["active"])
+        self.assertEqual(badges["local_proxy"]["status"], "running")
+        self.assertEqual(badges["cc_switch_db"]["status"], "configured")
 
 
 if __name__ == "__main__":

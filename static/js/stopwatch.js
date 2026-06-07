@@ -39,6 +39,16 @@ function setTextById(id, text) {
     }
 }
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[ch]));
+}
+
 async function fetchCurrentTokenStats(params = {}) {
     const searchParams = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
@@ -76,6 +86,42 @@ function formatCacheUsage(data) {
     const sourceText = sourceLabels.length ? ` · ${t('cacheSource')}: ${sourceLabels.join(' + ')}` : '';
     const riskText = data.cache_overlap_risk ? ` · ${t('cacheOverlapRisk')}` : '';
     return `${t('cacheRead')}: ${read} · ${t('cacheWrite')}: ${write} · ${t('cacheTotal')}: ${total}${sourceText}${riskText}`;
+}
+
+function cacheUsageTitle(data) {
+    if (!data) return t('cacheUsageUnavailable');
+    const lines = [formatCacheUsage(data)];
+    if (data.cache_note) lines.push(data.cache_note);
+    if (Array.isArray(data.usage_sources)) {
+        for (const source of data.usage_sources) {
+            if (source && source.tooltip) {
+                lines.push(`${source.label || source.id}: ${source.tooltip}`);
+            }
+        }
+    }
+    return lines.join('\n');
+}
+
+function setCacheUsageDisplay(data) {
+    const element = document.getElementById('stopwatch-cache-hits');
+    if (!element) return;
+    element.textContent = formatCacheUsage(data);
+    element.title = cacheUsageTitle(data);
+    renderUsageSourceBadges(data);
+}
+
+function renderUsageSourceBadges(data) {
+    const container = document.getElementById('stopwatch-source-badges');
+    if (!container) return;
+    const badges = Array.isArray(data?.usage_source_badges) ? data.usage_source_badges : [];
+    container.innerHTML = badges.map(badge => {
+        const active = badge.active ? ' active' : '';
+        const warning = badge.status === 'configured' || badge.status === 'available' ? ' warning' : '';
+        const label = escapeHtml(badge.label || badge.id || '');
+        const status = badge.status ? ` · ${escapeHtml(badge.status)}` : '';
+        const title = escapeHtml(badge.tooltip || '');
+        return `<span class="usage-source-badge${active}${warning}" title="${title}">${label}${status}</span>`;
+    }).join('');
 }
 
 function getTokenAlertThreshold() {
@@ -286,7 +332,7 @@ async function refreshStopwatchTokens() {
 
     setTextById('stopwatch-current-total', formatNumber(totalTokens));
     setTextById('stopwatch-token-diff', formatNumber(tokenDiff));
-    setTextById('stopwatch-cache-hits', formatCacheUsage(data));
+    setCacheUsageDisplay(data);
     setTextById('stopwatch-note', data.cache_note || data.realtime_note || t('noDataYet'));
 }
 
@@ -310,7 +356,7 @@ async function startStopwatch() {
         setTextById('stopwatch-elapsed', '00:00:00');
         setTextById('stopwatch-current-total', formatNumber(totalTokens));
         setTextById('stopwatch-token-diff', '0');
-        setTextById('stopwatch-cache-hits', formatCacheUsage(data));
+        setCacheUsageDisplay(data);
         setTextById('stopwatch-note', data.realtime_note || t('recording'));
 
         realtimeController.start('stopwatch-elapsed', updateStopwatchElapsed, 1000, true);
@@ -364,7 +410,7 @@ function resetStopwatch() {
     setTextById('stopwatch-elapsed', '00:00:00');
     setTextById('stopwatch-token-diff', '0');
     setTextById('stopwatch-current-total', '0');
-    setTextById('stopwatch-cache-hits', t('cacheUsageUnavailable'));
+    setCacheUsageDisplay(null);
     setTextById('stopwatch-note', t('noDataYet'));
     tokenMonitorState.lastAlertBucket = 0;
     saveTrackerState();
@@ -506,5 +552,6 @@ function initRangeDefaults() {
 window.addEventListener('DOMContentLoaded', () => {
     initRangeDefaults();
     initTokenMonitorSettings();
+    refreshStopwatchTokens().catch(err => console.warn('Token cache source refresh failed', err));
     saveTrackerState();
 });
