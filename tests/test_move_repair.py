@@ -171,6 +171,9 @@ class TestDryRun(MoveRepairTestBase):
         self.assertTrue(result["can_move"])
         self.assertTrue(any("2 个 tracked files" in r for r in result["reasons"]))
         self.assertEqual(result["expected_changes"]["sqlite_cwd_new"], str(self.target_repo))
+        self.assertFalse(result["restart_required"])
+        self.assertFalse(result["restart_guidance"]["ui_refresh_required"])
+        self.assertIn("Dry-run", result["restart_guidance"]["message"])
 
     def test_dry_run_move_invalid_target(self):
         self._create_db(self.thread_id, self.original_cwd)
@@ -192,6 +195,10 @@ class TestExecuteMove(MoveRepairTestBase):
         result = self.mgr.execute_move(self.thread_id, str(self.target_repo))
 
         self.assertTrue(result["success"])
+        self.assertFalse(result["restart_required"])
+        self.assertTrue(result["restart_guidance"]["ui_refresh_required"])
+        self.assertTrue(result["restart_guidance"]["restart_recommended"])
+        self.assertIn("Refresh or reopen", result["restart_guidance"]["next_action"])
         self.assertTrue(result["changes"]["db_updated"])
         self.assertTrue(result["changes"]["jsonl_updated"])
         self.assertTrue(result["changes"]["index_updated"])
@@ -214,6 +221,9 @@ class TestExecuteMove(MoveRepairTestBase):
 
         self.assertFalse(result["success"])
         self.assertTrue(result["error"])
+        self.assertFalse(result["restart_required"])
+        self.assertFalse(result["restart_guidance"]["ui_refresh_required"])
+        self.assertIn("rolled back", result["restart_guidance"]["message"])
         self.assertFalse(result["changes"]["db_updated"])
         self.assertFalse(result["changes"]["jsonl_updated"])
         self.assertFalse(result["changes"]["index_updated"])
@@ -238,6 +248,8 @@ class TestVerifyConsistency(MoveRepairTestBase):
         self.assertEqual(result["sqlite_cwd"], self.original_cwd)
         self.assertEqual(result["jsonl_cwd"], self.original_cwd)
         self.assertEqual(result["index_cwd"], self.original_cwd)
+        self.assertFalse(result["restart_required"])
+        self.assertIn("valid Git workspace", result["restart_guidance"]["message"])
 
     @patch("move_repair.subprocess.run", side_effect=_git_mock)
     def test_verify_consistency_fails(self, _mock_run):
@@ -249,6 +261,8 @@ class TestVerifyConsistency(MoveRepairTestBase):
 
         self.assertFalse(result["consistent"])
         self.assertTrue(any("不一致" in r for r in result["reasons"]))
+        self.assertFalse(result["restart_required"])
+        self.assertIn("restarting alone", result["restart_guidance"]["next_action"])
 
 
 class TestRepairCurrentThread(MoveRepairTestBase):
@@ -267,6 +281,8 @@ class TestRepairCurrentThread(MoveRepairTestBase):
         self.assertTrue(any("无需修复" in a for a in result["suggested_actions"]))
         self.assertEqual(len(result["matched_threads"]), 1)
         self.assertEqual(result["matched_threads"][0]["thread_id"], self.thread_id)
+        self.assertFalse(result["restart_required"])
+        self.assertIn("already match", result["restart_guidance"]["message"])
 
 
 if __name__ == "__main__":

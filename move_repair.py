@@ -219,6 +219,13 @@ class MoveRepairManager:
             "can_move": can_move,
             "reasons": reasons,
             "expected_changes": expected,
+            "restart_required": False,
+            "restart_guidance": self._restart_guidance(
+                operation="dry_run",
+                success=can_move,
+                changed=False,
+                consistent=None,
+            ),
         }
 
     def _git_ls_files(self, repo_path: str) -> Optional[List[str]]:
@@ -257,6 +264,7 @@ class MoveRepairManager:
                 "changes": Dict[str, Any],
                 "verification": Dict[str, Any],
                 "restart_required": bool,
+                "restart_guidance": Dict[str, Any],
                 "error": str or None,
             }
         """
@@ -265,7 +273,13 @@ class MoveRepairManager:
             "success": False,
             "changes": {},
             "verification": {},
-            "restart_required": True,
+            "restart_required": False,
+            "restart_guidance": self._restart_guidance(
+                operation="execute_move",
+                success=False,
+                changed=False,
+                consistent=None,
+            ),
             "error": None,
         }
 
@@ -273,6 +287,12 @@ class MoveRepairManager:
         dry = self.dry_run_move(thread_id, str(target))
         if not dry["can_move"]:
             result["error"] = "预检查失败: " + "; ".join(dry["reasons"])
+            result["restart_guidance"] = self._restart_guidance(
+                operation="execute_move",
+                success=False,
+                changed=False,
+                consistent=False,
+            )
             return result
 
         # Step 1: 定位文件并备份（记录原始路径 → 备份路径映射）
@@ -323,12 +343,25 @@ class MoveRepairManager:
 
             result["success"] = True
             result["changes"] = changes
-            result["restart_required"] = True
+            result["restart_guidance"] = self._restart_guidance(
+                operation="execute_move",
+                success=True,
+                changed=True,
+                consistent=True,
+            )
+            result["restart_required"] = result["restart_guidance"]["restart_required"]
         except Exception as e:
             result["error"] = str(e)
             _do_rollback()
             result["changes"] = {k: False for k in changes}
             result["verification"] = {}
+            result["restart_guidance"] = self._restart_guidance(
+                operation="execute_move",
+                success=False,
+                changed=False,
+                consistent=False,
+            )
+            result["restart_required"] = result["restart_guidance"]["restart_required"]
 
         return result
 
@@ -504,6 +537,13 @@ class MoveRepairManager:
                 "jsonl_cwd": jsonl_cwd,
                 "index_cwd": index_cwd,
                 "git_valid": False,
+                "restart_required": False,
+                "restart_guidance": self._restart_guidance(
+                    operation="verify",
+                    success=False,
+                    changed=False,
+                    consistent=False,
+                ),
             }
 
         # 使用规范化路径比较（Windows 不区分大小写）
@@ -541,6 +581,13 @@ class MoveRepairManager:
             "jsonl_cwd": jsonl_cwd,
             "index_cwd": index_cwd,
             "git_valid": git_valid,
+            "restart_required": False,
+            "restart_guidance": self._restart_guidance(
+                operation="verify",
+                success=consistent,
+                changed=False,
+                consistent=consistent,
+            ),
         }
 
     def _git_rev_parse_show_toplevel(self, repo_path: str) -> Optional[str]:
@@ -583,10 +630,23 @@ class MoveRepairManager:
             "matched_threads": [],
             "mismatch_detected": False,
             "suggested_actions": [],
+            "restart_required": False,
+            "restart_guidance": self._restart_guidance(
+                operation="repair_current",
+                success=False,
+                changed=False,
+                consistent=None,
+            ),
         }
 
         if not self.db_path.exists():
             result["suggested_actions"].append("未找到数据库，请检查 db_path 配置")
+            result["restart_guidance"] = self._restart_guidance(
+                operation="repair_current",
+                success=False,
+                changed=False,
+                consistent=False,
+            )
             return result
 
         try:
@@ -648,7 +708,88 @@ class MoveRepairManager:
                     f"最近似候选: {candidates[0]['thread_id']} (cwd: {candidates[0]['thread_cwd']})"
                 )
 
+        result["restart_guidance"] = self._restart_guidance(
+            operation="repair_current",
+            success=not result["mismatch_detected"],
+            changed=False,
+            consistent=not result["mismatch_detected"],
+        )
+        result["restart_required"] = result["restart_guidance"]["restart_required"]
         return result
+
+    @staticmethod
+    def _restart_guidance(
+        operation: str,
+        success: bool,
+        changed: bool,
+        consistent: Optional[bool],
+    ) -> Dict[str, Any]:
+        """Return source-of-truth restart guidance for move-repair operations.
+
+        Move repair changes Codex thread/workspace metadata, not auth/config/model
+        catalog files. A successful repair should first refresh/reopen the thread;
+        a full Codex restart is only a recovery step if the UI still shows stale
+        workspace state.
+        """
+        if operation == "dry_run":
+            return {
+                "restart_required": False,
+                "ui_refresh_required": False,
+                "restart_recommended": False,
+                "next_action": "Run execute after reviewing the dry-run result.",
+                "message": "Dry-run is read-only; no Codex restart is required.",
+            }
+
+        if operation == "verify":
+            if consistent:
+                return {
+                    "restart_required": False,
+                    "ui_refresh_required": False,
+                    "restart_recommended": False,
+                    "next_action": "No move-repair restart action is needed.",
+                    "message": "Thread metadata is consistent and points to a valid Git workspace.",
+                }
+            return {
+                "restart_required": False,
+                "ui_refresh_required": False,
+                "restart_recommended": False,
+                "next_action": "Run a dry-run/execute repair; restarting alone will not repair metadata.",
+                "message": "Metadata is inconsistent or missing; fix the recorded paths before relying on a restart.",
+            }
+
+        if operation == "repair_current":
+            if success:
+                return {
+                    "restart_required": False,
+                    "ui_refresh_required": False,
+                    "restart_recommended": False,
+                    "next_action": "No repair action is needed.",
+                    "message": "The current workspace and thread metadata already match.",
+                }
+            return {
+                "restart_required": False,
+                "ui_refresh_required": False,
+                "restart_recommended": False,
+                "next_action": "Choose a matched thread and run a dry-run before executing repair.",
+                "message": "This check is read-only; restart is not a substitute for metadata repair.",
+            }
+
+        if operation == "execute_move" and success and changed:
+            return {
+                "restart_required": False,
+                "ui_refresh_required": True,
+                "restart_recommended": True,
+                "next_action": "Refresh or reopen the Codex thread; restart Codex only if the UI still shows the old workspace.",
+                "message": "Move repair updated local thread metadata. No config/auth/model-catalog restart is required by the repair itself.",
+            }
+
+        return {
+            "restart_required": False,
+            "ui_refresh_required": False,
+            "restart_recommended": False,
+            "next_action": "Review the error and retry dry-run/execute after fixing the reported issue.",
+            "message": "The repair did not complete successfully or was rolled back; no restart is required for this failed attempt.",
+        }
 
     @staticmethod
     def _path_distance(a: str, b: str) -> int:
