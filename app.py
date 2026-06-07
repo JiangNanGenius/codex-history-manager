@@ -66,6 +66,7 @@ from currency import (
     update_currency_config,
 )
 from costing import estimate_request_cost, pricing_preview_payload
+from quota import QuotaManager
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -101,12 +102,14 @@ def create_app() -> Flask:
         provider_store_path=config.get("provider_store_path", ""),
     )
     amr_registry = AMRRegistry()
+    quota_manager = QuotaManager(lambda: provider_registry.list_providers(include_secrets=True).get("providers", []))
 
     diagnostics_collector = DiagnosticsCollector(
         config=config,
         provider_registry=provider_registry,
         proxy_server=proxy_server,
         amr_registry=amr_registry,
+        quota_manager=quota_manager,
     )
 
     def _refresh_provider_registry_path():
@@ -703,6 +706,35 @@ def create_app() -> Flask:
                 native_currency=native_currency,
                 display_currency=str(body.get("display_currency") or ""),
             ))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/quota")
+    def list_quota_cache():
+        """读取内存中的余额/额度快照缓存。"""
+        try:
+            _refresh_provider_registry_path()
+            return jsonify(quota_manager.list_cached())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/quota")
+    def get_provider_quota_cache(provider_id):
+        """读取单个 provider 的缓存额度快照，不触发网络请求。"""
+        try:
+            _refresh_provider_registry_path()
+            return jsonify(quota_manager.cached_provider_quota(provider_id))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/quota/refresh", methods=["POST"])
+    def refresh_provider_quota(provider_id):
+        """按 provider quota_check 手动刷新额度/余额。"""
+        try:
+            _refresh_provider_registry_path()
+            body = request.get_json(silent=True) or {}
+            result = quota_manager.refresh_provider_quota(provider_id, force=bool(body.get("force", True)))
+            return jsonify(result)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

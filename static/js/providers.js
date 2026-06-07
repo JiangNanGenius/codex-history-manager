@@ -34,6 +34,7 @@ let providerState = {
     draftError: '',
     proxyStatus: null,
     responsesProbePreview: null,
+    quotaPreview: null,
 };
 
 /**
@@ -477,12 +478,16 @@ function renderProviderEditor(provider) {
                     ${renderTextarea('media-image-overrides-json', 'Image Model Overrides JSON', JSON.stringify(provider.media_profile.image_model_overrides || {}, null, 2), 5)}
                     ${renderTextarea('media-video-overrides-json', 'Video Model Overrides JSON', JSON.stringify(provider.media_profile.video_model_overrides || {}, null, 2), 5)}
                 </div>
+                <div class="mt-4">
+                    ${renderTextarea('provider-quota-json', 'Quota Check JSON', JSON.stringify(provider.quota_check || {}, null, 2), 8)}
+                </div>
             </details>
 
             <div class="flex flex-wrap gap-2 mt-5">
                 <button onclick="saveSelectedProvider()" class="btn btn-primary">Save Local Provider</button>
                 <button onclick="testSelectedProvider()" class="btn btn-secondary">Test This Section</button>
                 <button onclick="previewResponsesProbe()" class="btn btn-secondary">Responses Probe Preview</button>
+                <button onclick="refreshProviderQuota()" class="btn btn-secondary">Refresh Quota</button>
                 <button onclick="previewProviderDraft()" class="btn btn-ghost">Preview Draft</button>
                 <button onclick="deleteSelectedProvider()" class="btn btn-danger">Delete</button>
             </div>
@@ -497,6 +502,12 @@ function renderProviderEditor(provider) {
             <h3 class="card-title">Responses Probe Preview</h3>
             <p class="text-xs text-dark-400 mt-1">Dry-run only: no network request, no Codex mutation.</p>
             <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.responsesProbePreview || {}, null, 2))}</pre>
+        </div>
+
+        <div id="provider-quota-preview" class="card ${providerState.quotaPreview ? '' : 'hidden'}">
+            <h3 class="card-title">Quota Preview</h3>
+            <p class="text-xs text-dark-400 mt-1">Manual provider-section test. Uses provider quota_check and returns redacted results.</p>
+            <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.quotaPreview || {}, null, 2))}</pre>
         </div>
     `;
 }
@@ -692,6 +703,7 @@ async function createBlankProvider() {
 function selectProvider(providerId) {
     providerState.selectedProviderId = providerId;
     providerState.responsesProbePreview = null;
+    providerState.quotaPreview = null;
     renderProvidersPage();
 }
 
@@ -706,6 +718,7 @@ async function saveSelectedProvider() {
             body: JSON.stringify(draft),
         });
         providerState.selectedProviderId = result.provider.id;
+        providerState.quotaPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
         renderProvidersPage();
@@ -757,6 +770,25 @@ async function previewResponsesProbe() {
         });
         renderProvidersPage();
         showToast('Responses probe preview generated', 'success');
+    } catch (err) {
+        showProviderFormError(err.message);
+    }
+}
+
+async function refreshProviderQuota() {
+    const provider = getSelectedProvider();
+    if (!provider) return;
+    try {
+        providerState.quotaPreview = await api('/api/providers/' + encodeURIComponent(provider.id) + '/quota/refresh', {
+            method: 'POST',
+            body: JSON.stringify({ force: true }),
+        });
+        renderProvidersPage();
+        if (providerState.quotaPreview && providerState.quotaPreview.success) {
+            showToast('Quota refreshed', 'success');
+        } else {
+            showToast('Quota refresh returned an error', 'warning');
+        }
     } catch (err) {
         showProviderFormError(err.message);
     }
@@ -827,6 +859,7 @@ function readProviderForm(existing) {
         const headers = JSON.parse(document.getElementById('provider-headers-json')?.value || '{}');
         const imageModelOverrides = JSON.parse(document.getElementById('media-image-overrides-json')?.value || '{}');
         const videoModelOverrides = JSON.parse(document.getElementById('media-video-overrides-json')?.value || '{}');
+        const quotaCheck = JSON.parse(document.getElementById('provider-quota-json')?.value || '{}');
         const models = parseModelsText(document.getElementById('provider-models-text')?.value || '');
         return {
             ...existing,
@@ -843,6 +876,7 @@ function readProviderForm(existing) {
             api_key: document.getElementById('provider-api-key') ? document.getElementById('provider-api-key').value : (existing.api_key || ''),
             auth_mode: document.getElementById('provider-auth-mode')?.value || 'provider_api_key',
             headers,
+            quota_check: quotaCheck,
             models,
             capabilities: {
                 ...existing.capabilities,

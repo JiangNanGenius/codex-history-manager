@@ -57,6 +57,7 @@ class DiagnosticsCollector:
         provider_registry: ProviderRegistry,
         proxy_server,
         amr_registry=None,
+        quota_manager=None,
     ):
         """
         初始化 DiagnosticsCollector。
@@ -67,11 +68,14 @@ class DiagnosticsCollector:
             proxy_server: LocalProxyServer 实例，用于读取代理状态。
             amr_registry: 可选的 AMR registry（如 AdaptiveModelRotation 实例）。
                           若另一 agent 尚未实现该模块，传入 None 即可。
+            quota_manager: 可选 QuotaManager，用于读取已缓存的余额/额度快照；
+                           不在诊断收集时触发网络请求。
         """
         self.config = config
         self.provider_registry = provider_registry
         self.proxy_server = proxy_server
         self.amr_registry = amr_registry
+        self.quota_manager = quota_manager
         self._recent_errors: List[Dict[str, Any]] = []
 
     def record_error(self, source: str, message: str) -> None:
@@ -209,6 +213,14 @@ class DiagnosticsCollector:
         # ── h) 最近错误 ──
         errors_section = self._recent_errors[-10:]
 
+        # ── i) 余额/额度缓存状态 ──
+        quota_section: Dict[str, Any] = {"snapshots": {}}
+        if self.quota_manager is not None:
+            try:
+                quota_section = self.quota_manager.list_cached()
+            except Exception as e:
+                quota_section = {"error": str(e), "snapshots": {}}
+
         return {
             "codex_config": codex_config_section,
             "auth_mode": auth_section,
@@ -220,6 +232,7 @@ class DiagnosticsCollector:
             },
             "model_catalog": model_catalog_section,
             "amr": amr_section,
+            "quota": quota_section,
             "system": system_section,
             "errors": errors_section,
             "collected_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

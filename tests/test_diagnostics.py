@@ -37,6 +37,11 @@ class MockAMRRegistry:
         return [{"id": "g1", "display_name": "Group 1", "candidate_count": 2}]
 
 
+class MockQuotaManager:
+    def list_cached(self):
+        return {"snapshots": {"p1": {"success": True, "values": {"balance": 3.5}}}}
+
+
 class TestDiagnosticsCollector(unittest.TestCase):
     def setUp(self):
         """每个测试前重建 mock 依赖，避免状态泄漏。"""
@@ -94,6 +99,7 @@ class TestDiagnosticsCollector(unittest.TestCase):
             "providers",
             "model_catalog",
             "amr",
+            "quota",
             "system",
             "errors",
             "collected_at",
@@ -114,6 +120,23 @@ class TestDiagnosticsCollector(unittest.TestCase):
         # 验证 amr 子字段（使用了 MockAMRRegistry）
         self.assertIn("groups", result["amr"])
         self.assertEqual(len(result["amr"]["groups"]), 1)
+        self.assertEqual(result["quota"], {"snapshots": {}})
+
+    @patch("diagnostics.CodexConfigManager")
+    def test_collect_all_includes_quota_cache_when_available(self, MockMgr):
+        self._mock_codex_manager(MockMgr)
+        collector = DiagnosticsCollector(
+            config=self.config,
+            provider_registry=self.registry,
+            proxy_server=self.proxy,
+            amr_registry=self.amr,
+            quota_manager=MockQuotaManager(),
+        )
+
+        result = collector.collect_all()
+
+        self.assertIn("p1", result["quota"]["snapshots"])
+        self.assertEqual(result["quota"]["snapshots"]["p1"]["values"]["balance"], 3.5)
 
     @patch("diagnostics.CodexConfigManager")
     def test_collect_redacted_redacts_api_key(self, MockMgr):
