@@ -1,34 +1,26 @@
 """
-config.py - 配置管理模块
-保存用户设置到 codex_gui_config.json
-Web 版增强：新增自动检测、Codex++ 路径、暗色主题等配置项
+config.py - Local JSON settings management.
 
-设计意图：
-  - 简单的 JSON 配置文件管理：适合存储少量键值对（<50 个），无需引入
-    SQLite 或 TOML 的复杂性。
-  - 自动检测路径：首次启动或 reset_defaults 时，若 db_path/sessions_dir
-    等关键路径为空，自动调用 auto_detect.py 探测，降低新用户配置门槛。
-  - 原子写入：tmp + replace 防止写一半崩溃导致 JSON 损坏。
-
-工程权衡：
-  - DEFAULT_CONFIG 使用硬编码默认值：明确、可预测，避免外部依赖缺失时
-    启动失败。
-  - 损坏恢复：load() 时若 JSON 解析失败，将原文件重命名为 .corrupted，
-    并回退到 DEFAULT_CONFIG，保证应用始终可启动。
-
-Windows 平台特殊性：
-  - Path.home() 在 Windows 下对应 %USERPROFILE%，配置文件存放在用户目录下，
-    避免写入 Program Files 等需要管理员权限的目录。
+Settings are stored under the user's Documents/Codex Enhance Manager folder.
+The class intentionally stays small and dependency-light because it is used by
+both the desktop app and tests.
 """
+from __future__ import annotations
+
 import copy
 import json
-import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from auto_detect import detect_codex_db, detect_sessions_dir, detect_archived_dir, detect_codex_plus_plus
 from app_paths import LEGACY_CONFIG_FILE, app_data_path, ensure_app_dirs
+from auto_detect import (
+    detect_archived_dir,
+    detect_codex_db,
+    detect_codex_plus_plus,
+    detect_sessions_dir,
+)
+
 
 LEGACY_DEFAULT_BACKUP_DIR = str(Path.home() / "codex_backups")
 LEGACY_DEFAULT_PROVIDER_STORE = str(Path.home() / ".codex_enhance_manager" / "providers.json")
@@ -70,7 +62,6 @@ DEFAULT_CONFIG = {
     },
     "sort_by": "created_at_ms",
     "sort_order": "desc",
-    # Phase 11: Codex Page Enhancements settings
     "page_enhancements_enabled": False,
     "enable_session_delete": True,
     "enable_export": True,
@@ -86,87 +77,86 @@ CONFIG_FILE = app_data_path("config.json")
 
 class Config:
     def __init__(self):
-        """
-        初始化配置管理器。
-
-        流程：
-          1. 加载默认配置。
-          2. 尝试从文件加载已保存配置并合并。
-          3. 若关键路径为空，自动探测并填充。
-        """
+        self._write_locked = False
+        self._write_lock_reason = ""
         ensure_app_dirs()
         self._data: Dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
         self.load()
-        # 首次运行时自动检测路径
         self._auto_detect_if_needed()
 
     def load(self):
-        """
-        从配置文件加载。
-
-        边界条件：
-          - 文件损坏时重命名为 .corrupted 并回退到默认值，保证应用始终可启动。
-          - 静默处理 rename 失败：Windows 上若文件被占用可能无法重命名，
-            此时直接回退到默认配置，不阻塞启动。
-        """
+        """Load settings, migrating the legacy config file when needed."""
         source = CONFIG_FILE
         if not source.exists() and LEGACY_CONFIG_FILE.exists():
             source = LEGACY_CONFIG_FILE
-        if source.exists():
-            try:
-                with open(source, "r", encoding="utf-8") as f:
-                    saved = json.load(f)
+        if not source.exists():
+            return
+
+        try:
+            with open(source, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            if isinstance(saved, dict):
                 self._data.update(saved)
-                self._normalize_storage_defaults()
-                if source == LEGACY_CONFIG_FILE and not CONFIG_FILE.exists():
-                    self.save()
+            self._normalize_storage_defaults()
+            if source == LEGACY_CONFIG_FILE and not CONFIG_FILE.exists():
+                self.save()
+        except Exception:
+            try:
+                corrupted = source.with_suffix(source.suffix + ".corrupted")
+                shutil.move(str(source), str(corrupted))
             except Exception:
-                try:
-                    corrupted = source.with_suffix(source.suffix + ".corrupted")
-                    shutil.move(str(source), str(corrupted))
-                except Exception:
-                    pass
+                pass
 
     def save(self):
-        """
-        原子写入保存配置到文件。
-
-        使用 tmp + replace 模式，防止写一半崩溃导致 JSON 截断。
-        """
+        """Atomically persist settings unless the process is write-locked."""
+        self._ensure_writable()
         try:
             tmp = CONFIG_FILE.with_suffix(".tmp")
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
             tmp.replace(CONFIG_FILE)
-        except Exception as e:
-            print(f"保存配置失败: {e}")
+        except Exception as exc:
+            print(f"Failed to save config: {exc}")
 
     def get(self, key: str, default: Any = None) -> Any:
-        """获取配置值。若 key 不存在，返回 default。"""
         return self._data.get(key, default)
 
     def set(self, key: str, value: Any):
-        """设置配置值并立即保存到文件。"""
+        self._ensure_writable()
         self._data[key] = value
         self._normalize_storage_defaults()
         self.save()
 
     def get_all(self) -> Dict:
-        """获取所有配置的深拷贝，防止调用方修改内部状态。"""
-        return dict(self._data)
+        return copy.deepcopy(self._data)
 
     def update(self, data: Dict):
-        """批量更新配置并保存。"""
+        self._ensure_writable()
         self._data.update(data)
         self._normalize_storage_defaults()
         self.save()
 
     def reset_defaults(self):
-        """重置所有设置为默认值，并重新自动检测路径。"""
+        self._ensure_writable()
         self._data = copy.deepcopy(DEFAULT_CONFIG)
         self._auto_detect_if_needed()
         self.save()
+
+    def lock_writes(self, reason: str):
+        """Disable config writes until the process is restarted."""
+        self._write_locked = True
+        self._write_lock_reason = reason or "Writes are locked until restart."
+
+    def is_write_locked(self) -> bool:
+        return self._write_locked
+
+    def write_lock_reason(self) -> str:
+        return self._write_lock_reason
+
+    def _ensure_writable(self):
+        if self._write_locked:
+            raise RuntimeError(self._write_lock_reason or "Writes are locked until restart.")
 
     def _normalize_storage_defaults(self):
         """Fill app-storage keys when loading legacy configs."""
@@ -191,19 +181,7 @@ class Config:
             self._data["monitor_fields"] = merged_fields
 
     def _auto_detect_if_needed(self):
-        """
-        自动检测路径（仅对空值填充）。
-
-        设计意图：
-          - 首次运行或重置设置后，用户通常不知道 Codex DB 在哪里；
-            自动检测能「开箱即用」。
-          - 仅填充空值：不覆盖用户已手动设置的路径，尊重用户选择。
-
-        检测顺序：
-          1. detect_codex_db()：在 ~/.codex/ 和 %LOCALAPPDATA% 下搜索 state_*.sqlite。
-          2. detect_sessions_dir() / detect_archived_dir()：在 ~/.codex/ 下查找。
-          3. detect_codex_plus_plus()：在 %LOCALAPPDATA%/Programs/Codex++/ 和注册表查找。
-        """
+        """Auto-fill Codex paths only when the user has not configured them."""
         changed = False
 
         if not self._data.get("db_path"):

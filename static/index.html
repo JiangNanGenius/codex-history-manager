@@ -494,12 +494,22 @@
                             <option value="dark">Dark</option>
                             <option value="midnight">Midnight</option>
                             <option value="graphite">Graphite</option>
+                            <option value="cobalt">Cobalt</option>
+                            <option value="ember">Ember</option>
                             <option value="custom">Custom</option>
                         </select>
                     </div>
                     <div>
                         <label class="text-xs text-dark-400">Custom Accent</label>
                         <input id="setting-theme-accent" type="color" class="input mt-1 w-full h-10">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Custom Background</label>
+                        <input id="setting-theme-background" type="color" class="input mt-1 w-full h-10">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">Custom Surface</label>
+                        <input id="setting-theme-surface" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="pageSize">Page Size</label>
@@ -536,6 +546,11 @@
                         <span data-i18n="darkMode">Dark Mode</span>
                     </label>
                 </div>
+                <div class="mt-4 flex flex-wrap gap-2">
+                    <button onclick="exportTheme()" class="btn btn-secondary text-xs">Export Theme</button>
+                    <button onclick="document.getElementById('theme-import-file').click()" class="btn btn-secondary text-xs">Import Theme</button>
+                    <input id="theme-import-file" type="file" accept="application/json,.json" class="hidden" onchange="importThemeFromFile(this)">
+                </div>
                 <div class="mt-4">
                     <div class="text-xs text-dark-400 mb-2">Floating Monitor Fields</div>
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
@@ -546,6 +561,41 @@
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-context" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Context Window</label>
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-updated" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">Updated Time</label>
                     </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <h3 class="card-title">Storage & Cleanup</h3>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="loadStorageInfo()" class="btn btn-secondary text-xs">Refresh</button>
+                        <button onclick="exportSettings()" class="btn btn-secondary text-xs">Export Config</button>
+                        <button onclick="document.getElementById('settings-import-file').click()" class="btn btn-secondary text-xs">Import Config</button>
+                        <input id="settings-import-file" type="file" accept="application/json,.json" class="hidden" onchange="importSettingsFromFile(this)">
+                    </div>
+                </div>
+                <div id="storage-locations" class="mt-4 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-2"></div>
+                <div class="mt-5">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <h4 class="text-sm font-semibold text-dark-200">Local Cleanup</h4>
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="loadCleanupPreview()" class="btn btn-secondary text-xs">Preview</button>
+                            <button onclick="executeCleanup()" class="btn btn-warning text-xs">Clean Selected</button>
+                        </div>
+                    </div>
+                    <div id="cleanup-targets" class="mt-3 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-1"></div>
+                    <div id="cleanup-result" class="mt-3"></div>
+                </div>
+                <div class="mt-5 border-t border-dark-800 pt-5">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <h4 class="text-sm font-semibold text-amber-200">Uninstall Cleanup</h4>
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="loadUninstallPreview()" class="btn btn-secondary text-xs">Preview</button>
+                            <button onclick="executeUninstallCleanup()" class="btn btn-danger text-xs">Clean & Lock Writes</button>
+                        </div>
+                    </div>
+                    <div id="uninstall-write-lock-state" class="mt-3"></div>
+                    <div id="uninstall-cleanup-targets" class="mt-3 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-1"></div>
+                    <div id="uninstall-cleanup-result" class="mt-3"></div>
                 </div>
             </div>
             <div class="flex gap-3">

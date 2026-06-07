@@ -54,7 +54,10 @@ from proxy_server import LocalProxyServer
 from diagnostics import DiagnosticsCollector
 from move_repair import MoveRepairManager
 from guardrails import codex_mutation_error_payload, has_codex_mutation_confirmation
-from app_paths import LEGACY_CONFIG_FILE, app_data_dir, ensure_app_dirs, is_within
+from app_paths import LEGACY_APP_DIR, LEGACY_CONFIG_FILE, app_data_dir, ensure_app_dirs, is_within
+
+
+UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
 
 
 def create_app() -> Flask:
@@ -103,6 +106,21 @@ def create_app() -> Flask:
         if has_codex_mutation_confirmation(body):
             return None
         return jsonify(codex_mutation_error_payload(action)), 409
+
+    @app.before_request
+    def _block_writes_after_uninstall_cleanup():
+        """After uninstall cleanup, keep the current process read-only."""
+        if request.method in {"GET", "HEAD", "OPTIONS"}:
+            return None
+        if request.path == "/api/uninstall-cleanup/execute":
+            return None
+        if config.is_write_locked():
+            return jsonify({
+                "error": "Local writes are locked until restart.",
+                "write_locked": True,
+                "reason": config.write_lock_reason(),
+            }), 423
+        return None
 
     # 启动自动备份
     if config.get("auto_backup"):
@@ -616,6 +634,60 @@ def create_app() -> Flask:
             return jsonify({"error": str(e)}), 500
 
     # ─────────────── Provider Registry API ───────────────
+
+    # ---------- Local uninstall cleanup API ----------
+
+    @app.route("/api/uninstall-cleanup/status")
+    def uninstall_cleanup_status():
+        """Return current uninstall cleanup write-lock state."""
+        return jsonify({
+            "write_locked": config.is_write_locked(),
+            "reason": config.write_lock_reason(),
+            "required_confirmation": UNINSTALL_CLEANUP_CONFIRMATION,
+        })
+
+    @app.route("/api/uninstall-cleanup/preview")
+    def uninstall_cleanup_preview():
+        """Preview app-owned files that uninstall cleanup can remove."""
+        try:
+            return jsonify({
+                "targets": _uninstall_cleanup_targets(config),
+                "write_locked": config.is_write_locked(),
+                "required_confirmation": UNINSTALL_CLEANUP_CONFIRMATION,
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/uninstall-cleanup/execute", methods=["POST"])
+    def uninstall_cleanup_execute():
+        """Remove app-owned local data and lock writes until process restart."""
+        try:
+            body = request.get_json(silent=True) or {}
+            if body.get("confirmation") != UNINSTALL_CLEANUP_CONFIRMATION:
+                return jsonify({
+                    "error": "Uninstall cleanup confirmation required.",
+                    "required_confirmation": UNINSTALL_CLEANUP_CONFIRMATION,
+                }), 409
+
+            reason = "Uninstall cleanup completed. Restart the app to enable writes again."
+            config.lock_writes(reason)
+
+            results = []
+            for target in _uninstall_cleanup_targets(config):
+                if not target.get("exists"):
+                    results.append({"id": target["id"], "success": True, "skipped": True, "path": target["path"]})
+                    continue
+                results.append(_cleanup_target(target))
+            return jsonify({
+                "success": all(item.get("success") for item in results),
+                "write_locked": True,
+                "reason": reason,
+                "results": results,
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ---------- Provider Registry API ----------
 
     @app.route("/api/providers")
     def list_providers():
@@ -1429,6 +1501,65 @@ def _cleanup_targets(config: Config) -> list[Dict]:
             "kind": "directory" if resolved.is_dir() else "file",
         })
     return targets
+
+
+def _uninstall_cleanup_targets(config: Config) -> list[Dict]:
+    """Build app-owned uninstall cleanup targets.
+
+    This intentionally excludes ~/.codex auth/config and any user-custom path
+    outside the app-owned Documents folder.
+    """
+    root = app_data_dir()
+    targets = [
+        _cleanup_target_descriptor(
+            "app_data_dir",
+            root,
+            safe=True,
+            description="Documents app data directory",
+            effect="Removes settings, provider registry, exports, diagnostics, temp files, and app backups.",
+        ),
+        _cleanup_target_descriptor(
+            "legacy_config_file",
+            LEGACY_CONFIG_FILE,
+            safe=LEGACY_CONFIG_FILE == Path.home() / ".codex_gui_config.json",
+            description="Legacy settings JSON",
+            effect="Removes the old root-level settings file if it still exists.",
+        ),
+        _cleanup_target_descriptor(
+            "legacy_app_dir",
+            LEGACY_APP_DIR,
+            safe=LEGACY_APP_DIR == Path.home() / ".codex_enhance_manager",
+            description="Legacy app data directory",
+            effect="Removes the old provider/cache directory if it still exists.",
+        ),
+    ]
+
+    provider_store_raw = str(config.get("provider_store_path", "") or "").strip()
+    provider_store = Path(provider_store_raw).expanduser() if provider_store_raw else None
+    if provider_store and provider_store.exists() and not is_within(provider_store, root) and provider_store != LEGACY_APP_DIR / "providers.json":
+        targets.append(_cleanup_target_descriptor(
+            "external_provider_store",
+            provider_store,
+            safe=False,
+            description="Custom provider registry outside app data",
+            effect="Not removed automatically; export or remove it manually if desired.",
+        ))
+    return targets
+
+
+def _cleanup_target_descriptor(target_id: str, path: Path, safe: bool, description: str, effect: str) -> Dict:
+    resolved = path.expanduser()
+    exists = resolved.exists()
+    return {
+        "id": target_id,
+        "path": str(resolved),
+        "exists": exists,
+        "safe": safe,
+        "size_bytes": _path_size(resolved) if exists and safe else 0,
+        "kind": "directory" if resolved.is_dir() else "file",
+        "description": description,
+        "effect": effect,
+    }
 
 
 def _cleanup_target(target: Dict) -> Dict:

@@ -1,7 +1,15 @@
 /**
- * settings.js - 设置模块
- * 加载、保存、重置、自动检测
+ * settings.js - Settings, storage, cleanup, and theme controls.
  */
+
+const THEME_PRESETS = {
+    dark: { accent: '#3b82f6', background: '#0f172a', surface: '#1e293b' },
+    midnight: { accent: '#38bdf8', background: '#020617', surface: '#111827' },
+    graphite: { accent: '#22c55e', background: '#111827', surface: '#27272a' },
+    cobalt: { accent: '#06b6d4', background: '#0b1220', surface: '#172033' },
+    ember: { accent: '#f97316', background: '#18181b', surface: '#292524' },
+    custom: { accent: '#3b82f6', background: '#0f172a', surface: '#1e293b' },
+};
 
 async function loadSettings() {
     try {
@@ -10,7 +18,12 @@ async function loadSettings() {
         applyThemeSettings(data);
         setStatus(t('settingsLoaded'));
 
-        // Auto-detect paths if key paths are missing
+        await Promise.allSettled([
+            loadStorageInfo(),
+            loadCleanupPreview(),
+            loadUninstallPreview(),
+        ]);
+
         const hasDbPath = data.db_path && String(data.db_path).trim().length > 0;
         const hasSessionsDir = data.sessions_dir && String(data.sessions_dir).trim().length > 0;
         if (!hasDbPath || !hasSessionsDir) {
@@ -44,27 +57,25 @@ function populateSettingsForm(data) {
 
     for (const [elId, key] of Object.entries(fields)) {
         const el = document.getElementById(elId);
-        if (el && data[key] !== undefined) {
-            el.value = data[key];
-        }
+        if (el && data[key] !== undefined) el.value = data[key];
     }
 
-    // Checkboxes
     const checkboxFields = {
         'setting-auto-backup': 'auto_backup',
         'setting-use-codex-pp': 'use_codex_plus_plus',
         'setting-dark-mode': 'dark_mode',
     };
-
     for (const [elId, key] of Object.entries(checkboxFields)) {
         const el = document.getElementById(elId);
-        if (el && data[key] !== undefined) {
-            el.checked = Boolean(data[key]);
-        }
+        if (el && data[key] !== undefined) el.checked = Boolean(data[key]);
     }
 
     const themeAccent = document.getElementById('setting-theme-accent');
     if (themeAccent) themeAccent.value = (data.theme_custom && data.theme_custom.accent) || '#3b82f6';
+    const themeBackground = document.getElementById('setting-theme-background');
+    if (themeBackground) themeBackground.value = (data.theme_custom && data.theme_custom.background) || '#0f172a';
+    const themeSurface = document.getElementById('setting-theme-surface');
+    if (themeSurface) themeSurface.value = (data.theme_custom && data.theme_custom.surface) || '#1e293b';
 
     const monitorFields = data.monitor_fields || {};
     const monitorMap = {
@@ -81,11 +92,21 @@ function populateSettingsForm(data) {
     }
 }
 
+function resolveTheme(data) {
+    const presetName = (data && data.theme_preset) || 'dark';
+    const preset = THEME_PRESETS[presetName] || THEME_PRESETS.dark;
+    if (presetName !== 'custom') return preset;
+    return { ...preset, ...((data && data.theme_custom) || {}) };
+}
+
 function applyThemeSettings(data) {
-    const custom = (data && data.theme_custom) || {};
-    const accent = custom.accent || '#3b82f6';
-    document.documentElement.style.setProperty('--accent', accent);
-    document.documentElement.style.setProperty('--accent-glow', hexToRgba(accent, 0.25));
+    const palette = resolveTheme(data || {});
+    document.documentElement.style.setProperty('--accent', palette.accent);
+    document.documentElement.style.setProperty('--accent-glow', hexToRgba(palette.accent, 0.25));
+    document.documentElement.style.setProperty('--bg-base', palette.background);
+    document.documentElement.style.setProperty('--bg-elevated', palette.surface);
+    document.documentElement.style.setProperty('--bg-surface', hexToRgba(palette.surface, 0.72));
+    document.documentElement.style.setProperty('--border-hover', hexToRgba(palette.accent, 0.35));
 }
 
 function hexToRgba(hex, alpha) {
@@ -114,6 +135,8 @@ async function saveSettings() {
         theme_preset: document.getElementById('setting-theme-preset')?.value || 'dark',
         theme_custom: {
             accent: document.getElementById('setting-theme-accent')?.value || '#3b82f6',
+            background: document.getElementById('setting-theme-background')?.value || '#0f172a',
+            surface: document.getElementById('setting-theme-surface')?.value || '#1e293b',
         },
         monitor_fields: {
             tokens: document.getElementById('monitor-field-tokens')?.checked !== false,
@@ -123,22 +146,21 @@ async function saveSettings() {
             context_window: document.getElementById('monitor-field-context')?.checked !== false,
             updated_at: document.getElementById('monitor-field-updated')?.checked !== false,
         },
-        page_size: parseInt(document.getElementById('setting-page-size')?.value) || 50,
-        backup_interval_hours: parseInt(document.getElementById('setting-backup-interval')?.value) || 6,
-        max_backups: parseInt(document.getElementById('setting-max-backups')?.value) || 20,
-        large_file_threshold_mb: parseInt(document.getElementById('setting-large-threshold')?.value) || 500,
-        max_lines_large_file: parseInt(document.getElementById('setting-max-lines')?.value) || 2000,
+        page_size: parseInt(document.getElementById('setting-page-size')?.value, 10) || 50,
+        backup_interval_hours: parseInt(document.getElementById('setting-backup-interval')?.value, 10) || 6,
+        max_backups: parseInt(document.getElementById('setting-max-backups')?.value, 10) || 20,
+        large_file_threshold_mb: parseInt(document.getElementById('setting-large-threshold')?.value, 10) || 500,
+        max_lines_large_file: parseInt(document.getElementById('setting-max-lines')?.value, 10) || 2000,
         auto_backup: document.getElementById('setting-auto-backup')?.checked || false,
         use_codex_plus_plus: document.getElementById('setting-use-codex-pp')?.checked || false,
         dark_mode: document.getElementById('setting-dark-mode')?.checked ?? true,
     };
 
     try {
-        const result = await api('/api/settings', {
-            method: 'POST',
-            body: JSON.stringify(data),
-        });
+        const result = await api('/api/settings', { method: 'POST', body: JSON.stringify(data) });
         if (result.success) {
+            applyThemeSettings(data);
+            await loadStorageInfo();
             showToast(t('settingsSaved') + (result.warning ? ' ' + t('warning') + ': ' + result.warning : ''), 'success');
         } else {
             showToast(t('saveFailed') + (result.error || t('unknownError')), 'error');
@@ -150,7 +172,6 @@ async function saveSettings() {
 
 async function resetSettings() {
     if (!confirm(t('confirmResetSettings'))) return;
-
     try {
         const result = await api('/api/settings/reset', { method: 'POST' });
         if (result.success) {
@@ -164,6 +185,269 @@ async function resetSettings() {
     }
 }
 
+async function exportSettings() {
+    try {
+        const data = await api('/api/settings/export');
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `codex-enhance-settings-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        showToast('Settings exported', 'success');
+    } catch (err) {
+        showToast('Export failed: ' + err.message, 'error');
+    }
+}
+
+async function importSettingsFromFile(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+        const text = await file.text();
+        const payload = JSON.parse(text);
+        const result = await api('/api/settings/import', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        if (!result.success) throw new Error(result.error || 'Import failed');
+        showToast('Settings imported', 'success');
+        await loadSettings();
+    } catch (err) {
+        showToast('Import failed: ' + err.message, 'error');
+    } finally {
+        input.value = '';
+    }
+}
+
+async function exportTheme() {
+    try {
+        const settings = await api('/api/settings');
+        const payload = {
+            schema: 'codex_enhance_manager.theme.v1',
+            exported_at: new Date().toISOString(),
+            theme_preset: settings.theme_preset || 'dark',
+            theme_custom: settings.theme_custom || {},
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `codex-enhance-theme-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        showToast('Theme exported', 'success');
+    } catch (err) {
+        showToast('Theme export failed: ' + err.message, 'error');
+    }
+}
+
+async function importThemeFromFile(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+        const payload = JSON.parse(await file.text());
+        const themeCustom = payload.theme_custom || payload.custom || payload;
+        const hasCustomColors = Boolean(themeCustom.accent || themeCustom.background || themeCustom.surface);
+        const nextTheme = {
+            theme_preset: hasCustomColors ? 'custom' : (payload.theme_preset || 'custom'),
+            theme_custom: {
+                accent: sanitizeColor(themeCustom.accent, '#3b82f6'),
+                background: sanitizeColor(themeCustom.background, '#0f172a'),
+                surface: sanitizeColor(themeCustom.surface, '#1e293b'),
+            },
+        };
+        const result = await api('/api/settings', {
+            method: 'POST',
+            body: JSON.stringify(nextTheme),
+        });
+        if (!result.success) throw new Error(result.error || 'Theme import failed');
+        populateSettingsForm(await api('/api/settings'));
+        applyThemeSettings(nextTheme);
+        showToast('Theme imported', 'success');
+    } catch (err) {
+        showToast('Theme import failed: ' + err.message, 'error');
+    } finally {
+        input.value = '';
+    }
+}
+
+function sanitizeColor(value, fallback) {
+    const color = String(value || '').trim();
+    return /^#[0-9a-fA-F]{6}$/.test(color) ? color : fallback;
+}
+
+async function loadStorageInfo() {
+    const container = document.getElementById('storage-locations');
+    if (!container) return;
+    try {
+        const data = await api('/api/settings/storage');
+        const rows = [
+            ['App Data', data.app_data_dir],
+            ['Config', data.config_file],
+            ['Provider Registry', data.provider_store_path],
+            ['Backups', data.backup_dir],
+            ['Temp', data.temp_dir],
+            ['Diagnostics', data.diagnostics_dir],
+            ['Exports', data.exports_dir],
+            ['Legacy Config', data.legacy_config_exists ? data.legacy_config_file : 'not present'],
+        ];
+        container.innerHTML = rows.map(([label, value]) => `
+            <div class="flex gap-3 py-2 border-b border-dark-800 last:border-b-0">
+                <div class="w-36 shrink-0 text-xs text-dark-400">${escapeHtml(label)}</div>
+                <div class="min-w-0 flex-1 font-mono text-xs text-dark-200 break-all">${escapeHtml(value || '')}</div>
+            </div>
+        `).join('');
+    } catch (err) {
+        container.innerHTML = `<div class="text-sm text-red-400">${escapeHtml(err.message)}</div>`;
+    }
+}
+
+async function loadCleanupPreview() {
+    const container = document.getElementById('cleanup-targets');
+    if (!container) return;
+    try {
+        const data = await api('/api/cleanup/preview');
+        renderCleanupTargets(container, data.targets || [], { selectable: true, prefix: 'cleanup-target' });
+    } catch (err) {
+        container.innerHTML = `<div class="text-sm text-red-400">${escapeHtml(err.message)}</div>`;
+    }
+}
+
+async function executeCleanup() {
+    const selected = Array.from(document.querySelectorAll('[data-cleanup-target]:checked')).map(el => el.value);
+    const confirmation = prompt('Type CLEAN_LOCAL_CACHE to clean selected local cache targets.');
+    if (confirmation !== 'CLEAN_LOCAL_CACHE') {
+        showToast('Cleanup cancelled', 'warning');
+        return;
+    }
+    try {
+        const result = await api('/api/cleanup/execute', {
+            method: 'POST',
+            body: JSON.stringify({ confirmation, targets: selected }),
+        });
+        renderCleanupResults('cleanup-result', result.results || []);
+        await loadCleanupPreview();
+        showToast('Cleanup completed', 'success');
+    } catch (err) {
+        renderInlineError('cleanup-result', err.message);
+    }
+}
+
+async function loadUninstallPreview() {
+    const container = document.getElementById('uninstall-cleanup-targets');
+    if (!container) return;
+    try {
+        const data = await api('/api/uninstall-cleanup/preview');
+        renderCleanupTargets(container, data.targets || [], { selectable: false, prefix: 'uninstall-target' });
+        renderWriteLockState(data.write_locked, data.reason || '');
+    } catch (err) {
+        container.innerHTML = `<div class="text-sm text-red-400">${escapeHtml(err.message)}</div>`;
+    }
+}
+
+async function executeUninstallCleanup() {
+    const confirmation = prompt('Type UNINSTALL_CLEANUP to remove app-owned local data and lock writes until restart.');
+    if (confirmation !== 'UNINSTALL_CLEANUP') {
+        showToast('Uninstall cleanup cancelled', 'warning');
+        return;
+    }
+    try {
+        const result = await api('/api/uninstall-cleanup/execute', {
+            method: 'POST',
+            body: JSON.stringify({ confirmation }),
+        });
+        renderCleanupResults('uninstall-cleanup-result', result.results || []);
+        renderWriteLockState(true, result.reason || '');
+        showToast('Uninstall cleanup completed; writes locked until restart.', 'success', 5000);
+    } catch (err) {
+        renderInlineError('uninstall-cleanup-result', err.message);
+    }
+}
+
+function renderCleanupTargets(container, targets, options = {}) {
+    const selectable = options.selectable !== false;
+    const prefix = options.prefix || 'target';
+    if (!targets.length) {
+        container.innerHTML = '<div class="text-sm text-dark-500">No targets.</div>';
+        return;
+    }
+    container.innerHTML = targets.map(target => {
+        const safeClass = target.safe ? 'text-emerald-400' : 'text-amber-400';
+        const checkbox = selectable && target.safe ? `
+            <input data-cleanup-target type="checkbox" value="${escapeHtml(target.id)}" checked
+                class="mt-1 w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+        ` : '<span class="mt-1 w-4 h-4"></span>';
+        return `
+            <label for="${prefix}-${escapeHtml(target.id)}" class="flex gap-3 py-3 border-b border-dark-800 last:border-b-0">
+                ${checkbox}
+                <div class="min-w-0 flex-1">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="text-sm font-medium text-dark-100">${escapeHtml(target.description || target.id)}</span>
+                        <span class="text-xs ${safeClass}">${target.safe ? 'allowlisted' : 'manual'}</span>
+                        <span class="text-xs text-dark-500">${target.exists ? formatBytes(target.size_bytes || 0) : 'not present'}</span>
+                    </div>
+                    <div class="mt-1 font-mono text-xs text-dark-400 break-all">${escapeHtml(target.path || '')}</div>
+                    ${target.effect ? `<div class="mt-1 text-xs text-dark-500">${escapeHtml(target.effect)}</div>` : ''}
+                </div>
+            </label>
+        `;
+    }).join('');
+}
+
+function renderCleanupResults(containerId, results) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = results.map(result => {
+        const status = result.success ? (result.skipped ? 'Skipped' : 'Removed') : 'Failed';
+        const cls = result.success ? 'text-emerald-400' : 'text-red-400';
+        return `
+            <div class="flex gap-2 py-1 text-xs">
+                <span class="${cls} w-16 shrink-0">${status}</span>
+                <span class="font-mono text-dark-300 break-all">${escapeHtml(result.path || result.id || '')}</span>
+                ${result.error ? `<span class="text-red-400">${escapeHtml(result.error)}</span>` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+function renderInlineError(containerId, message) {
+    const container = document.getElementById(containerId);
+    if (container) container.innerHTML = `<div class="text-sm text-red-400">${escapeHtml(message)}</div>`;
+}
+
+function renderWriteLockState(locked, reason) {
+    const strip = document.getElementById('uninstall-write-lock-state');
+    if (!strip) return;
+    strip.className = locked
+        ? 'mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200'
+        : 'mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200';
+    strip.textContent = locked ? (reason || 'Writes are locked until restart.') : 'Writes are enabled.';
+}
+
+function formatBytes(bytes) {
+    const n = Number(bytes || 0);
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[ch]));
+}
+
 async function runAutoDetect() {
     try {
         setStatus(t('detectingPaths'));
@@ -171,7 +455,6 @@ async function runAutoDetect() {
         renderDetectResults(data);
         showToast(t('autoDetectComplete'), 'success');
 
-        // Also update settings form with detected values
         if (data.db_path) document.getElementById('setting-db-path').value = data.db_path;
         if (data.sessions_dir) document.getElementById('setting-sessions-dir').value = data.sessions_dir;
         if (data.archived_dir) document.getElementById('setting-archived-dir').value = data.archived_dir;
@@ -189,33 +472,31 @@ function renderDetectResults(data) {
     if (!container) return;
 
     const items = [
-        { label: t('dbPath'), value: data.db_path, icon: '🗄️' },
-        { label: t('sessionsDir'), value: data.sessions_dir, icon: '📂' },
-        { label: t('archivedDir'), value: data.archived_dir, icon: '📁' },
-        { label: t('codexCliPath'), value: data.codex_cli_path, icon: '⚡' },
-        { label: t('codexPPPath'), value: data.codex_plus_plus_path, icon: '🚀' },
+        { label: t('dbPath'), value: data.db_path },
+        { label: t('sessionsDir'), value: data.sessions_dir },
+        { label: t('archivedDir'), value: data.archived_dir },
+        { label: t('codexCliPath'), value: data.codex_cli_path },
+        { label: t('codexPPPath'), value: data.codex_plus_plus_path },
     ];
 
     if (data.codex_config) {
         items.push(
-            { label: 'Config Provider', value: data.codex_config.model_provider, icon: '🔧' },
-            { label: 'Config Model', value: data.codex_config.model, icon: '🤖' },
+            { label: 'Config Provider', value: data.codex_config.model_provider },
+            { label: 'Config Model', value: data.codex_config.model },
         );
     }
 
     container.innerHTML = items.map(item => {
-        const found = item.value ? true : false;
+        const found = Boolean(item.value);
         const statusClass = found ? 'text-emerald-400' : 'text-dark-500';
-        const statusText = found ? '✓ ' + t('success') : '✗ ' + t('error');
-
+        const statusText = found ? t('success') : t('error');
         return `
             <div class="flex items-center gap-3 py-2 px-3 rounded-lg bg-dark-900/50">
-                <span class="text-lg">${item.icon}</span>
                 <div class="flex-1 min-w-0">
-                    <div class="text-xs text-dark-400">${item.label}</div>
-                    <div class="text-sm font-mono text-dark-200 truncate">${item.value || '(empty)'}</div>
+                    <div class="text-xs text-dark-400">${escapeHtml(item.label)}</div>
+                    <div class="text-sm font-mono text-dark-200 truncate">${escapeHtml(item.value || '(empty)')}</div>
                 </div>
-                <span class="text-xs ${statusClass}">${statusText}</span>
+                <span class="text-xs ${statusClass}">${escapeHtml(statusText)}</span>
             </div>
         `;
     }).join('');
@@ -225,4 +506,22 @@ document.addEventListener('DOMContentLoaded', () => {
     api('/api/settings')
         .then(applyThemeSettings)
         .catch(() => {});
+    ['setting-theme-preset', 'setting-theme-accent', 'setting-theme-background', 'setting-theme-surface']
+        .forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('input', previewThemeFromForm);
+            el.addEventListener('change', previewThemeFromForm);
+        });
 });
+
+function previewThemeFromForm() {
+    applyThemeSettings({
+        theme_preset: document.getElementById('setting-theme-preset')?.value || 'dark',
+        theme_custom: {
+            accent: document.getElementById('setting-theme-accent')?.value || '#3b82f6',
+            background: document.getElementById('setting-theme-background')?.value || '#0f172a',
+            surface: document.getElementById('setting-theme-surface')?.value || '#1e293b',
+        },
+    });
+}
