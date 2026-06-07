@@ -185,6 +185,7 @@ Codex 会按 `model_provider` 过滤会话列表。在官方 OpenAI 登录态和
 | `model_catalog.py` | Unified Model Catalog 生成与预览。 |
 | `model_rotation.py`, `amr_registry.py` | Adaptive Model Rotation 引擎与持久化。 |
 | `proxy_server.py` | 本地 OpenAI-compatible proxy server。 |
+| `approval_broker.py` | Auto Approval prompt builder、严格决策解析和 metadata-only 审批记录。 |
 | `request_logs.py` | metadata-only request log、保留策略、汇总和成本快照。 |
 | `responses_adapter.py` | Responses <-> Chat 转换和 SSE normalization。 |
 | `anthropic_adapter.py` | Anthropic Messages adapter foundation。 |
@@ -202,6 +203,7 @@ Codex 会按 `model_provider` 过滤会话列表。在官方 OpenAI 登录态和
 | --- | --- |
 | 协议复核 | 持续对照 official Codex、国产 Responses、Anthropic、tools、SSE、compact 和媒体 item 行为。 |
 | 媒体适配 | 在 payload、polling、cancel 和 response 格式复核后接入阿里百炼与火山方舟图片/视频适配。 |
+| 审批 broker 接线 | 把 Auto Approval 决策接入已源码复核的 Codex app-server JSON-RPC response shape，真实写入/执行测试仍由用户手动验证。 |
 | 审批与沙箱修复 | 在已接入的源码复核审计基础上，等用户手动验证写入后再扩展为修复预设。 |
 | 开机启动集成 | 用打包后的 EXE 手动验证 Startup folder 与 Task Scheduler 最高权限流程，再继续优化 UAC/task 错误体验。 |
 | 成本仪表盘 | 补全原生/展示币种对照、过期汇率提醒、provider-reported vs estimated cost 和媒体价格层级。 |

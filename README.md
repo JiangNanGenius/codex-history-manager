@@ -185,6 +185,7 @@ After sync, sessions remain visible across account/provider switches.
 | `model_catalog.py` | Unified Model Catalog generation and preview. |
 | `model_rotation.py`, `amr_registry.py` | Adaptive Model Rotation engine and persistence. |
 | `proxy_server.py` | Local OpenAI-compatible proxy server. |
+| `approval_broker.py` | Auto Approval prompt builder, strict decision parser, and metadata-only approval records. |
 | `request_logs.py` | Metadata-only proxy request logs, retention, summaries, and cost snapshots. |
 | `responses_adapter.py` | Responses <-> Chat conversion and SSE normalization. |
 | `anthropic_adapter.py` | Anthropic Messages adapter foundation. |
@@ -202,6 +203,7 @@ After sync, sessions remain visible across account/provider switches.
 | --- | --- |
 | Protocol verification | Continue source/doc comparison for official Codex, domestic Responses, Anthropic, tools, SSE, compacting, and media item behavior. |
 | Media adapters | Add real Alibaba Bailian and Volcengine Ark image/video adapters after payload, polling, cancel, and response formats are verified. |
+| Approval broker wiring | Wire Auto Approval decisions into source-verified Codex app-server JSON-RPC response shapes, then keep real mutation testing user-manual. |
 | Approval and sandbox repair | Expand the source-verified approval/sandbox audit into corruption repair presets once user-manual write testing is complete. |
 | Startup integration | Manually verify Startup folder and Task Scheduler highest-privilege flows from the packaged EXE, then polish UX around UAC/task errors. |
 | Cost dashboard | Add deeper native/display currency comparison, stale FX warnings, provider-reported-vs-estimated cost, and media pricing tiers. |
