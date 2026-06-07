@@ -1793,6 +1793,25 @@ def create_app() -> Flask:
             diagnostics_collector.record_error("api.diagnostics.export", str(e))
             return jsonify({"error": str(e)}), 500
 
+    def _provider_connectivity_result(provider_id: str) -> Dict[str, Any]:
+        _refresh_provider_registry_path()
+        return diagnostics_collector.check_provider_connectivity(provider_id)
+
+    @app.route("/api/providers/<provider_id>/health-check", methods=["POST"])
+    def provider_health_check(provider_id):
+        """
+        Provider-scoped network health check.
+
+        This is a section-local test for the Providers page. It performs the
+        same low-risk HEAD probe as diagnostics, but returns 200 even when the
+        provider is unreachable so the UI can render the structured result.
+        """
+        try:
+            return jsonify(_provider_connectivity_result(provider_id))
+        except Exception as e:
+            diagnostics_collector.record_error("api.providers.health_check", str(e))
+            return jsonify({"success": False, "reachable": False, "provider_id": provider_id, "error": str(e)}), 500
+
     @app.route("/api/diagnostics/test-provider/<provider_id>", methods=["POST"])
     def test_provider_connectivity(provider_id):
         """
@@ -1803,8 +1822,7 @@ def create_app() -> Flask:
             本端点做真实网络探测（HEAD 请求）。
         """
         try:
-            _refresh_provider_registry_path()
-            result = diagnostics_collector.check_provider_connectivity(provider_id)
+            result = _provider_connectivity_result(provider_id)
             status_code = 200 if result.get("success") else 503
             return jsonify(result), status_code
         except Exception as e:

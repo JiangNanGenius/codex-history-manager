@@ -42,6 +42,7 @@ let providerState = {
     proxyStatus: null,
     responsesProbePreview: null,
     quotaPreview: null,
+    healthPreview: null,
 };
 
 /**
@@ -526,6 +527,7 @@ function renderProviderEditor(provider) {
             <div class="flex flex-wrap gap-2 mt-5">
                 <button onclick="saveSelectedProvider()" class="btn btn-primary">Save Local Provider</button>
                 <button onclick="testSelectedProvider()" class="btn btn-secondary">Test This Section</button>
+                <button onclick="checkProviderHealth()" class="btn btn-secondary">Check Network</button>
                 <button onclick="previewResponsesProbe()" class="btn btn-secondary">Responses Probe Preview</button>
                 <button onclick="refreshProviderQuota()" class="btn btn-secondary">Refresh Quota</button>
                 <button onclick="previewProviderDraft()" class="btn btn-ghost">Preview Draft</button>
@@ -548,6 +550,13 @@ function renderProviderEditor(provider) {
             <h3 class="card-title">Quota Preview</h3>
             <p class="text-xs text-dark-400 mt-1">Manual provider-section test. Uses provider quota_check and returns redacted results.</p>
             <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.quotaPreview || {}, null, 2))}</pre>
+        </div>
+
+        <div id="provider-health-preview" class="card ${providerState.healthPreview ? '' : 'hidden'}">
+            <h3 class="card-title">Provider Health Check</h3>
+            <p class="text-xs text-dark-400 mt-1">Section-local network probe. Sends HEAD only and strips credential headers.</p>
+            ${renderProviderHealthResult(providerState.healthPreview)}
+            <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.healthPreview || {}, null, 2))}</pre>
         </div>
     `;
 }
@@ -574,6 +583,26 @@ function renderProviderStatusStrip(provider) {
             ${renderStatusPill('restart', status.needs_restart ? 'needs restart' : 'no restart', status.needs_restart ? 'amber' : 'emerald')}
             ${status.last_error ? renderStatusPill('error', 'has error', 'red') : ''}
         </div>
+    `;
+}
+
+function renderProviderHealthResult(result) {
+    if (!result) return '';
+    const reachable = Boolean(result.reachable);
+    const success = Boolean(result.success);
+    const tone = success ? 'emerald' : (reachable ? 'amber' : 'red');
+    const label = success ? 'reachable' : (reachable ? 'reachable with error' : 'unreachable');
+    const status = result.status_code ? `HTTP ${result.status_code}` : 'no status';
+    const target = result.url || (Array.isArray(result.urls_tested) ? result.urls_tested.join(', ') : '');
+    const message = result.note || result.error || 'No details returned.';
+    return `
+        <div class="enhance-status-strip mt-3">
+            ${renderStatusPill('network', label, tone)}
+            ${renderStatusPill('status', status, result.status_code ? 'dark' : 'amber')}
+            ${result.method ? renderStatusPill('method', result.method, 'dark') : ''}
+        </div>
+        <div class="text-xs text-dark-400 mt-2 break-all">${escapeHtml(target)}</div>
+        <div class="text-xs ${success ? 'text-emerald-300' : 'text-amber-200'} mt-2">${escapeHtml(message)}</div>
     `;
 }
 
@@ -876,6 +905,7 @@ async function importPreset(presetId) {
             body: JSON.stringify({ preset_id: presetId }),
         });
         providerState.selectedProviderId = result.provider.id;
+        providerState.healthPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
         showToast('Provider preset imported', 'success');
@@ -901,6 +931,7 @@ async function createBlankProvider() {
             }),
         });
         providerState.selectedProviderId = result.provider.id;
+        providerState.healthPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
         renderProvidersPage();
@@ -914,6 +945,7 @@ function selectProvider(providerId) {
     providerState.selectedProviderId = providerId;
     providerState.responsesProbePreview = null;
     providerState.quotaPreview = null;
+    providerState.healthPreview = null;
     renderProvidersPage();
 }
 
@@ -929,6 +961,7 @@ async function saveSelectedProvider() {
         });
         providerState.selectedProviderId = result.provider.id;
         providerState.quotaPreview = null;
+        providerState.healthPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
         renderProvidersPage();
@@ -950,6 +983,24 @@ async function testSelectedProvider() {
             showToast(result.message || 'Provider test passed', 'success');
         } else {
             showToast((result.errors || []).join('; ') || 'Provider test failed', 'error');
+        }
+    } catch (err) {
+        showProviderFormError(err.message);
+    }
+}
+
+async function checkProviderHealth() {
+    const provider = getSelectedProvider();
+    if (!provider) return;
+    try {
+        providerState.healthPreview = await api('/api/providers/' + encodeURIComponent(provider.id) + '/health-check', {
+            method: 'POST',
+        });
+        renderProvidersPage();
+        if (providerState.healthPreview && providerState.healthPreview.success) {
+            showToast('Provider network path is reachable', 'success');
+        } else {
+            showToast('Provider health check returned an issue', 'warning');
         }
     } catch (err) {
         showProviderFormError(err.message);
