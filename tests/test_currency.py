@@ -90,6 +90,29 @@ class CurrencyTest(unittest.TestCase):
         self.assertIn("not verified", result["error"])
         self.assertIn("https://apiforex.cn/docs.html", result["docs_url"])
 
+    def test_stale_cache_rate_is_used_as_explicit_fallback(self):
+        settings = {
+            "display_currency": "CNY",
+            "exchange_rate_source": "manual",
+            "exchange_rate_cache": {
+                "USD:CNY": {
+                    "rate": 7.05,
+                    "source": "apiforex",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "expires_at": "2026-01-02T00:00:00Z",
+                }
+            },
+        }
+
+        snapshot = build_rate_snapshot(settings, "USD", "CNY", now=datetime(2026, 6, 7, tzinfo=timezone.utc))
+
+        self.assertTrue(snapshot["success"])
+        self.assertEqual(snapshot["rate"], 7.05)
+        self.assertTrue(snapshot["is_stale"])
+        self.assertTrue(snapshot["fallback_used"])
+        self.assertEqual(snapshot["fallback_reason"], "stale_cache")
+        self.assertIn("stale", " ".join(snapshot["warnings"]).lower())
+
     def test_exchange_rate_status_summary_is_redaction_safe(self):
         settings = {
             "display_currency": "aud",

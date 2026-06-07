@@ -304,6 +304,8 @@ def _cache_rate(cache: Dict[str, Dict[str, Any]], from_currency: str, to_currenc
     snapshot["expires_at"] = entry.get("expires_at") or ""
     snapshot["is_stale"] = _is_stale(entry.get("expires_at"), now)
     if snapshot["is_stale"]:
+        snapshot["fallback_used"] = True
+        snapshot["fallback_reason"] = "stale_cache"
         snapshot["warnings"].append("Cached exchange rate is stale.")
     return snapshot
 
@@ -328,6 +330,8 @@ def _snapshot(
         "expires_at": expires.isoformat(timespec="seconds").replace("+00:00", "Z") if is_manual else "",
         "is_manual": bool(is_manual),
         "is_stale": False,
+        "fallback_used": False,
+        "fallback_reason": "",
         "warnings": [],
     }
 

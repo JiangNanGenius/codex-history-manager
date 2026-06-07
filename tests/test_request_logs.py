@@ -50,6 +50,54 @@ class RequestLogStoreTest(unittest.TestCase):
         self.assertTrue(entry["cost_estimate"]["fx_snapshot"]["success"])
         self.assertNotIn("sk-secret", json.dumps(entry))
 
+    def test_log_entry_preserves_historical_fx_snapshot(self):
+        provider = {
+            "id": "p1",
+            "short_alias": "openai",
+            "native_currency": "USD",
+            "pricing": {"input_per_million": 1.0},
+        }
+        first_entry = build_proxy_log_entry(
+            {
+                "provider": provider,
+                "endpoint": "responses",
+                "model": "openai/gpt-5",
+                "upstream_model": "gpt-5",
+            },
+            usage={"input_tokens": 1_000_000},
+            currency_settings={
+                "display_currency": "CNY",
+                "exchange_rate_manual_overrides": {"USD:CNY": 7.2},
+            },
+        )
+        later_entry = build_proxy_log_entry(
+            {
+                "provider": provider,
+                "endpoint": "responses",
+                "model": "openai/gpt-5",
+                "upstream_model": "gpt-5",
+            },
+            usage={"input_tokens": 1_000_000},
+            currency_settings={
+                "display_currency": "CNY",
+                "exchange_rate_manual_overrides": {"USD:CNY": 7.8},
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "proxy_requests.jsonl"
+            store = RequestLogStore(path, retention_days=30, max_mb=1)
+            store.append(first_entry)
+            store.append(later_entry)
+            entries = store.read_entries(limit=10)["entries"]
+
+        older = entries[1]
+        newer = entries[0]
+        self.assertEqual(older["fx_snapshot"]["rate"], 7.2)
+        self.assertEqual(newer["fx_snapshot"]["rate"], 7.8)
+        self.assertEqual(older["cost_estimate"]["total_display"], 7.2)
+        self.assertEqual(newer["cost_estimate"]["total_display"], 7.8)
+
     def test_store_summary_and_filters_are_metadata_only(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "proxy_requests.jsonl"
