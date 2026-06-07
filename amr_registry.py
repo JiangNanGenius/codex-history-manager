@@ -100,6 +100,26 @@ def normalize_candidate(data: Dict[str, Any]) -> Dict[str, Any]:
         "enabled": bool(raw.get("enabled", True)),
         "context_window": int(raw.get("context_window") or 0),
         "capabilities": normalize_capabilities(raw.get("capabilities")),
+        "health": normalize_candidate_health(raw.get("health") or raw.get("status")),
+    }
+
+
+def normalize_candidate_health(data: Any) -> Dict[str, Any]:
+    raw = data if isinstance(data, dict) else {}
+    explicit = raw.get("healthy")
+    if explicit is None and "success" in raw:
+        explicit = raw.get("success")
+    if explicit is None and "reachable" in raw:
+        explicit = raw.get("reachable")
+    last_success = raw.get("last_success")
+    if last_success is None and "success" in raw:
+        last_success = raw.get("success")
+    return {
+        "enabled": bool(raw.get("enabled", True)),
+        "healthy": None if explicit is None else bool(explicit),
+        "last_success": None if last_success is None else bool(last_success),
+        "last_tested": str(raw.get("last_tested") or raw.get("tested_at") or ""),
+        "last_error": str(raw.get("last_error") or raw.get("error") or ""),
     }
 
 
@@ -338,6 +358,7 @@ class AMRRegistry:
                     "enabled": True,
                     "context_window": m.get("context_window", 0),
                     "capabilities": normalize_capabilities(merged_caps),
+                    "health": normalize_candidate_health(p.get("status")),
                 })
 
         store = self._load_store()

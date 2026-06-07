@@ -81,6 +81,42 @@ class AdaptiveModelRotationTest(unittest.TestCase):
         self.assertTrue(decision["success"])
         self.assertEqual(decision["candidate_id"], "c2")
 
+    def test_health_aware_routing_skips_unhealthy_candidate(self):
+        groups = [
+            {
+                "id": "health-aware",
+                "candidates": [
+                    {"id": "c1", "provider_id": "openai", "model_id": "gpt-5", "priority": 1, "enabled": True, "context_window": 256000, "capabilities": {"text": True}, "health": {"last_error": "timeout"}},
+                    {"id": "c2", "provider_id": "qwen", "model_id": "qwen3", "priority": 2, "enabled": True, "context_window": 128000, "capabilities": {"text": True}, "health": {"healthy": True}},
+                ],
+            }
+        ]
+        amr = AdaptiveModelRotation(groups)
+        decision = amr.route("health-aware", required_capabilities={"text"})
+        self.assertTrue(decision["success"])
+        self.assertEqual(decision["candidate_id"], "c2")
+        self.assertFalse(decision["health_fallback_used"])
+        self.assertTrue(any("Skipped unhealthy candidates" in item for item in decision["explanation"]))
+        c1_status = next(item for item in decision["candidate_status"] if item["candidate_id"] == "c1")
+        self.assertFalse(c1_status["healthy"])
+
+    def test_all_unhealthy_candidates_soft_fallback_with_warning(self):
+        groups = [
+            {
+                "id": "all-unhealthy",
+                "candidates": [
+                    {"id": "c1", "provider_id": "openai", "model_id": "gpt-5", "priority": 1, "enabled": True, "context_window": 256000, "capabilities": {"text": True}, "health": {"healthy": False}},
+                    {"id": "c2", "provider_id": "qwen", "model_id": "qwen3", "priority": 2, "enabled": True, "context_window": 128000, "capabilities": {"text": True}, "health": {"last_success": False}},
+                ],
+            }
+        ]
+        amr = AdaptiveModelRotation(groups)
+        decision = amr.route("all-unhealthy", required_capabilities={"text"})
+        self.assertTrue(decision["success"])
+        self.assertEqual(decision["candidate_id"], "c1")
+        self.assertTrue(decision["health_fallback_used"])
+        self.assertTrue(any("marked unhealthy" in item for item in decision["explanation"]))
+
     def test_group_context_window_is_minimum(self):
         groups = [
             {

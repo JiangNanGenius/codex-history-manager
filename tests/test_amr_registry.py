@@ -201,6 +201,7 @@ class TestBuildFromProviders:
                     "enabled": True,
                     "catalog_visibility": "always_visible",
                     "capabilities": {"text": True, "vision": True},
+                    "status": {"last_tested": "2026-06-07T00:00:00Z", "last_error": ""},
                     "models": [
                         {"id": "gpt-4", "enabled": True, "context_window": 128000, "capabilities": {"tools": True}},
                         {"id": "gpt-3.5", "enabled": False, "context_window": 16000},  # 禁用模型应被忽略
@@ -211,6 +212,7 @@ class TestBuildFromProviders:
                     "enabled": True,
                     "catalog_visibility": "focused_only",
                     "capabilities": {"text": True, "vision": False},
+                    "status": {"last_tested": "2026-06-07T00:00:01Z", "last_error": "health timeout"},
                     "models": [
                         {"id": "claude-3", "enabled": True, "context_window": 200000},
                     ],
@@ -236,11 +238,13 @@ class TestBuildFromProviders:
         assert c1["capabilities"]["text"] is True
         assert c1["capabilities"]["vision"] is True
         assert c1["capabilities"]["tools"] is True  # model 级 capability 合并
+        assert c1["health"]["last_error"] == ""
 
         c2 = next(c for c in group["candidates"] if c["id"] == "anthropic/claude-3")
         assert c2["priority"] == 2  # 非 always_visible
         assert c2["context_window"] == 200000
         assert c2["capabilities"]["vision"] is False
+        assert c2["health"]["last_error"] == "health timeout"
 
     def test_build_from_providers_update_existing_default(self, tmp_path):
         """多次同步应更新同一个 default group，而非重复创建。"""

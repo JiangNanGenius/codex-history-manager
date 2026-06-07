@@ -56,9 +56,11 @@ class AdaptiveModelRotation:
              若无候选通过，返回失败（并附详细的能力缺失报告）。
           3. 上下文过滤：剔除 context_window < required_context 的候选。
              若无候选通过，返回当前最大可用窗口信息。
-          4. Cooldown 过滤：剔除仍处于冷却期的候选。
+          4. Health 过滤：优先剔除已有本地健康状态标记失败的候选。
+             若全部候选都不健康，则回退到原候选集并在 explanation 中标注风险。
+          5. Cooldown 过滤：剔除仍处于冷却期的候选。
              若全部 capable 候选都在冷却中，选择冷却时间最短者（带 priority 打破平局）。
-          5. 选择 available 列表中优先级最高者作为 winner。
+          6. 选择 available 列表中优先级最高者作为 winner。
 
         边界条件：
           - required_capabilities 默认为 {"text"}：保证无特殊需求时至少选文本模型。
@@ -111,6 +113,7 @@ class AdaptiveModelRotation:
                             "candidate_id": c.get("id"),
                             "capabilities": c.get("capabilities", {}),
                             "available": self._candidate_has_capabilities(c, required_capabilities),
+                            "healthy": self._candidate_is_healthy(c),
                         }
                         for c in candidates
                     ],
@@ -131,17 +134,30 @@ class AdaptiveModelRotation:
                     ],
                 }
 
+            # Prefer candidates with healthy local status. This is intentionally
+            # state-only: it does not perform network probes during routing.
+            healthy = [
+                c for c in context_capable
+                if self._candidate_is_healthy(c)
+            ]
+            health_fallback_used = False
+            if healthy:
+                route_pool = healthy
+            else:
+                route_pool = context_capable
+                health_fallback_used = True
+
             # Filter out cooldown candidates
             now = time.time()
             available = [
-                c for c in context_capable
+                c for c in route_pool
                 if now >= self._cooldowns.get(c.get("id", ""), 0)
             ]
             if not available:
                 # All capable candidates in cooldown; pick the one with shortest remaining cooldown,
                 # tie-break by priority so the highest-priority candidate wins.
                 available = sorted(
-                    context_capable,
+                    route_pool,
                     key=lambda c: (self._cooldowns.get(c.get("id", ""), 0), c.get("priority", 100)),
                 )
 
@@ -153,8 +169,14 @@ class AdaptiveModelRotation:
                 f"Required context: {required_context}",
                 f"Candidates evaluated: {len(candidates)}",
                 f"Capable candidates: {len(capable)}",
+                f"Healthy candidates: {len(healthy)}",
                 f"Winner: {winner.get('provider_id')}/{winner.get('model_id')} (priority {winner.get('priority')})",
             ]
+            unhealthy = [c for c in context_capable if not self._candidate_is_healthy(c)]
+            if unhealthy and not health_fallback_used:
+                explanation.append(f"Skipped unhealthy candidates: {[c.get('id') for c in unhealthy]}")
+            elif health_fallback_used and unhealthy:
+                explanation.append("All context-capable candidates are marked unhealthy; using priority order with health warning.")
 
             return {
                 "success": True,
@@ -165,6 +187,24 @@ class AdaptiveModelRotation:
                 "priority": winner.get("priority"),
                 "context_window": winner.get("context_window", 0),
                 "explanation": explanation,
+                "health_fallback_used": health_fallback_used,
+                "candidate_status": [
+                    {
+                        "candidate_id": c.get("id"),
+                        "provider_id": c.get("provider_id"),
+                        "model_id": c.get("model_id"),
+                        "priority": c.get("priority"),
+                        "capable": self._candidate_has_capabilities(c, required_capabilities),
+                        "context_ok": (c.get("context_window", 0) or 0) >= required_context,
+                        "healthy": self._candidate_is_healthy(c),
+                        "health": c.get("health", {}),
+                        "cooldown_remaining_seconds": max(
+                            0,
+                            int(self._cooldowns.get(c.get("id", ""), 0) - now),
+                        ),
+                    }
+                    for c in candidates
+                ],
             }
 
     def report_failure(self, candidate_id: str, cooldown_seconds: int = 60) -> None:
@@ -251,6 +291,20 @@ class AdaptiveModelRotation:
         for req in required:
             if not caps.get(req, False):
                 return False
+        return True
+
+    @staticmethod
+    def _candidate_is_healthy(candidate: Dict[str, Any]) -> bool:
+        health = candidate.get("health")
+        if not isinstance(health, dict):
+            return True
+        if health.get("enabled") is False:
+            return False
+        for key in ("healthy", "success", "reachable", "last_success"):
+            if key in health and health.get(key) is False:
+                return False
+        if str(health.get("last_error") or health.get("error") or "").strip():
+            return False
         return True
 
     @staticmethod
