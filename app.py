@@ -30,7 +30,7 @@ import subprocess
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -41,6 +41,7 @@ from backup import BackupManager
 from sync import full_sync, is_codex_running, kill_codex, start_codex, resolve_codex_home, CODEX_PLUS_PLUS_PATH
 from auto_detect import detect_all
 from token_stats import TokenStats
+from codex_rollout_usage import get_codex_rollout_cache_stats
 from providers import ProviderRegistry, DEFAULT_STORE_PATH
 from amr_registry import AMRRegistry
 from codex_config import (
@@ -277,20 +278,27 @@ def create_app() -> Flask:
                 end=end,
                 granularity=granularity,
             )
+            rollout_cache_data = get_codex_rollout_cache_stats(
+                db_path=config.get("db_path", ""),
+                sessions_dir=config.get("sessions_dir", ""),
+                start=start,
+                end=end,
+            )
             cc_switch_db_path = config.get("cc_switch_db_path", "")
             data["cc_switch_db_configured"] = bool(cc_switch_db_path)
             data["cc_switch_db_path"] = cc_switch_db_path
+            cc_cache_data = None
             if cc_switch_db_path:
-                cache_data = token_stats.get_cc_switch_cache_stats(
+                cc_cache_data = token_stats.get_cc_switch_cache_stats(
                     cc_switch_db_path=cc_switch_db_path,
                     start=start,
                     end=end,
                 )
-                data.update(cache_data)
             else:
                 data["cache_note"] = (
                     "未配置代理缓存数据库；缓存统计需要请求经过代理数据源，官方 API 和自定义 API 都可被统计。"
                 )
+            _merge_cache_usage_sources(data, rollout_cache_data, cc_cache_data)
             data.update(_resolve_current_context_window(config, provider_registry))
             return jsonify(data)
         except Exception as e:
@@ -1185,7 +1193,9 @@ def create_app() -> Flask:
                 proxy_server.provider_store_path = new_store
             ok = proxy_server.start()
             if ok:
-                return jsonify({"success": True, "status": proxy_server.status()})
+                status = proxy_server.status()
+                config.set("proxy_port", status.get("port", proxy_server.port))
+                return jsonify({"success": True, "status": status})
             return jsonify({"error": "端口已被占用或启动失败", "status": proxy_server.status()}), 409
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1397,6 +1407,85 @@ def _clamp_int(value, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return min(max(parsed, minimum), maximum)
+
+
+def _merge_cache_usage_sources(
+    data: Dict[str, Any],
+    rollout_cache_data: Dict[str, Any] | None,
+    cc_cache_data: Dict[str, Any] | None,
+) -> None:
+    rollout_cache_data = rollout_cache_data or {}
+    cc_cache_data = cc_cache_data or {}
+
+    rollout_read = _safe_int(rollout_cache_data.get("cache_read_tokens"))
+    rollout_creation = _safe_int(rollout_cache_data.get("cache_creation_tokens"))
+    cc_read = _safe_int(cc_cache_data.get("cache_read_tokens"))
+    cc_creation = _safe_int(cc_cache_data.get("cache_creation_tokens"))
+
+    data["codex_rollout_cache_supported"] = bool(rollout_cache_data.get("cache_supported"))
+    data["codex_rollout_cache_read_tokens"] = rollout_read
+    data["codex_rollout_cache_creation_tokens"] = rollout_creation
+    data["codex_rollout_cache_total_tokens"] = rollout_read + rollout_creation
+    data["codex_rollout_files_scanned"] = _safe_int(rollout_cache_data.get("rollout_files_scanned"))
+    data["codex_rollout_paths_discovered"] = _safe_int(rollout_cache_data.get("rollout_paths_discovered"))
+    data["codex_rollout_token_count_events"] = _safe_int(rollout_cache_data.get("rollout_token_count_events"))
+    data["codex_rollout_cache_field_events"] = _safe_int(rollout_cache_data.get("rollout_cache_field_events"))
+    data["codex_rollout_usage_sources"] = rollout_cache_data.get("rollout_usage_sources", [])
+    data["codex_rollout_cache_note"] = rollout_cache_data.get("cache_note", "")
+
+    data["cc_switch_cache_supported"] = bool(cc_cache_data.get("cache_supported"))
+    data["cc_switch_cache_read_tokens"] = cc_read
+    data["cc_switch_cache_creation_tokens"] = cc_creation
+    data["cc_switch_cache_total_tokens"] = cc_read + cc_creation
+    data["cc_switch_cache_tables"] = cc_cache_data.get("cache_tables", [])
+    data["cc_switch_cache_note"] = cc_cache_data.get("cache_note", "")
+
+    data["cache_supported"] = data["codex_rollout_cache_supported"] or data["cc_switch_cache_supported"]
+    data["cache_tables"] = data["cc_switch_cache_tables"]
+    data["cache_sources"] = []
+    data["cache_overlap_risk"] = False
+    data["cache_merge_strategy"] = "none"
+
+    if data["codex_rollout_cache_supported"]:
+        data["cache_sources"].append("codex_rollout")
+    if data["cc_switch_cache_supported"]:
+        data["cache_sources"].append("cc_switch_db")
+
+    if data["codex_rollout_cache_supported"]:
+        data["cache_read_tokens"] = rollout_read
+        data["cache_creation_tokens"] = rollout_creation
+        data["cache_merge_strategy"] = "codex_rollout_primary"
+        if data["cc_switch_cache_supported"]:
+            data["cache_overlap_risk"] = True
+            data["cache_merge_strategy"] = "codex_rollout_primary_cc_switch_separate"
+    elif data["cc_switch_cache_supported"]:
+        data["cache_read_tokens"] = cc_read
+        data["cache_creation_tokens"] = cc_creation
+        data["cache_merge_strategy"] = "cc_switch_db"
+    else:
+        data["cache_read_tokens"] = 0
+        data["cache_creation_tokens"] = 0
+
+    data["cache_total_tokens"] = data["cache_read_tokens"] + data["cache_creation_tokens"]
+
+    notes = [
+        note
+        for note in (
+            data.get("codex_rollout_cache_note"),
+            data.get("cc_switch_cache_note"),
+        )
+        if note
+    ]
+    if not notes and not cc_cache_data:
+        notes.append("No proxy cache database is configured.")
+    data["cache_note"] = " ".join(notes)
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _safe_export_filename(title: str) -> str:
