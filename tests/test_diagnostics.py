@@ -29,6 +29,20 @@ class MockConfig:
             "request_log_path": "__missing_request_logs__.jsonl",
             "request_log_retention_days": 30,
             "request_log_max_mb": 50,
+            "display_currency": "CNY",
+            "exchange_rate_source": "manual",
+            "exchange_rate_api_key": "secret-fx-key",
+            "exchange_rate_manual_overrides": {"USD:CNY": 7.2},
+            "exchange_rate_cache": {
+                "EUR:CNY": {
+                    "rate": 7.8,
+                    "source": "manual",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "expires_at": "2026-01-02T00:00:00Z",
+                    "is_manual": False,
+                }
+            },
+            "exchange_rate_ttl_hours": 24,
         }
 
 
@@ -118,6 +132,7 @@ class TestDiagnosticsCollector(unittest.TestCase):
             "amr",
             "quota",
             "request_logs",
+            "currency",
             "system",
             "errors",
             "collected_at",
@@ -141,6 +156,10 @@ class TestDiagnosticsCollector(unittest.TestCase):
         self.assertEqual(len(result["amr"]["groups"]), 1)
         self.assertEqual(result["quota"], {"snapshots": {}})
         self.assertEqual(result["request_logs"]["count"], 0)
+        self.assertEqual(result["currency"]["display_currency"], "CNY")
+        self.assertEqual(result["currency"]["manual_override_count"], 1)
+        self.assertTrue(result["currency"]["api_key_configured"])
+        self.assertNotIn("secret-fx-key", json.dumps(result["currency"], ensure_ascii=False))
 
     @patch("diagnostics.CodexConfigManager")
     def test_collect_all_includes_quota_cache_when_available(self, MockMgr):

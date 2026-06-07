@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from codex_config import CodexConfigManager, detect_auth_mode
+from currency import exchange_rate_status_summary
 from providers import ProviderRegistry, redact_secrets
 from request_logs import RequestLogStore
 
@@ -233,6 +234,11 @@ class DiagnosticsCollector:
         except Exception as e:
             request_logs_section = {"error": str(e)}
 
+        try:
+            currency_section = exchange_rate_status_summary(self.config.get_all())
+        except Exception as e:
+            currency_section = {"error": str(e)}
+
         return {
             "codex_config": codex_config_section,
             "codex_permissions": permissions_audit,
@@ -247,6 +253,7 @@ class DiagnosticsCollector:
             "amr": amr_section,
             "quota": quota_section,
             "request_logs": request_logs_section,
+            "currency": currency_section,
             "system": system_section,
             "errors": errors_section,
             "collected_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

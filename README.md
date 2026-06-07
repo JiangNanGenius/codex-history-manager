@@ -61,7 +61,7 @@ The app is organized as an operational console rather than a marketing dashboard
 - **Unified Model Catalog**: preview before writing anything into Codex.
 - **Local Proxy**: start/stop/status, actual bound port, route explanations, and log retention.
 - **Settings**: storage paths, theme editor, import/export, startup/elevation controls, safe cleanup, uninstall cleanup, currency settings, and monitor field customization.
-- **Diagnostics and Recovery**: redacted diagnostics, approval/sandbox audit, backup/restore, rollback, and move repair.
+- **Diagnostics and Recovery**: redacted diagnostics, exchange-rate status, approval/sandbox audit, backup/restore, rollback, and move repair.
 
 ## Safety Model
 

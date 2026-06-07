@@ -5,6 +5,7 @@ from currency import (
     REDACTED_VALUE,
     build_rate_snapshot,
     convert_amount,
+    exchange_rate_status_summary,
     preserve_redacted_currency_secret,
     redact_currency_settings,
     update_currency_config,
@@ -88,6 +89,33 @@ class CurrencyTest(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertIn("not verified", result["error"])
         self.assertIn("https://apiforex.cn/docs.html", result["docs_url"])
+
+    def test_exchange_rate_status_summary_is_redaction_safe(self):
+        settings = {
+            "display_currency": "aud",
+            "exchange_rate_source": "apiforex",
+            "exchange_rate_api_key": "secret-key",
+            "exchange_rate_manual_overrides": {"usd/aud": "1.52"},
+            "exchange_rate_cache": {
+                "CNY:AUD": {
+                    "rate": 0.21,
+                    "source": "cache",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "expires_at": "2026-01-02T00:00:00Z",
+                }
+            },
+        }
+
+        summary = exchange_rate_status_summary(settings, now=datetime(2026, 6, 7, tzinfo=timezone.utc))
+
+        self.assertEqual(summary["display_currency"], "AUD")
+        self.assertEqual(summary["status"], "ready")
+        self.assertTrue(summary["api_key_configured"])
+        self.assertFalse(summary["online_fetch_enabled"])
+        self.assertEqual(summary["manual_pairs"], ["USD:AUD"])
+        self.assertEqual(summary["stale_cache_pairs"], ["CNY:AUD"])
+        self.assertIn("apiforex online fetching is disabled", " ".join(summary["warnings"]))
+        self.assertNotIn("secret-key", str(summary))
 
 
 if __name__ == "__main__":

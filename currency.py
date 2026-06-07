@@ -191,6 +191,62 @@ def convert_amount(
     }
 
 
+def exchange_rate_status_summary(settings: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Return a redaction-safe exchange-rate status summary for diagnostics."""
+    fx = normalize_currency_settings(settings)
+    now = now or datetime.now(timezone.utc)
+    manual_pairs = sorted(fx["exchange_rate_manual_overrides"].keys())
+    cache_entries = fx["exchange_rate_cache"]
+    stale_cache_pairs = sorted(
+        pair for pair, entry in cache_entries.items()
+        if _is_stale(entry.get("expires_at"), now)
+    )
+    active_cache_pairs = sorted(pair for pair in cache_entries.keys() if pair not in set(stale_cache_pairs))
+
+    online_fetch_verified = any(
+        bool(doc.get("verified"))
+        for doc in fx.get("exchange_rate_docs", {}).values()
+        if isinstance(doc, dict)
+    )
+    can_convert_non_identity = bool(manual_pairs or active_cache_pairs)
+    warnings = []
+
+    if fx["exchange_rate_source"] == "apiforex":
+        warnings.append("apiforex online fetching is disabled until the official endpoint and response shape are verified.")
+    if fx["exchange_rate_source"] == "manual" and not manual_pairs:
+        warnings.append("Manual FX source is selected but no manual overrides are configured.")
+    if stale_cache_pairs:
+        warnings.append(f"{len(stale_cache_pairs)} cached exchange-rate pair(s) are stale.")
+    if not can_convert_non_identity and fx["exchange_rate_source"] != "apiforex":
+        warnings.append("Only identity-rate conversions are currently guaranteed.")
+
+    if can_convert_non_identity:
+        status = "ready"
+    elif fx["exchange_rate_source"] == "apiforex":
+        status = "blocked_until_verified"
+    else:
+        status = "needs_manual_rate"
+
+    return {
+        "display_currency": fx["display_currency"],
+        "exchange_rate_source": fx["exchange_rate_source"],
+        "status": status,
+        "api_key_configured": bool(fx["exchange_rate_api_key"]),
+        "online_fetch_verified": online_fetch_verified,
+        "online_fetch_enabled": fx["exchange_rate_source"] == "apiforex" and online_fetch_verified,
+        "manual_override_count": len(manual_pairs),
+        "manual_pairs": manual_pairs,
+        "cache_count": len(cache_entries),
+        "active_cache_count": len(active_cache_pairs),
+        "stale_cache_count": len(stale_cache_pairs),
+        "active_cache_pairs": active_cache_pairs,
+        "stale_cache_pairs": stale_cache_pairs,
+        "ttl_hours": fx["exchange_rate_ttl_hours"],
+        "docs": fx.get("exchange_rate_docs", {}),
+        "warnings": warnings,
+    }
+
+
 def update_currency_config(current: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
     """Return a sanitized partial config update for currency fields."""
     payload = preserve_redacted_currency_secret(payload or {}, current or {})
