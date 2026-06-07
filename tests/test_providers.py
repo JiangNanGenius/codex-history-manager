@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -66,6 +67,41 @@ class ProviderRegistryTest(unittest.TestCase):
             preview = registry.preview_catalog()
             model_ids = [entry["codex_model_id"] for entry in preview["entries"]]
             self.assertEqual(model_ids, [f"{provider['short_alias']}/visible"])
+
+    def test_catalog_preview_resolves_duplicate_alias_collisions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "providers.json"
+            store_path.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "providers": [
+                        {
+                            "id": "provider-one",
+                            "display_name": "Provider One",
+                            "short_alias": "dup",
+                            "enabled": True,
+                            "catalog_visibility": "always_visible",
+                            "models": [{"id": "shared", "enabled": True}],
+                        },
+                        {
+                            "id": "provider-two",
+                            "display_name": "Provider Two",
+                            "short_alias": "dup",
+                            "enabled": True,
+                            "catalog_visibility": "always_visible",
+                            "models": [{"id": "shared", "enabled": True}],
+                        },
+                    ],
+                }),
+                encoding="utf-8",
+            )
+            registry = ProviderRegistry(str(store_path))
+
+            preview = registry.preview_catalog()
+            model_ids = [entry["codex_model_id"] for entry in preview["entries"]]
+            self.assertEqual(model_ids, ["provider-one/shared", "provider-two/shared"])
+            self.assertTrue(all(entry["catalog_collision"] for entry in preview["entries"]))
+            self.assertTrue(any("Catalog ID collision" in item for item in preview["route_explanation"]))
 
     def test_focus_provider_includes_all_enabled_models(self):
         with tempfile.TemporaryDirectory() as tmpdir:

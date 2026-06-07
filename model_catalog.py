@@ -23,6 +23,7 @@ model_catalog.py - Unified Model Catalog (UMC) generator.
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any, Dict, List, Optional, Set
 
 
@@ -107,6 +108,8 @@ class UnifiedModelCatalog:
                     reason = visibility
                 explanations.append(f"{entry['codex_model_id']} included by {reason}.")
 
+        explanations.extend(resolve_catalog_id_collisions(entries))
+
         return {
             "focus_provider_id": self.focus_provider_id,
             "entries": entries,
@@ -177,3 +180,57 @@ class UnifiedModelCatalog:
             "catalog_visibility": provider.get("catalog_visibility"),
             "focused": is_focused,
         }
+
+
+def resolve_catalog_id_collisions(entries: List[Dict[str, Any]]) -> List[str]:
+    """Ensure Codex-visible model ids are unique while preserving routeability."""
+    counts: Dict[str, int] = {}
+    for entry in entries:
+        codex_id = str(entry.get("codex_model_id") or "")
+        if codex_id:
+            counts[codex_id] = counts.get(codex_id, 0) + 1
+
+    collided = {codex_id for codex_id, count in counts.items() if count > 1}
+    if not collided:
+        for entry in entries:
+            entry.setdefault("catalog_collision", False)
+            entry.setdefault("original_codex_model_id", "")
+        return []
+
+    used_ids: Set[str] = {codex_id for codex_id, count in counts.items() if count == 1}
+    explanations: List[str] = []
+    for entry in entries:
+        original = str(entry.get("codex_model_id") or "")
+        if original not in collided:
+            entry.setdefault("catalog_collision", False)
+            entry.setdefault("original_codex_model_id", "")
+            continue
+        resolved = _collision_safe_codex_model_id(entry, used_ids, collided)
+        used_ids.add(resolved)
+        entry["catalog_collision"] = True
+        entry["original_codex_model_id"] = original
+        entry["codex_model_id"] = resolved
+        explanations.append(f"Catalog ID collision for '{original}' resolved to '{resolved}'.")
+    return explanations
+
+
+def _collision_safe_codex_model_id(
+    entry: Dict[str, Any],
+    used_ids: Set[str],
+    collided_ids: Set[str],
+) -> str:
+    provider_segment = _catalog_id_segment(entry.get("provider_id") or entry.get("provider_alias") or "provider")
+    upstream_model_id = str(entry.get("upstream_model_id") or "default").strip() or "default"
+    base = f"{provider_segment}/{upstream_model_id}"
+    candidate = base
+    suffix = 2
+    while candidate in used_ids or candidate in collided_ids:
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _catalog_id_segment(value: Any) -> str:
+    text = str(value or "provider").strip().lower()
+    text = re.sub(r"[^a-z0-9_.-]+", "-", text).strip("-")
+    return text or "provider"

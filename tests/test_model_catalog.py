@@ -157,6 +157,30 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         self.assertIn("qwen/gpt-4", ids)
         self.assertEqual(len(ids), 2)
 
+    def test_duplicate_alias_collision_uses_provider_id_prefix(self):
+        providers = [
+            {
+                "id": "p1",
+                "short_alias": "dup",
+                "enabled": True,
+                "catalog_visibility": "always_visible",
+                "models": [{"id": "same-model", "enabled": True}],
+            },
+            {
+                "id": "p2",
+                "short_alias": "dup",
+                "enabled": True,
+                "catalog_visibility": "always_visible",
+                "models": [{"id": "same-model", "enabled": True}],
+            },
+        ]
+        catalog = UnifiedModelCatalog(providers).build_catalog()
+        ids = [e["codex_model_id"] for e in catalog["entries"]]
+        self.assertEqual(ids, ["p1/same-model", "p2/same-model"])
+        self.assertTrue(all(e["catalog_collision"] for e in catalog["entries"]))
+        self.assertTrue(all(e["original_codex_model_id"] == "dup/same-model" for e in catalog["entries"]))
+        self.assertTrue(any("Catalog ID collision" in item for item in catalog["route_explanation"]))
+
     def test_duplicate_model_not_added_twice(self):
         providers = [
             {

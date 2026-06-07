@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app_paths import app_data_path
+from model_catalog import resolve_catalog_id_collisions
 
 
 # Schema version：当数据结构发生不兼容变更时递增，用于未来迁移逻辑。
@@ -501,6 +502,8 @@ class ProviderRegistry:
                 else:
                     reason = visibility
                 explanations.append(f"{entry['codex_model_id']} included by {reason}.")
+
+        explanations.extend(resolve_catalog_id_collisions(entries))
 
         return {
             "focus_provider_id": focus_provider_id,

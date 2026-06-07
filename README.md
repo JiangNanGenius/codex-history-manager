@@ -44,7 +44,7 @@ The project is intentionally local-first: provider settings, backups, request-lo
 | --- | --- |
 | History and usage | Browse sessions, inspect heavy conversations, read Codex DB totals, and add cache read/write usage from rollout events, proxy logs, and compatible proxy DBs. |
 | Provider setup | Manage provider presets with `short_alias`, region, currency, custom headers, `User-Agent`, approval profile, media profile, quota template, and catalog visibility. |
-| Unified Model Catalog | Preview and filter Codex-visible model IDs such as `qwen/qwen3-coder-plus` by provider, capability, context window, cost hint, currency, visibility, focus, and AMR entries. |
+| Unified Model Catalog | Preview and filter Codex-visible model IDs such as `qwen/qwen3-coder-plus` by provider, capability, context window, cost hint, currency, visibility, focus, AMR entries, and collision-safe IDs. |
 | Adaptive Model Rotation | Edit local rotation groups, bulk-add selected provider models, tune candidate priorities/capabilities/context limits, and run read-only route previews. |
 | Local proxy | Run an independent localhost proxy with occupied-port backoff, capability-aware AMR group routing, provider network policy, timeout/retry policy, Auto Approval broker settings, route diagnostics, metadata-only request logs, and OpenAI-compatible routes. |
 | Protocol adapters | Convert verified Responses, Chat, Anthropic Messages, tools, images, SSE events, and domestic Responses profiles only where behavior is sourced. |

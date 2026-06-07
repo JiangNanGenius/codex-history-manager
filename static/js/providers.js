@@ -761,6 +761,7 @@ function renderCatalogEntry(entry) {
         renderMiniBadge(entry.provider_alias || entry.provider_id),
         entry.focused ? renderMiniBadge('focused') : '',
         entry.catalog_visibility ? renderMiniBadge(entry.catalog_visibility) : '',
+        entry.catalog_collision ? renderMiniBadge('collision resolved') : '',
         entry.api_format ? renderMiniBadge(entry.api_format) : '',
         entry.responses_profile && entry.responses_profile.domestic_responses ? renderMiniBadge('domestic responses') : '',
         entry.context_window ? renderMiniBadge(formatNumber(entry.context_window, { compact: false }) + ' ctx') : '',
@@ -773,7 +774,7 @@ function renderCatalogEntry(entry) {
                 <div class="font-mono text-sm text-white truncate">${escapeHtml(entry.codex_model_id)}</div>
                 <span class="badge">${escapeHtml(entry.native_currency || '-')}</span>
             </div>
-            <div class="text-xs text-dark-400 truncate">${escapeHtml(providerLabel)} -> ${escapeHtml(entry.upstream_model_id)}</div>
+            <div class="text-xs text-dark-400 truncate">${escapeHtml(providerLabel)} -> ${escapeHtml(entry.upstream_model_id)}${entry.original_codex_model_id ? ' · from ' + escapeHtml(entry.original_codex_model_id) : ''}</div>
             <div class="flex flex-wrap gap-1 mt-2">
                 ${badges}
             </div>
