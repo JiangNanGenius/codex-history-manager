@@ -22,6 +22,7 @@ async function loadSettings() {
             loadStorageInfo(),
             loadCleanupPreview(),
             loadUninstallPreview(),
+            loadCurrencySettings(),
         ]);
 
         const hasDbPath = data.db_path && String(data.db_path).trim().length > 0;
@@ -89,6 +90,65 @@ function populateSettingsForm(data) {
     for (const [elId, key] of Object.entries(monitorMap)) {
         const el = document.getElementById(elId);
         if (el) el.checked = monitorFields[key] !== false;
+    }
+}
+
+async function loadCurrencySettings() {
+    const display = document.getElementById('currency-display');
+    if (!display) return;
+    try {
+        const data = await api('/api/currency/settings');
+        display.value = data.display_currency || 'USD';
+        const source = document.getElementById('currency-source');
+        if (source) source.value = data.exchange_rate_source || 'manual';
+        const apiKey = document.getElementById('currency-api-key');
+        if (apiKey) apiKey.value = data.exchange_rate_api_key || '';
+        const ttl = document.getElementById('currency-ttl-hours');
+        if (ttl) ttl.value = data.exchange_rate_ttl_hours || 24;
+        const overrides = document.getElementById('currency-manual-overrides');
+        if (overrides) overrides.value = JSON.stringify(data.exchange_rate_manual_overrides || {}, null, 2);
+    } catch (err) {
+        renderInlineError('currency-preview-result', err.message);
+    }
+}
+
+async function saveCurrencySettings() {
+    try {
+        const overrides = JSON.parse(document.getElementById('currency-manual-overrides')?.value || '{}');
+        const payload = {
+            display_currency: document.getElementById('currency-display')?.value || 'USD',
+            exchange_rate_source: document.getElementById('currency-source')?.value || 'manual',
+            exchange_rate_api_key: document.getElementById('currency-api-key')?.value || '',
+            exchange_rate_ttl_hours: parseInt(document.getElementById('currency-ttl-hours')?.value, 10) || 24,
+            exchange_rate_manual_overrides: overrides,
+        };
+        const result = await api('/api/currency/settings', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        if (!result.success) throw new Error(result.error || 'Currency settings save failed');
+        await loadCurrencySettings();
+        showToast('Currency settings saved', 'success');
+    } catch (err) {
+        showToast('Currency save failed: ' + err.message, 'error');
+    }
+}
+
+async function previewCurrencyRate() {
+    const resultEl = document.getElementById('currency-preview-result');
+    if (!resultEl) return;
+    try {
+        const data = await api('/api/currency/convert', {
+            method: 'POST',
+            body: JSON.stringify({
+                from_currency: document.getElementById('currency-preview-from')?.value || 'USD',
+                to_currency: document.getElementById('currency-preview-to')?.value || 'USD',
+                amount: parseFloat(document.getElementById('currency-preview-amount')?.value || '1') || 0,
+            }),
+        });
+        resultEl.textContent = JSON.stringify(data, null, 2);
+    } catch (err) {
+        resultEl.textContent = 'Preview failed: ' + err.message;
     }
 }
 

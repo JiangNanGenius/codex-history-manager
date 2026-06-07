@@ -52,6 +52,12 @@ DEFAULT_CONFIG = {
         "surface": "#1e293b",
         "background": "#0f172a",
     },
+    "display_currency": "USD",
+    "exchange_rate_source": "manual",
+    "exchange_rate_api_key": "",
+    "exchange_rate_manual_overrides": {},
+    "exchange_rate_cache": {},
+    "exchange_rate_ttl_hours": 24,
     "monitor_fields": {
         "tokens": True,
         "progress": True,
@@ -179,6 +185,18 @@ class Config:
             merged_fields = copy.deepcopy(DEFAULT_CONFIG["monitor_fields"])
             merged_fields.update(self._data["monitor_fields"])
             self._data["monitor_fields"] = merged_fields
+        if not isinstance(self._data.get("exchange_rate_manual_overrides"), dict):
+            self._data["exchange_rate_manual_overrides"] = {}
+        if not isinstance(self._data.get("exchange_rate_cache"), dict):
+            self._data["exchange_rate_cache"] = {}
+        if not self._data.get("display_currency"):
+            self._data["display_currency"] = DEFAULT_CONFIG["display_currency"]
+        if not self._data.get("exchange_rate_source"):
+            self._data["exchange_rate_source"] = DEFAULT_CONFIG["exchange_rate_source"]
+        try:
+            self._data["exchange_rate_ttl_hours"] = max(int(self._data.get("exchange_rate_ttl_hours", 24)), 1)
+        except (TypeError, ValueError):
+            self._data["exchange_rate_ttl_hours"] = 24
 
     def _auto_detect_if_needed(self):
         """Auto-fill Codex paths only when the user has not configured them."""

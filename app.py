@@ -57,6 +57,14 @@ from diagnostics import DiagnosticsCollector
 from move_repair import MoveRepairManager
 from guardrails import codex_mutation_error_payload, has_codex_mutation_confirmation
 from app_paths import LEGACY_APP_DIR, LEGACY_CONFIG_FILE, app_data_dir, ensure_app_dirs, is_within
+from currency import (
+    build_rate_snapshot,
+    convert_amount,
+    normalize_currency_settings,
+    preserve_redacted_currency_secret,
+    redact_currency_settings,
+    update_currency_config,
+)
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -524,7 +532,7 @@ def create_app() -> Flask:
     def get_settings():
         """读取设置"""
         try:
-            return jsonify(config.get_all())
+            return jsonify(redact_currency_settings(config.get_all()))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -533,6 +541,7 @@ def create_app() -> Flask:
         """保存设置"""
         try:
             data = request.get_json(silent=True) or {}
+            data = preserve_redacted_currency_secret(data, config.get_all())
             config.update(data)
 
             # 重新连接数据库（路径可能变了）
@@ -600,7 +609,7 @@ def create_app() -> Flask:
             return jsonify({
                 "schema": "codex_enhance_manager.settings.v1",
                 "exported_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                "settings": config.get_all(),
+                "settings": redact_currency_settings(config.get_all()),
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -613,9 +622,53 @@ def create_app() -> Flask:
             imported = body.get("settings") if isinstance(body.get("settings"), dict) else body
             if not isinstance(imported, dict):
                 return jsonify({"error": "Invalid settings payload"}), 400
+            imported = preserve_redacted_currency_secret(imported, config.get_all())
             config.update(imported)
             ensure_app_dirs()
-            return jsonify({"success": True, "settings": config.get_all()})
+            return jsonify({"success": True, "settings": redact_currency_settings(config.get_all())})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/currency/settings")
+    def currency_settings():
+        """返回成本/币种设置，默认脱敏。"""
+        try:
+            return jsonify(redact_currency_settings(normalize_currency_settings(config.get_all())))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/currency/settings", methods=["POST"])
+    def save_currency_settings():
+        """保存成本/币种设置。只写本地 config，不写 Codex。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            update = update_currency_config(config.get_all(), body)
+            config.update(update)
+            return jsonify({"success": True, "settings": redact_currency_settings(normalize_currency_settings(config.get_all()))})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/currency/rate")
+    def currency_rate():
+        """返回汇率快照；不进行未复核在线抓取。"""
+        try:
+            from_currency = request.args.get("from", "")
+            to_currency = request.args.get("to", "")
+            return jsonify(build_rate_snapshot(config.get_all(), from_currency, to_currency))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/currency/convert", methods=["POST"])
+    def currency_convert():
+        """按当前汇率设置换算金额并返回本次使用的汇率快照。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            return jsonify(convert_amount(
+                config.get_all(),
+                body.get("amount", 0),
+                body.get("from_currency") or body.get("from") or "",
+                body.get("to_currency") or body.get("to") or config.get("display_currency", "USD"),
+            ))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
