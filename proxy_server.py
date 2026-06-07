@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -238,6 +239,8 @@ def _resolve_provider_for_model(model_id: str) -> Optional[Dict[str, Any]]:
     for p in providers:
         if not p.get("enabled", True):
             continue
+        if _provider_alias_source_matches(p, model_id_lower):
+            return p
         for m in p.get("models", []):
             if not isinstance(m, dict):
                 continue
@@ -245,6 +248,14 @@ def _resolve_provider_for_model(model_id: str) -> Optional[Dict[str, Any]]:
                 continue
             if m.get("id", "").lower().strip() == model_id_lower:
                 return p
+            if model_id_lower in _model_aliases_lower(m):
+                return p
+
+    for p in providers:
+        if not p.get("enabled", True):
+            continue
+        if _provider_alias_pattern_matches(p, model_id):
+            return p
 
     return None
 
@@ -256,12 +267,17 @@ def _resolve_provider_route_for_model(
     """Resolve a request to either a direct provider route or an AMR candidate."""
     provider = _resolve_provider_for_model(model_id)
     if provider:
+        upstream_model = _extract_model_id_for_upstream({"model": model_id}, provider)
+        requested_upstream = model_id.split("/", 1)[1] if "/" in model_id else model_id
+        explanation = ["Direct provider/model route."]
+        if upstream_model and upstream_model != requested_upstream:
+            explanation.append(f"Model alias rewrite: {requested_upstream} -> {upstream_model}.")
         return {
             "success": True,
             "provider": provider,
-            "upstream_model": "",
+            "upstream_model": upstream_model,
             "route_type": "direct",
-            "route_explanation": ["Direct provider/model route."],
+            "route_explanation": explanation,
             "request_capabilities": (classification or {}).get("capabilities", ["text"]),
         }
 
@@ -360,6 +376,65 @@ def _provider_has_enabled_model(provider: Dict[str, Any], model_id: str) -> bool
     return False
 
 
+def _provider_alias_source_matches(provider: Dict[str, Any], model_id_lower: str) -> bool:
+    aliases = _provider_alias_map(provider)
+    return any(str(source or "").lower().strip() == model_id_lower for source in aliases.keys())
+
+
+def _provider_alias_pattern_matches(provider: Dict[str, Any], model_id: str) -> bool:
+    for pattern in _provider_alias_patterns(provider):
+        try:
+            if re.search(str(pattern.get("pattern") or ""), model_id):
+                return True
+        except re.error:
+            continue
+    return False
+
+
+def _provider_alias_map(provider: Dict[str, Any]) -> Dict[str, str]:
+    aliases = provider.get("aliases")
+    if isinstance(aliases, dict):
+        return {
+            str(key).strip(): str(value).strip()
+            for key, value in aliases.items()
+            if str(key).strip() and str(value).strip()
+        }
+    # Backward compatibility for early weak-model stores that kept aliases as a list.
+    if isinstance(aliases, list):
+        result: Dict[str, str] = {}
+        for item in aliases:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source") or item.get("from") or item.get("alias") or "").strip()
+            target = str(item.get("target") or item.get("to") or item.get("model") or "").strip()
+            if source and target:
+                result[source] = target
+        return result
+    return {}
+
+
+def _provider_alias_patterns(provider: Dict[str, Any]) -> List[Dict[str, str]]:
+    patterns = provider.get("alias_patterns") or provider.get("regex_aliases")
+    if not isinstance(patterns, list):
+        return []
+    result: List[Dict[str, str]] = []
+    for item in patterns:
+        if not isinstance(item, dict) or item.get("enabled", True) is False:
+            continue
+        pattern = str(item.get("pattern") or item.get("from") or "").strip()
+        replacement = str(item.get("replacement") or item.get("to") or "").strip()
+        if pattern and replacement:
+            result.append({"pattern": pattern, "replacement": replacement})
+    return result
+
+
+def _model_aliases_lower(model: Dict[str, Any]) -> set[str]:
+    aliases = model.get("aliases") or model.get("model_aliases")
+    if not isinstance(aliases, list):
+        return set()
+    return {str(item).lower().strip() for item in aliases if str(item).strip()}
+
+
 def _route_explanation_text(route: Dict[str, Any], fallback: str) -> str:
     lines = route.get("route_explanation") if isinstance(route, dict) else None
     if isinstance(lines, list) and lines:
@@ -394,10 +469,19 @@ def _extract_model_id_for_upstream(request_json: Dict[str, Any], provider: Dict[
     else:
         upstream_model = raw_model
 
-    # Alias rewrite
-    aliases = provider.get("aliases", {})
-    if isinstance(aliases, dict) and upstream_model in aliases:
-        return str(aliases[upstream_model])
+    aliases = _provider_alias_map(provider)
+    if upstream_model in aliases:
+        return aliases[upstream_model]
+    lowered = upstream_model.lower().strip()
+    for source, target in aliases.items():
+        if source.lower().strip() == lowered:
+            return target
+    for pattern in _provider_alias_patterns(provider):
+        try:
+            if re.search(pattern["pattern"], upstream_model):
+                return re.sub(pattern["pattern"], pattern["replacement"], upstream_model, count=1)
+        except re.error:
+            continue
     return upstream_model
 
 

@@ -14,6 +14,7 @@ from proxy_server import (
     _extract_model_id_for_upstream,
     _load_providers_with_secrets,
     _resolve_provider_for_model,
+    _resolve_provider_route_for_model,
     _set_amr_store_path,
     _set_media_approval_reviewer,
     _set_request_log_config,
@@ -42,8 +43,10 @@ class ProviderRoutingTest(unittest.TestCase):
                         "api_key": "sk-openai",
                         "user_agent": "Custom-UA/1.0",
                         "headers": {"X-Custom": "value"},
+                        "aliases": {"latest-openai": "gpt-5"},
+                        "alias_patterns": [{"pattern": "^openai-(.+)$", "replacement": "\\1"}],
                         "models": [
-                            {"id": "gpt-5", "enabled": True},
+                            {"id": "gpt-5", "enabled": True, "aliases": ["flagship"]},
                             {"id": "gpt-4", "enabled": True},
                         ],
                     },
@@ -54,6 +57,7 @@ class ProviderRoutingTest(unittest.TestCase):
                         "enabled": True,
                         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
                         "api_key": "sk-qwen",
+                        "aliases": {"coder-pro": "qwen3-coder-plus"},
                         "models": [
                             {"id": "qwen3-coder-plus", "enabled": True},
                             {"id": "qwen-vl", "enabled": False},
@@ -114,6 +118,28 @@ class ProviderRoutingTest(unittest.TestCase):
         self.assertIsNotNone(provider)
         self.assertEqual(provider["id"], "openai-main")
 
+    def test_exact_alias_key_routes_to_provider(self):
+        provider = _resolve_provider_for_model("coder-pro")
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider["id"], "qwen-cn")
+
+    def test_model_alias_routes_to_provider(self):
+        provider = _resolve_provider_for_model("flagship")
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider["id"], "openai-main")
+
+    def test_regex_alias_pattern_routes_to_provider(self):
+        provider = _resolve_provider_for_model("openai-gpt-5")
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider["id"], "openai-main")
+
+    def test_alias_route_reports_upstream_model_and_explanation(self):
+        route = _resolve_provider_route_for_model("coder-pro", {"capabilities": ["text"]})
+        self.assertTrue(route["success"])
+        self.assertEqual(route["provider"]["id"], "qwen-cn")
+        self.assertEqual(route["upstream_model"], "qwen3-coder-plus")
+        self.assertTrue(any("Model alias rewrite" in item for item in route["route_explanation"]))
+
 
 class ModelIdExtractionTest(unittest.TestCase):
     def test_provider_prefix_removed(self):
@@ -135,6 +161,21 @@ class ModelIdExtractionTest(unittest.TestCase):
         provider = {"aliases": {"qwen3-coder-plus": "qwen3-coder"}}
         result = _extract_model_id_for_upstream({"model": "qwen/qwen3-coder-plus"}, provider)
         self.assertEqual(result, "qwen3-coder")
+
+    def test_alias_rewrite_is_case_insensitive(self):
+        provider = {"aliases": {"GPT-Latest": "gpt-5"}}
+        result = _extract_model_id_for_upstream({"model": "gpt-latest"}, provider)
+        self.assertEqual(result, "gpt-5")
+
+    def test_regex_alias_rewrite(self):
+        provider = {"alias_patterns": [{"pattern": "^fast-(.+)$", "replacement": "\\1-turbo"}]}
+        result = _extract_model_id_for_upstream({"model": "fast-qwen"}, provider)
+        self.assertEqual(result, "qwen-turbo")
+
+    def test_invalid_regex_alias_is_ignored(self):
+        provider = {"alias_patterns": [{"pattern": "(", "replacement": "broken"}]}
+        result = _extract_model_id_for_upstream({"model": "fast-qwen"}, provider)
+        self.assertEqual(result, "fast-qwen")
 
 
 class HeaderBuilderTest(unittest.TestCase):

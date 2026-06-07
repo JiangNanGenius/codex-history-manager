@@ -129,6 +129,27 @@ class ProviderRegistryTest(unittest.TestCase):
 
         self.assertEqual(provider["api_format"], "anthropic")
 
+    def test_model_alias_and_regex_rewrite_schema_is_normalized(self):
+        provider = normalize_provider({
+            "display_name": "Alias Provider",
+            "short_alias": "alias",
+            "aliases": [{"from": "coder-pro", "to": "qwen3-coder-plus"}],
+            "alias_patterns": [
+                {"pattern": "^fast-(.+)$", "replacement": "\\1-turbo"},
+                {"pattern": "", "replacement": "ignored"},
+            ],
+            "models": [{"id": "qwen3-coder-plus", "aliases": ["coder", "coding"]}],
+        })
+
+        self.assertEqual(provider["aliases"], {"coder-pro": "qwen3-coder-plus"})
+        self.assertEqual(provider["alias_patterns"], [{
+            "pattern": "^fast-(.+)$",
+            "replacement": "\\1-turbo",
+            "enabled": True,
+            "description": "",
+        }])
+        self.assertEqual(provider["models"][0]["aliases"], ["coder", "coding"])
+
     def test_media_profile_preserves_model_overrides(self):
         provider = normalize_provider({
             "display_name": "Media Overrides",

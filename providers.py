@@ -710,7 +710,8 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         "media_profile": normalize_media_profile(raw.get("media_profile")),
         "proxy_profile": normalize_proxy_profile(raw.get("proxy_profile") or raw.get("proxy")),
         "models": [normalize_model(m) for m in raw.get("models", []) if isinstance(m, dict)],
-        "aliases": raw.get("aliases") if isinstance(raw.get("aliases"), list) else [],
+        "aliases": normalize_alias_map(raw.get("aliases") or raw.get("model_aliases")),
+        "alias_patterns": normalize_alias_patterns(raw.get("alias_patterns") or raw.get("regex_aliases")),
         "health_check": raw.get("health_check") if isinstance(raw.get("health_check"), dict) else {},
         "quota_check": raw.get("quota_check") if isinstance(raw.get("quota_check"), dict) else {},
         "priority": int(raw.get("priority") if raw.get("priority") is not None else 100),
@@ -782,6 +783,7 @@ def normalize_model(data: Dict[str, Any]) -> Dict[str, Any]:
         "native_currency": normalize_currency(data.get("native_currency") or ""),
         "pricing": data.get("pricing") if isinstance(data.get("pricing"), dict) else {},
         "tags": data.get("tags") if isinstance(data.get("tags"), list) else [],
+        "aliases": normalize_string_list(data.get("aliases") or data.get("model_aliases")),
         "reasoning_default": data.get("reasoning_default", ""),
     }
 
@@ -842,6 +844,42 @@ def normalize_string_map(value: Any) -> Dict[str, str]:
         item_str = str(item).strip()
         if key_str and item_str:
             normalized[key_str] = item_str
+    return normalized
+
+
+def normalize_alias_map(value: Any) -> Dict[str, str]:
+    if isinstance(value, dict):
+        return normalize_string_map(value)
+    if not isinstance(value, list):
+        return {}
+    normalized: Dict[str, str] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or item.get("from") or item.get("alias") or "").strip()
+        target = str(item.get("target") or item.get("to") or item.get("model") or "").strip()
+        if source and target:
+            normalized[source] = target
+    return normalized
+
+
+def normalize_alias_patterns(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        pattern = str(item.get("pattern") or item.get("from") or "").strip()
+        replacement = str(item.get("replacement") or item.get("to") or "").strip()
+        if not pattern or not replacement:
+            continue
+        normalized.append({
+            "pattern": pattern,
+            "replacement": replacement,
+            "enabled": bool(item.get("enabled", True)),
+            "description": str(item.get("description") or "").strip(),
+        })
     return normalized
 
 

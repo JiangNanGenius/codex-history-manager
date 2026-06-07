@@ -453,6 +453,10 @@ function renderProviderEditor(provider) {
                     ${renderTextarea('provider-headers-json', 'Headers JSON', JSON.stringify(provider.headers || {}, null, 2), 7)}
                     ${renderTextarea('provider-models-text', 'Models (id|display|context|selected)', modelsText, 7)}
                 </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                    ${renderTextarea('provider-aliases-json', 'Model Aliases JSON', JSON.stringify(provider.aliases || {}, null, 2), 6)}
+                    ${renderTextarea('provider-alias-patterns-json', 'Regex Rewrite Patterns JSON', JSON.stringify(provider.alias_patterns || [], null, 2), 6)}
+                </div>
                 <div class="mt-4">
                     <div class="text-xs text-dark-400 mb-2">Proxy Network Policy</div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1168,6 +1172,8 @@ function readProviderForm(existing) {
         const imageModelOverrides = JSON.parse(document.getElementById('media-image-overrides-json')?.value || '{}');
         const videoModelOverrides = JSON.parse(document.getElementById('media-video-overrides-json')?.value || '{}');
         const quotaCheck = JSON.parse(document.getElementById('provider-quota-json')?.value || '{}');
+        const aliases = JSON.parse(document.getElementById('provider-aliases-json')?.value || '{}');
+        const aliasPatterns = JSON.parse(document.getElementById('provider-alias-patterns-json')?.value || '[]');
         const models = parseModelsText(document.getElementById('provider-models-text')?.value || '');
         const approvalMode = getSelectedApprovalMode();
         const mediaMode = getSelectedMediaMode();
@@ -1187,6 +1193,8 @@ function readProviderForm(existing) {
             api_key: document.getElementById('provider-api-key') ? document.getElementById('provider-api-key').value : (existing.api_key || ''),
             auth_mode: document.getElementById('provider-auth-mode')?.value || 'provider_api_key',
             headers,
+            aliases,
+            alias_patterns: aliasPatterns,
             quota_check: quotaCheck,
             models,
             capabilities: {
