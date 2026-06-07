@@ -52,6 +52,7 @@ from codex_config import (
     load_config_toml as _load_config_toml,
 )
 from proxy_server import LocalProxyServer
+from domestic_responses import build_domestic_responses_probe_preview
 from diagnostics import DiagnosticsCollector
 from move_repair import MoveRepairManager
 from guardrails import codex_mutation_error_payload, has_codex_mutation_confirmation
@@ -803,6 +804,36 @@ def create_app() -> Flask:
         try:
             body = request.get_json(silent=True) or {}
             return jsonify(provider_registry.test_provider(provider_data=body))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/responses-profile/probe-preview", methods=["GET", "POST"])
+    def provider_responses_probe_preview(provider_id):
+        """预览国内 Responses 请求；不联网、不写 Codex、不写 provider registry。"""
+        try:
+            _refresh_provider_registry_path()
+            provider = provider_registry.get_provider(provider_id, include_secrets=True)
+            if not provider:
+                return jsonify({"error": "Provider not found"}), 404
+            if request.method == "POST":
+                body = request.get_json(silent=True) or {}
+            else:
+                body = {}
+            request_json = body.get("request_json") if isinstance(body.get("request_json"), dict) else None
+            compact = bool(body.get("compact", False))
+            return jsonify(build_domestic_responses_probe_preview(provider, request_json=request_json, compact=compact))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/responses-profile/probe-preview", methods=["POST"])
+    def provider_draft_responses_probe_preview():
+        """预览未保存 provider 草稿的国内 Responses 请求；纯 dry-run。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            provider = body.get("provider") if isinstance(body.get("provider"), dict) else body
+            request_json = body.get("request_json") if isinstance(body.get("request_json"), dict) else None
+            compact = bool(body.get("compact", False))
+            return jsonify(build_domestic_responses_probe_preview(provider, request_json=request_json, compact=compact))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

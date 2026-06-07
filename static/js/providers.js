@@ -33,6 +33,7 @@ let providerState = {
     catalogPreview: null,
     draftError: '',
     proxyStatus: null,
+    responsesProbePreview: null,
 };
 
 /**
@@ -459,6 +460,7 @@ function renderProviderEditor(provider) {
                     ${renderCapabilityToggle('responses-requires-adapter', 'Responses Adapter Required', provider.responses_profile && provider.responses_profile.requires_adapter)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                    ${renderInput('responses-profile-id', 'Responses Profile ID', provider.responses_profile && provider.responses_profile.profile_id)}
                     ${renderInput('responses-docs-url', 'Responses Docs URL', provider.responses_profile && provider.responses_profile.verified_docs_url)}
                     ${renderInput('responses-unsupported', 'Unsupported Fields', provider.responses_profile && (provider.responses_profile.unsupported_fields || []).join(', '))}
                 </div>
@@ -472,6 +474,7 @@ function renderProviderEditor(provider) {
             <div class="flex flex-wrap gap-2 mt-5">
                 <button onclick="saveSelectedProvider()" class="btn btn-primary">Save Local Provider</button>
                 <button onclick="testSelectedProvider()" class="btn btn-secondary">Test This Section</button>
+                <button onclick="previewResponsesProbe()" class="btn btn-secondary">Responses Probe Preview</button>
                 <button onclick="previewProviderDraft()" class="btn btn-ghost">Preview Draft</button>
                 <button onclick="deleteSelectedProvider()" class="btn btn-danger">Delete</button>
             </div>
@@ -480,6 +483,12 @@ function renderProviderEditor(provider) {
         <div id="provider-draft-preview" class="card hidden">
             <h3 class="card-title">Draft Preview</h3>
             <pre class="preview-code mt-3"></pre>
+        </div>
+
+        <div id="provider-responses-probe-preview" class="card ${providerState.responsesProbePreview ? '' : 'hidden'}">
+            <h3 class="card-title">Responses Probe Preview</h3>
+            <p class="text-xs text-dark-400 mt-1">Dry-run only: no network request, no Codex mutation.</p>
+            <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.responsesProbePreview || {}, null, 2))}</pre>
         </div>
     `;
 }
@@ -674,6 +683,7 @@ async function createBlankProvider() {
 
 function selectProvider(providerId) {
     providerState.selectedProviderId = providerId;
+    providerState.responsesProbePreview = null;
     renderProvidersPage();
 }
 
@@ -725,6 +735,23 @@ function previewProviderDraft() {
     const pre = panel.querySelector('pre');
     panel.classList.remove('hidden');
     pre.textContent = JSON.stringify(redactDraft(draft), null, 2);
+}
+
+async function previewResponsesProbe() {
+    const provider = getSelectedProvider();
+    if (!provider) return;
+    const draft = readProviderForm(provider);
+    if (!draft) return;
+    try {
+        providerState.responsesProbePreview = await api('/api/providers/responses-profile/probe-preview', {
+            method: 'POST',
+            body: JSON.stringify({ provider: draft }),
+        });
+        renderProvidersPage();
+        showToast('Responses probe preview generated', 'success');
+    } catch (err) {
+        showProviderFormError(err.message);
+    }
 }
 
 async function deleteSelectedProvider() {
@@ -827,6 +854,7 @@ function readProviderForm(existing) {
                 domestic_responses: document.getElementById('responses-domestic')?.checked || false,
                 partial_compatibility: document.getElementById('responses-partial')?.checked || false,
                 requires_adapter: document.getElementById('responses-requires-adapter')?.checked || false,
+                profile_id: document.getElementById('responses-profile-id')?.value || '',
                 verified_docs_url: document.getElementById('responses-docs-url')?.value || '',
                 unsupported_fields: String(document.getElementById('responses-unsupported')?.value || '')
                     .split(',')

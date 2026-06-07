@@ -563,6 +563,61 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(response_json["error"]["type"], "domestic_responses_unsupported")
         self.assertIn("unsupported tool types: custom", response_json["error"]["message"])
 
+    @patch("proxy_server._upstream_request")
+    def test_domestic_partial_responses_allows_verified_input_image(self, mock_upstream):
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "bailian",
+                    "short_alias": "qwen",
+                    "display_name": "Bailian",
+                    "enabled": True,
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "api_format": "openai_responses",
+                    "api_key": "sk-qwen",
+                    "responses_profile": {
+                        "domestic_responses": True,
+                        "profile_id": "alibaba_bailian",
+                        "partial_compatibility": True,
+                        "requires_adapter": True,
+                        "verified_docs_url": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses",
+                    },
+                    "models": [{"id": "qwen-plus", "enabled": True}],
+                }
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"id": "resp_1", "object": "response"}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/responses",
+            body={
+                "model": "qwen/qwen-plus",
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "describe"},
+                            {"type": "input_image", "image_url": "https://example.test/a.png"},
+                        ],
+                    }
+                ],
+            },
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body.decode())["id"], "resp_1")
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://dashscope.aliyuncs.com/compatible-mode/v1/responses")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "qwen-plus")
+
     def test_domestic_partial_responses_blocks_compact(self):
         self._write_providers({
             "providers": [

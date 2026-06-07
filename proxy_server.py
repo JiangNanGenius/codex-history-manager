@@ -48,6 +48,10 @@ from anthropic_adapter import (
     anthropic_messages_url,
     responses_to_anthropic_messages,
 )
+from domestic_responses import (
+    assess_domestic_responses_request,
+    format_domestic_unsupported_reason,
+)
 from responses_adapter import (
     ChatSseToResponsesConverter,
     chat_completion_to_response,
@@ -272,69 +276,10 @@ def _native_responses_unsupported_reason(
     compact: bool = False,
 ) -> Optional[str]:
     """Return a clear reason when a partial domestic Responses route is unsafe."""
-    profile = provider.get("responses_profile") if isinstance(provider.get("responses_profile"), dict) else {}
-    if not profile.get("domestic_responses"):
+    report = assess_domestic_responses_request(provider, request_json, compact=compact)
+    if not report.get("domestic_responses") or report.get("safe_to_forward"):
         return None
-
-    issues: List[str] = []
-    if compact and profile.get("requires_adapter"):
-        issues.append("/responses/compact")
-
-    unsupported_tools = _domestic_unsupported_tool_types(request_json.get("tools"))
-    if unsupported_tools:
-        issues.append(f"unsupported tool types: {', '.join(sorted(unsupported_tools))}")
-
-    unsupported_items = _domestic_unsupported_input_items(request_json.get("input"))
-    if unsupported_items:
-        issues.append(f"unsupported input item/content types: {', '.join(sorted(unsupported_items))}")
-
-    if not issues:
-        return None
-
-    docs_url = str(profile.get("verified_docs_url") or "")
-    return (
-        "Domestic Responses compatibility is partial for this provider. "
-        f"Blocked until adapter/probe verification: {'; '.join(issues)}. "
-        f"Docs: {docs_url or 'not configured'}"
-    )
-
-
-def _domestic_unsupported_tool_types(tools: Any) -> List[str]:
-    if not isinstance(tools, list):
-        return []
-    # Bailian docs explicitly cover custom function tools and named built-ins.
-    # Other Codex/OpenAI custom tool shapes need provider-specific adapters.
-    allowed = {"function", "web_search", "code_interpreter", "web_extractor"}
-    unsupported: List[str] = []
-    for tool in tools:
-        if not isinstance(tool, dict):
-            continue
-        tool_type = str(tool.get("type") or "")
-        if tool_type and tool_type not in allowed:
-            unsupported.append(tool_type)
-    return unsupported
-
-
-def _domestic_unsupported_input_items(input_value: Any) -> List[str]:
-    unsupported: List[str] = []
-    if not isinstance(input_value, list):
-        return unsupported
-    unsupported_item_types = {"custom_tool_call", "custom_tool_call_output"}
-    unsupported_content_types = {"input_image", "input_file"}
-    for item in input_value:
-        if not isinstance(item, dict):
-            continue
-        item_type = str(item.get("type") or "")
-        if item_type in unsupported_item_types:
-            unsupported.append(item_type)
-        content = item.get("content")
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict):
-                    part_type = str(part.get("type") or "")
-                    if part_type in unsupported_content_types:
-                        unsupported.append(part_type)
-    return unsupported
+    return format_domestic_unsupported_reason(report)
 
 
 def _upstream_request(

@@ -839,18 +839,30 @@ def normalize_media_profile(data: Any) -> Dict[str, Any]:
     }
 
 
+def normalize_string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
 def normalize_responses_profile(data: Any) -> Dict[str, Any]:
     raw = data if isinstance(data, dict) else {}
     unsupported = raw.get("unsupported_fields")
     if not isinstance(unsupported, list):
         unsupported = []
     return {
+        "profile_id": str(raw.get("profile_id") or "").strip(),
         "domestic_responses": bool(raw.get("domestic_responses", False)),
         "partial_compatibility": bool(raw.get("partial_compatibility", False)),
         "requires_adapter": bool(raw.get("requires_adapter", False)),
         "verified_docs_url": str(raw.get("verified_docs_url") or "").strip(),
         "compatibility_notes": str(raw.get("compatibility_notes") or "").strip(),
         "unsupported_fields": [str(item) for item in unsupported],
+        "verified_features": normalize_string_list(raw.get("verified_features")),
+        "partial_or_unsupported_features": normalize_string_list(raw.get("partial_or_unsupported_features")),
+        "verified_event_types": normalize_string_list(raw.get("verified_event_types")),
+        "allowed_tool_types": normalize_string_list(raw.get("allowed_tool_types")),
+        "allowed_input_content_types": normalize_string_list(raw.get("allowed_input_content_types")),
     }
 
 
@@ -1205,12 +1217,17 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "catalog_visibility": "selected_models",
             "capabilities": {"text": True, "vision": True, "streaming": True, "tools": True, "images": True, "videos": True, "models": True},
             "responses_profile": {
+                "profile_id": "alibaba_bailian",
                 "domestic_responses": True,
                 "partial_compatibility": True,
                 "requires_adapter": True,
                 "verified_docs_url": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses",
                 "compatibility_notes": "Official Bailian docs confirm OpenAI-compatible /compatible-mode/v1/responses, previous_response_id, and output_text streaming events. It is still marked partial: Codex custom tools, compact, and media item routing need adapter probes before real routing.",
                 "unsupported_fields": ["codex_custom_tools_until_adapter_verified", "compact_until_verified", "media_items_until_adapter_verified"],
+                "verified_features": ["text_input_output", "streaming_response_output_text_delta", "previous_response_id", "input_image", "function_tools", "code_interpreter", "web_search", "mcp_tool", "json_mode", "structured_outputs"],
+                "verified_event_types": ["response.output_text.delta", "response.completed"],
+                "allowed_tool_types": ["function", "web_search", "code_interpreter", "mcp"],
+                "allowed_input_content_types": ["input_text", "output_text", "text", "input_image"],
             },
             "media_profile": {
                 "default_image_provider": True,
@@ -1247,12 +1264,17 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "catalog_visibility": "focused_only",
             "capabilities": {"text": True, "vision": True, "streaming": True, "tools": True, "images": True, "videos": True, "models": True},
             "responses_profile": {
+                "profile_id": "volcengine_ark",
                 "domestic_responses": True,
                 "partial_compatibility": True,
                 "requires_adapter": True,
                 "verified_docs_url": "https://www.volcengine.com/docs/82379/1585128?lang=zh",
                 "compatibility_notes": "Official Ark Responses docs entry is recorded from the user-provided URL. Treat as partial compatibility: payload details, stream lifecycle, tools, and media behavior must be re-verified from readable docs/source before real routing.",
                 "unsupported_fields": ["payload_until_verified", "stream_lifecycle_until_verified", "tools_until_verified", "media_items_until_adapter_verified"],
+                "verified_features": ["text_input_output", "streaming_response_events", "previous_response_id", "input_image", "function_tools", "web_search", "image_process_tool", "knowledge_search_tool"],
+                "verified_event_types": ["response.created", "response.reasoning_summary_part.added", "response.reasoning_summary_text_delta"],
+                "allowed_tool_types": ["function", "web_search", "image_process", "knowledge_search"],
+                "allowed_input_content_types": ["input_text", "output_text", "text", "input_image"],
             },
             "media_profile": {
                 "default_image_provider": False,

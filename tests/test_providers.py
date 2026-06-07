@@ -31,7 +31,10 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertTrue(profile["domestic_responses"])
             self.assertTrue(profile["partial_compatibility"])
             self.assertTrue(profile["requires_adapter"])
+            self.assertEqual(profile["profile_id"], "alibaba_bailian")
             self.assertIn("qwen-api-via-openai-responses", profile["verified_docs_url"])
+            self.assertIn("input_image", profile["allowed_input_content_types"])
+            self.assertIn("response.output_text.delta", profile["verified_event_types"])
 
     def test_volcengine_responses_preset_is_adapter_required(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -42,8 +45,10 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertTrue(profile["domestic_responses"])
             self.assertTrue(profile["partial_compatibility"])
             self.assertTrue(profile["requires_adapter"])
+            self.assertEqual(profile["profile_id"], "volcengine_ark")
             self.assertIn("1585128", profile["verified_docs_url"])
             self.assertIn("payload_until_verified", profile["unsupported_fields"])
+            self.assertIn("image_process", profile["allowed_tool_types"])
 
     def test_catalog_preview_includes_selected_models(self):
         with tempfile.TemporaryDirectory() as tmpdir:
