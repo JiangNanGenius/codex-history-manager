@@ -121,6 +121,19 @@ def create_app() -> Flask:
             return None
         return jsonify(codex_mutation_error_payload(action)), 409
 
+    def _current_proxy_base_url() -> str:
+        status = proxy_server.status()
+        if status.get("base_url"):
+            return status["base_url"]
+        port = status.get("port") or config.get("proxy_port", 8080)
+        try:
+            port_int = int(port)
+        except (TypeError, ValueError):
+            port_int = 8080
+        if port_int < 1 or port_int > 65535:
+            port_int = 8080
+        return f"http://127.0.0.1:{port_int}/v1"
+
     @app.before_request
     def _block_writes_after_uninstall_cleanup():
         """After uninstall cleanup, keep the current process read-only."""
@@ -1181,6 +1194,8 @@ def create_app() -> Flask:
                 "codex_home": str(mgr.codex_home),
                 "config_path": str(mgr.config_path),
                 "auth_path": str(mgr.auth_path),
+                "proxy_status": proxy_server.status(),
+                "default_proxy_base_url": _current_proxy_base_url(),
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1192,7 +1207,7 @@ def create_app() -> Flask:
             body = request.get_json(silent=True) or {}
             mgr = CodexConfigManager()
             preview = mgr.preview_write_provider(
-                proxy_base_url=body.get("proxy_base_url", "http://localhost:8080/v1"),
+                proxy_base_url=body.get("proxy_base_url") or _current_proxy_base_url(),
                 proxy_model=body.get("proxy_model", "auto"),
             )
             preview["auth_redacted"] = redact_auth_for_preview(mgr.read_auth())
@@ -1210,7 +1225,7 @@ def create_app() -> Flask:
                 return denied
             mgr = CodexConfigManager()
             result = mgr.write_provider_config(
-                proxy_base_url=body.get("proxy_base_url", "http://localhost:8080/v1"),
+                proxy_base_url=body.get("proxy_base_url") or _current_proxy_base_url(),
                 proxy_model=body.get("proxy_model", "auto"),
                 preserve_official_auth=body.get("preserve_official_auth", True),
             )
@@ -1345,7 +1360,6 @@ def create_app() -> Flask:
                 if isinstance(new_port, bool) or not isinstance(new_port, int) or new_port < 1 or new_port > 65535:
                     return jsonify({"error": "Invalid proxy port", "status": proxy_server.status()}), 400
                 proxy_server.port = new_port
-                config.set("proxy_port", new_port)
             new_store = body.get("provider_store_path")
             if new_store:
                 proxy_server.provider_store_path = new_store

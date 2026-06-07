@@ -78,6 +78,16 @@ PORT_BACKOFF_SCAN_LIMIT = 50
 MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
 DEFAULT_UPSTREAM_TIMEOUT = 120  # 秒
 
+
+class LocalProxyHTTPServer(HTTPServer):
+    allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 # 全局配置（由 LocalProxyServer 在启动时设置）
 _provider_store_path: Optional[Path] = None
 
@@ -268,16 +278,6 @@ def _provider_api_format(provider: Dict[str, Any]) -> str:
         return str(api_format)
     # Legacy provider stores created before api_format existed were Chat-based.
     return "openai_chat"
-
-
-def _is_port_available(port: int) -> bool:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_sock:
-            test_sock.settimeout(1)
-            test_sock.bind(("127.0.0.1", port))
-        return True
-    except OSError:
-        return False
 
 
 def _native_responses_unsupported_reason(
@@ -1039,6 +1039,8 @@ class LocalProxyServer:
             "to": port,
             "attempts": 0,
             "scan_limit": PORT_BACKOFF_SCAN_LIMIT,
+            "host": "127.0.0.1",
+            "range_end": port,
         }
 
     def start(self) -> bool:
@@ -1058,6 +1060,8 @@ class LocalProxyServer:
                 "to": self.port,
                 "attempts": 0,
                 "scan_limit": PORT_BACKOFF_SCAN_LIMIT,
+                "host": "127.0.0.1",
+                "range_end": self.port,
             }
             return False
 
@@ -1065,16 +1069,12 @@ class LocalProxyServer:
         self._last_requested_port = original_port
         self._last_start_error = ""
         attempts = 0
+        range_end = min(original_port + PORT_BACKOFF_SCAN_LIMIT - 1, 65535)
 
-        for candidate_port in range(
-            original_port,
-            min(original_port + PORT_BACKOFF_SCAN_LIMIT, 65536),
-        ):
+        for candidate_port in range(original_port, range_end + 1):
             attempts += 1
-            if not _is_port_available(candidate_port):
-                continue
             try:
-                self._server = HTTPServer(("127.0.0.1", candidate_port), ProxyHandler)
+                self._server = LocalProxyHTTPServer(("127.0.0.1", candidate_port), ProxyHandler)
                 self.port = candidate_port
                 self._last_port_backoff = {
                     "used": candidate_port != original_port,
@@ -1082,10 +1082,13 @@ class LocalProxyServer:
                     "to": candidate_port,
                     "attempts": attempts,
                     "scan_limit": PORT_BACKOFF_SCAN_LIMIT,
+                    "host": "127.0.0.1",
+                    "range_end": range_end,
                 }
+                self._last_start_error = ""
                 break
             except OSError as e:
-                self._last_start_error = str(e)
+                self._last_start_error = f"Port {candidate_port} unavailable: {e}"
                 self._server = None
                 continue
         if self._server is None:
@@ -1096,7 +1099,11 @@ class LocalProxyServer:
                 "to": original_port,
                 "attempts": attempts,
                 "scan_limit": PORT_BACKOFF_SCAN_LIMIT,
+                "host": "127.0.0.1",
+                "range_end": range_end,
             }
+            if not self._last_start_error:
+                self._last_start_error = f"No available proxy port in range {original_port}-{range_end}"
             return False
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()

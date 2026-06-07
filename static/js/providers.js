@@ -1286,6 +1286,15 @@ let codexIntegrationState = {
     loading: false,
 };
 
+function getCodexIntegrationProxyBaseUrl() {
+    const status = codexIntegrationState.status || {};
+    const proxyStatus = status.proxy_status || {};
+    if (status.default_proxy_base_url) return status.default_proxy_base_url;
+    if (proxyStatus.base_url) return proxyStatus.base_url;
+    if (proxyStatus.port) return `http://127.0.0.1:${proxyStatus.port}/v1`;
+    return 'http://127.0.0.1:8080/v1';
+}
+
 /**
  * 加载 Codex Integration 页。
  * 该页卡片为静态结构，动画依赖 app.js 中 triggerStaggerAnimations
@@ -1316,7 +1325,7 @@ async function refreshCodexIntegrationBackups() {
 }
 
 async function previewCodexIntegration() {
-    const proxyBaseUrl = document.getElementById('ci-proxy-base-url')?.value || 'http://localhost:8080/v1';
+    const proxyBaseUrl = document.getElementById('ci-proxy-base-url')?.value || getCodexIntegrationProxyBaseUrl();
     const proxyModel = document.getElementById('ci-proxy-model')?.value || 'auto';
     try {
         codexIntegrationState.preview = await api('/api/codex-integration/preview', {
@@ -1331,7 +1340,7 @@ async function previewCodexIntegration() {
 }
 
 async function applyCodexIntegration() {
-    const proxyBaseUrl = document.getElementById('ci-proxy-base-url')?.value || 'http://localhost:8080/v1';
+    const proxyBaseUrl = document.getElementById('ci-proxy-base-url')?.value || getCodexIntegrationProxyBaseUrl();
     const proxyModel = document.getElementById('ci-proxy-model')?.value || 'auto';
     const preserveAuth = document.getElementById('ci-preserve-auth')?.checked !== false;
     const manual = requestCodexMutationConfirmation('write Codex config.toml');
@@ -1427,6 +1436,12 @@ function renderCodexIntegrationPage() {
     const status = codexIntegrationState.status || {};
     const preview = codexIntegrationState.preview;
     const backups = codexIntegrationState.backups;
+    const proxyBaseUrl = getCodexIntegrationProxyBaseUrl();
+    const proxyStatus = status.proxy_status || {};
+    const proxyBackoff = proxyStatus.port_backoff || {};
+    const proxyBackoffNote = proxyBackoff.used
+        ? `<div class="mt-2 text-xs text-amber-300">Configured port ${escapeHtml(proxyBackoff.from)} was occupied; using ${escapeHtml(proxyBackoff.to)}.</div>`
+        : '';
 
     root.innerHTML = `
         <div class="animate-in">
@@ -1457,13 +1472,14 @@ function renderCodexIntegrationPage() {
                 <div class="card">
                     <h3 class="card-title">Local Proxy Settings</h3>
                     <div class="grid grid-cols-1 gap-4 mt-3">
-                        ${renderInput('ci-proxy-base-url', 'Proxy Base URL', 'http://localhost:8080/v1')}
+                        ${renderInput('ci-proxy-base-url', 'Proxy Base URL', proxyBaseUrl)}
                         ${renderInput('ci-proxy-model', 'Proxy Model', 'auto')}
                         <label class="flex items-center gap-2 text-sm cursor-pointer">
                             <input id="ci-preserve-auth" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" checked>
                             <span>Preserve official OAuth (do not modify auth.json)</span>
                         </label>
                     </div>
+                    ${proxyBackoffNote}
                     <div class="flex flex-wrap gap-2 mt-4">
                         <button onclick="previewCodexIntegration()" class="btn btn-secondary">Preview Diff</button>
                         <button onclick="applyCodexIntegration()" class="btn btn-warning">Manual Apply to Codex Config</button>

@@ -1,5 +1,6 @@
 import io
 import json
+import socket
 import tempfile
 import unittest
 import urllib.error
@@ -279,9 +280,33 @@ class LocalProxyServerTest(unittest.TestCase):
         self.assertTrue(status["port_backoff"]["used"])
         self.assertEqual(status["port_backoff"]["from"], 18083)
         self.assertEqual(status["port_backoff"]["to"], status["port"])
+        self.assertEqual(status["port_backoff"]["host"], "127.0.0.1")
+        self.assertGreaterEqual(status["port_backoff"]["range_end"], status["port"])
+        self.assertEqual(status["last_start_error"], "")
         self.assertEqual(status["base_url"], f"http://127.0.0.1:{status['port']}/v1")
         server2.stop()
         server1.stop()
+
+    def test_external_port_conflict_auto_backs_off(self):
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen(1)
+        occupied_port = int(blocker.getsockname()[1])
+        server = LocalProxyServer(port=occupied_port)
+        try:
+            self.assertTrue(server.start())
+            status = server.status()
+            self.assertTrue(status["running"])
+            self.assertNotEqual(status["port"], occupied_port)
+            self.assertEqual(status["requested_port"], occupied_port)
+            self.assertTrue(status["port_backoff"]["used"])
+            self.assertEqual(status["port_backoff"]["from"], occupied_port)
+            self.assertEqual(status["port_backoff"]["to"], status["port"])
+            self.assertEqual(status["last_start_error"], "")
+        finally:
+            server.stop()
+            blocker.close()
 
     def test_sets_provider_store_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
