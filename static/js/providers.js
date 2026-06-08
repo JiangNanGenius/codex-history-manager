@@ -85,9 +85,14 @@ const NATIVE_LOCKED_CAPABILITIES = {
  * 与 attachRippleToButtons 调用，无需在此处额外触发。
  */
 async function loadEnhanceOverview() {
-    await ensureProviderData();
     renderEnhanceOverview();
-    setStatus('Overview loaded');
+    setStatus(t('loading') || 'Loading...');
+    setTimeout(async () => {
+        await ensureProviderData();
+        if (currentPage !== 'overview') return;
+        renderEnhanceOverview();
+        setStatus('Overview loaded');
+    }, 0);
 }
 
 /**

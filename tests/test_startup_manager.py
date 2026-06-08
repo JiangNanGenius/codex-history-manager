@@ -1,16 +1,38 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from startup_manager import (
     CommandResult,
+    CREATE_NO_WINDOW,
     PACKAGED_RELEASE_EXE_NAME,
     STARTUP_CONFIRMATION,
     StartupManager,
+    _default_runner,
+    _default_platform_name,
 )
 
 
 class StartupManagerTest(unittest.TestCase):
+    def test_default_runner_hides_windows_console(self):
+        completed = MagicMock(returncode=0, stdout="ok", stderr="")
+
+        with patch("startup_manager.subprocess.run", return_value=completed) as run:
+            result = _default_runner(["schtasks.exe", "/Query"])
+
+        self.assertEqual(result.returncode, 0)
+        _, kwargs = run.call_args
+        self.assertEqual(kwargs["creationflags"], CREATE_NO_WINDOW)
+        self.assertTrue(kwargs["capture_output"])
+        self.assertTrue(kwargs["text"])
+
+    def test_default_platform_name_avoids_windows_wmi(self):
+        with patch("startup_manager.os.name", "nt"), \
+                patch("startup_manager.platform.system") as platform_system:
+            self.assertEqual(_default_platform_name(), "Windows")
+            platform_system.assert_not_called()
+
     def test_startup_folder_apply_writes_cmd_without_real_windows_mutation(self):
         calls = []
 

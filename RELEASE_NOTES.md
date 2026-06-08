@@ -1,5 +1,23 @@
 # Release Notes
 
+## v2.2.10 - 2026-06-08
+
+### 中文
+
+- 修复点击设置页/进入设置向导时弹出 CMD 窗口的问题。
+- 设置页会读取 Windows 开机启动状态，后端需要调用 `schtasks.exe /Query`；现在该调用统一带 `CREATE_NO_WINDOW`，查询、创建和删除任务都不会闪出控制台窗口。
+- 补充测试，确保启动管理器默认命令 runner 永远传入隐藏控制台参数。
+- 优化启动体感：后端平台识别不再触发 Windows WMI，总览页和设置页先渲染首屏，再后台刷新供应商、清理、启动状态和更新检查。
+- 后端初始化实测从 500ms 级别降到约 `27ms`；本次 EXE 大小 `73.15 MB`，SHA256 `e9d7cebb3dc18b3ac2b5f41829a4ee658065051792787343ec58f5b86e80d544`；已验证打包版启动后 `/api/startup/status` 正常返回。
+
+### English
+
+- Fixed a CMD window flashing when opening Settings or the Settings Wizard.
+- Settings reads Windows startup status through `schtasks.exe /Query`; the startup command runner now always uses `CREATE_NO_WINDOW`, so query/create/delete task operations do not flash a console window.
+- Added coverage to ensure the startup manager default runner always passes the hidden-console flag.
+- Improved perceived startup speed: backend platform detection no longer touches Windows WMI, and Overview/Settings render their first screen before provider, cleanup, startup-status, and update checks finish in the background.
+- Backend initialization dropped from the 500ms range to about `27ms`; this EXE is `73.15 MB` with SHA256 `e9d7cebb3dc18b3ac2b5f41829a4ee658065051792787343ec58f5b86e80d544`; packaged startup plus `/api/startup/status` was verified.
+
 ## v2.2.9 - 2026-06-08
 
 ### 中文

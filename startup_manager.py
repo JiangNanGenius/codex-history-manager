@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 
+CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 STARTUP_CONFIRMATION = "MODIFY_WINDOWS_STARTUP"
 STARTUP_MODES = {"disabled", "startup_folder", "scheduled_task_highest"}
 PACKAGED_RELEASE_EXE_NAME = "CodexHistoryManager.exe"
@@ -44,12 +45,20 @@ def _default_runner(args: List[str]) -> CommandResult:
         text=True,
         timeout=15,
         check=False,
+        creationflags=CREATE_NO_WINDOW,
     )
     return CommandResult(
         returncode=completed.returncode,
         stdout=completed.stdout or "",
         stderr=completed.stderr or "",
     )
+
+
+def _default_platform_name() -> str:
+    """Avoid platform.system() on Windows because it may touch WMI during startup."""
+    if os.name == "nt":
+        return "Windows"
+    return platform.system()
 
 
 class StartupManager:
@@ -65,7 +74,7 @@ class StartupManager:
         self.app_name = app_name
         self._startup_dir = startup_dir
         self._runner = runner or _default_runner
-        self._platform_name = platform_name or platform.system()
+        self._platform_name = platform_name or _default_platform_name()
         self._module_dir = Path(module_dir) if module_dir else Path(__file__).resolve().parent
 
     @property

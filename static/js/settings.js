@@ -419,24 +419,37 @@ async function loadSettings() {
         showSettingsWizardStep(settingsWizardStep, { scroll: false });
         setStatus(t('settingsLoaded'));
 
+        const hasDbPath = data.db_path && String(data.db_path).trim().length > 0;
+        const hasSessionsDir = data.sessions_dir && String(data.sessions_dir).trim().length > 0;
+        scheduleSettingsBackgroundLoads({ needsAutoDetect: !hasDbPath || !hasSessionsDir });
+    } catch (err) {
+        showToast(t('failedLoadSettings') + err.message, 'error');
+    }
+}
+
+function scheduleSettingsBackgroundLoads({ needsAutoDetect = false } = {}) {
+    setTimeout(async () => {
         await Promise.allSettled([
             loadStorageInfo(),
             loadCleanupPreview(),
             loadUninstallPreview(),
             loadCurrencySettings(),
             loadStartupStatus(),
-            loadUpdateStatus(),
             typeof ensureProviderData === 'function' ? ensureProviderData() : Promise.resolve(),
         ]);
-        updateSettingsWizardChecklist(readSettingsWizardDraft());
-
-        const hasDbPath = data.db_path && String(data.db_path).trim().length > 0;
-        const hasSessionsDir = data.sessions_dir && String(data.sessions_dir).trim().length > 0;
-        if (!hasDbPath || !hasSessionsDir) {
-            await runAutoDetect();
+        if (currentPage === 'settings') {
+            updateSettingsWizardChecklist(readSettingsWizardDraft());
         }
-    } catch (err) {
-        showToast(t('failedLoadSettings') + err.message, 'error');
+    }, 0);
+
+    setTimeout(() => {
+        if (currentPage === 'settings') loadUpdateStatus();
+    }, 900);
+
+    if (needsAutoDetect) {
+        setTimeout(() => {
+            if (currentPage === 'settings') runAutoDetect();
+        }, 250);
     }
 }
 

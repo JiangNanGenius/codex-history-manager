@@ -4,6 +4,7 @@
 
 ## 本轮发布目标
 
+- [x] 设置页 hotfix 升至 `v2.2.10`：修复进入设置页读取开机启动状态时 `schtasks.exe` 闪出 CMD 窗口。
 - [x] 启动 hotfix 升至 `v2.2.9`：修复 `51234` 被旧测试/开发服务占用时，EXE 误判已启动并静默退出的问题。
 - [x] 版本号升至 `v2.2.8`，避免复用已发布的 `v2.2.7`。
 - [x] README 中英文重写为面向用户的说明，去掉旧的技术化检查说明和“手动修改限制”表达。
@@ -12,6 +13,7 @@
 - [x] 对打包后的 EXE 运行 `--smoke-test`。真实桌面冒烟仍需继续覆盖：主界面、设置向导、悬浮窗、托盘菜单、启动/关闭 Codex、退出清理。
 - [x] 提交、推送，并创建带 EXE 资产的 GitHub Release：`https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases/tag/v2.2.8`。
 - [x] 提交、推送，并创建带 EXE 资产的 hotfix Release：`https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases/tag/v2.2.9`。
+- [ ] 提交、推送，并创建带 EXE 资产的 settings hotfix Release：`v2.2.10`。
 
 ## 最高优先级
 
@@ -68,6 +70,8 @@
 - [x] `python -m py_compile approval_broker.py app.py main.py providers.py capabilities.py`
 - [x] `python build_exe.py --no-desktop-copy --smoke-test --write-release-manifest`
 - [x] 端口冲突真实启动验证：源码桌面和打包 EXE 在 `51234` 被非桌面服务占用时均成功启动到 `51235`。
+- [x] 设置页真实接口验证：打包 EXE 启动后 `/api/startup/status` 正常返回，开机启动状态检查走隐藏控制台参数。
+- [x] 启动优化验证：后端 `create_app()` 从 500ms 级别降到约 27ms；总览/设置页改为首屏先出、慢检查后台刷新。
 - [ ] 打开打包版 EXE，检查主界面、设置页、总览、悬浮窗、托盘菜单、启动 Codex 和退出清理。
 - [x] GitHub Release 上传 `dist/CodexHistoryManager.exe` 和 `dist/release-manifest.json`。
 - [x] Release 描述必须中英文双语，并写清测试结果和已知风险。
