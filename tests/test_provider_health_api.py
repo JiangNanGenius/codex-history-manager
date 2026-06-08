@@ -188,6 +188,72 @@ class ProviderHealthApiTest(unittest.TestCase):
         self.assertEqual(provider["headers"]["Authorization"], "Bearer saved-header")
         self.assertEqual(provider["headers"]["X-Trace-Id"], "draft")
 
+    def test_provider_request_preview_draft_uses_real_proxy_headers_and_redacts(self):
+        app, registry, _diagnostics = self._app_for_provider_draft({
+            "id": "p1",
+            "display_name": "Provider",
+            "short_alias": "p1",
+            "base_url": "https://old.example.test/v1",
+            "api_key": "saved-secret",
+            "api_format": "openai_chat",
+            "headers": {"Authorization": "Bearer saved-header", "X-Trace-Id": "old"},
+            "aliases": {"codex-fast": "gpt-5-real"},
+            "models": [
+                {"id": "gpt-5-real", "enabled": True, "selected": True, "api_format": "openai_responses"},
+            ],
+        })
+
+        response = app.test_client().post("/api/providers/p1/request-preview-draft", json={
+            "model": "p1/codex-fast",
+            "provider": {
+                "api_key": "********",
+                "base_url": "https://new.example.test/v1",
+                "user_agent": "DraftUA/1.0",
+                "headers": {"Authorization": "********", "X-Trace-Id": "draft"},
+            },
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["preview"])
+        self.assertFalse(data["network_request"])
+        self.assertTrue(data["uses_real_proxy_headers"])
+        self.assertEqual(data["base_url"], "https://new.example.test/v1")
+        self.assertEqual(data["requested_model"], "p1/codex-fast")
+        self.assertEqual(data["upstream_model"], "gpt-5-real")
+        self.assertEqual(data["api_format"], "openai_responses")
+        self.assertEqual(data["headers"]["Content-Type"], "application/json")
+        self.assertEqual(data["headers"]["User-Agent"], "DraftUA/1.0")
+        self.assertEqual(data["headers"]["X-Trace-Id"], "draft")
+        self.assertEqual(data["headers"]["Authorization"], "********")
+        self.assertNotIn("saved-secret", json.dumps(data, ensure_ascii=False))
+        self.assertTrue(any("Exact model alias" in line for line in data["route_explanation"]))
+        registry.get_provider.assert_called_once_with("p1", include_secrets=True)
+
+    def test_provider_request_preview_draft_shows_regex_model_rewrite(self):
+        app, _registry, _diagnostics = self._app_for_provider_draft({
+            "id": "p1",
+            "display_name": "Provider",
+            "short_alias": "p1",
+            "base_url": "https://api.example.test/v1",
+            "api_format": "openai_chat",
+            "alias_patterns": [{"pattern": "^fast-(.+)$", "replacement": "\\1-turbo"}],
+            "models": [{"id": "qwen-turbo", "enabled": True, "selected": True}],
+        })
+
+        response = app.test_client().post("/api/providers/p1/request-preview-draft", json={
+            "request": {"model": "fast-qwen"},
+            "provider": {},
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["requested_model"], "fast-qwen")
+        self.assertEqual(data["upstream_model"], "qwen-turbo")
+        self.assertEqual(data["api_format"], "openai_chat")
+        self.assertTrue(any("Regex model mapping" in line for line in data["route_explanation"]))
+
     def test_model_catalog_preview_draft_uses_registry_draft_preview(self):
         app, registry, _diagnostics = self._app_for_provider_draft({
             "id": "p1",

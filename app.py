@@ -51,7 +51,14 @@ from codex_config import (
     save_config_toml,
     load_config_toml as _load_config_toml,
 )
-from proxy_server import LocalProxyServer
+from proxy_server import (
+    LocalProxyServer,
+    _build_upstream_headers,
+    _extract_model_id_for_upstream,
+    _provider_alias_map,
+    _provider_alias_patterns,
+    _route_api_format,
+)
 from domestic_responses import build_domestic_responses_probe_preview
 from diagnostics import DiagnosticsCollector
 from move_repair import MoveRepairManager
@@ -1973,6 +1980,35 @@ def create_app() -> Flask:
         provider = merge_provider_update(existing, draft if isinstance(draft, dict) else {})
         return diagnostics_collector.check_provider_payload_connectivity(provider)
 
+    def _provider_draft_request_preview(provider_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        _refresh_provider_registry_path()
+        existing = provider_registry.get_provider(provider_id, include_secrets=True)
+        if not existing:
+            return {
+                "success": False,
+                "provider_id": provider_id,
+                "error": f"Provider not found: {provider_id}",
+                "preview": True,
+            }
+        draft = body.get("provider") if isinstance(body.get("provider"), dict) else body
+        provider = merge_provider_update(existing, draft if isinstance(draft, dict) else {})
+        request_json = body.get("request") if isinstance(body.get("request"), dict) else {}
+        requested_model = _request_preview_model(provider, body, request_json)
+        upstream_model = _extract_model_id_for_upstream({"model": requested_model}, provider) if requested_model else ""
+        return {
+            "success": True,
+            "preview": True,
+            "network_request": False,
+            "uses_real_proxy_headers": True,
+            "provider_id": str(provider.get("id") or provider_id),
+            "base_url": str(provider.get("base_url") or ""),
+            "requested_model": requested_model,
+            "upstream_model": upstream_model,
+            "api_format": _route_api_format(provider, upstream_model),
+            "headers": _redact_request_preview_headers(_build_upstream_headers(provider)),
+            "route_explanation": _request_preview_route_explanation(requested_model, upstream_model, provider),
+        }
+
     @app.route("/api/providers/<provider_id>/health-check", methods=["POST"])
     def provider_health_check(provider_id):
         """
@@ -1997,6 +2033,16 @@ def create_app() -> Flask:
         except Exception as e:
             diagnostics_collector.record_error("api.providers.health_check_draft", str(e))
             return jsonify({"success": False, "reachable": False, "provider_id": provider_id, "error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/request-preview-draft", methods=["POST"])
+    def provider_request_preview_draft(provider_id):
+        """Preview the real proxy route and headers for the current provider draft."""
+        try:
+            body = request.get_json(silent=True) or {}
+            return jsonify(_provider_draft_request_preview(provider_id, body))
+        except Exception as e:
+            diagnostics_collector.record_error("api.providers.request_preview_draft", str(e))
+            return jsonify({"success": False, "provider_id": provider_id, "preview": True, "error": str(e)}), 500
 
     @app.route("/api/diagnostics/test-provider/<provider_id>", methods=["POST"])
     def test_provider_connectivity(provider_id):
@@ -2088,6 +2134,98 @@ def _route_candidate_matches_model(candidate: Dict[str, Any], model_filter: str)
         f"{candidate.get('short_alias')}/{candidate.get('model_id')}",
     }
     return any(needle == alias.lower() for alias in aliases if alias)
+
+
+def _request_preview_model(provider: Dict[str, Any], body: Dict[str, Any], request_json: Dict[str, Any]) -> str:
+    for value in (request_json.get("model"), body.get("model")):
+        text = str(value or "").strip()
+        if text:
+            return text
+    models = provider.get("models") if isinstance(provider.get("models"), list) else []
+    for selected_only in (True, False):
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            if model.get("enabled", True) is False:
+                continue
+            if selected_only and not model.get("selected", False):
+                continue
+            model_id = str(model.get("id") or "").strip()
+            if model_id:
+                return model_id
+    for value in (provider.get("default_model"), provider.get("model")):
+        text = str(value or "").strip()
+        if text:
+            return text
+    aliases = _provider_alias_map(provider)
+    for alias in aliases.keys():
+        text = str(alias or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _redact_request_preview_headers(headers: Dict[str, Any]) -> Dict[str, str]:
+    redacted: Dict[str, str] = {}
+    for key, value in headers.items():
+        name = str(key)
+        text = str(value)
+        lower_name = name.lower()
+        lower_value = text.lower()
+        if (
+            lower_name in {"authorization", "proxy-authorization", "x-api-key", "api-key", "apikey", "api_key"}
+            or any(part in lower_name for part in ("token", "secret", "password"))
+            or lower_value.startswith("bearer ")
+            or lower_value.startswith(("sk-", "sk_"))
+        ):
+            redacted[name] = "********"
+        else:
+            redacted[name] = text
+    return redacted
+
+
+def _request_preview_route_explanation(requested_model: str, upstream_model: str, provider: Dict[str, Any]) -> list[str]:
+    if not requested_model:
+        return ["No model is selected yet; choose or add a model before sending requests.", "Preview only; no provider request was sent."]
+
+    explanation: list[str] = []
+    requested_upstream = requested_model
+    if "/" in requested_model:
+        _prefix, requested_upstream = requested_model.split("/", 1)
+        explanation.append(f"Provider prefix removed: {requested_model} -> {requested_upstream}.")
+
+    aliases = _provider_alias_map(provider)
+    matched = False
+    if requested_upstream in aliases and aliases[requested_upstream] == upstream_model:
+        explanation.append(f"Exact model alias applied: {requested_upstream} -> {upstream_model}.")
+        matched = True
+    else:
+        lowered = requested_upstream.lower().strip()
+        for source, target in aliases.items():
+            if source.lower().strip() == lowered and target == upstream_model:
+                explanation.append(f"Case-insensitive model alias applied: {requested_upstream} -> {upstream_model}.")
+                matched = True
+                break
+
+    if not matched:
+        for pattern in _provider_alias_patterns(provider):
+            try:
+                if re.search(pattern["pattern"], requested_upstream):
+                    rewritten = re.sub(pattern["pattern"], pattern["replacement"], requested_upstream, count=1)
+                    if rewritten == upstream_model:
+                        explanation.append(f"Regex model mapping applied: {pattern['pattern']} -> {upstream_model}.")
+                        matched = True
+                        break
+            except re.error:
+                continue
+
+    if not matched:
+        if upstream_model and upstream_model != requested_upstream:
+            explanation.append(f"Model mapping applied: {requested_upstream} -> {upstream_model}.")
+        else:
+            explanation.append("Model is forwarded unchanged.")
+    explanation.append("Preview only; no provider request was sent.")
+    return explanation
 
 
 def _route_candidate_status(

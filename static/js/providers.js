@@ -45,6 +45,7 @@ let providerState = {
     mediaAdapterPreview: null,
     quotaPreview: null,
     healthPreview: null,
+    requestPreview: null,
 };
 
 const QUICK_SETUP_STEP_COUNT = 5;
@@ -797,6 +798,7 @@ function renderProviderEditor(provider) {
                 <button onclick="saveSelectedProvider()" class="btn btn-primary">${escapeHtml(t('saveLocalProvider'))}</button>
                 <button onclick="testSelectedProvider()" class="btn btn-secondary">${escapeHtml(t('testThisSection'))}</button>
                 <button onclick="checkProviderHealth()" class="btn btn-secondary">${escapeHtml(t('checkNetwork'))}</button>
+                <button onclick="previewProviderRequest()" class="btn btn-secondary">${escapeHtml(t('requestPreview'))}</button>
                 <button onclick="previewResponsesProbe()" class="btn btn-secondary">${escapeHtml(t('responsesProbePreview'))}</button>
                 <button onclick="previewMediaRoutes()" class="btn btn-secondary">${escapeHtml(t('mediaRouteCheck'))}</button>
                 <button onclick="previewMediaAdapter()" class="btn btn-secondary">${escapeHtml(t('mediaAdapterPreview'))}</button>
@@ -848,6 +850,13 @@ function renderProviderPreviewPanels() {
             <p class="text-xs text-dark-400 mt-1">${escapeHtml(t('providerHealthDesc'))}</p>
             ${renderProviderHealthResult(providerState.healthPreview)}
             <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.healthPreview || {}, null, 2))}</pre>
+        </div>
+
+        <div id="provider-request-preview" class="card ${providerState.requestPreview ? '' : 'hidden'}">
+            <h3 class="card-title">${escapeHtml(t('requestPreview'))}</h3>
+            <p class="text-xs text-dark-400 mt-1">${escapeHtml(t('requestPreviewDesc'))}</p>
+            ${renderProviderRequestPreviewResult(providerState.requestPreview)}
+            <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.requestPreview || {}, null, 2))}</pre>
         </div>
     `;
 }
@@ -902,6 +911,59 @@ function renderProviderHealthResult(result) {
         </div>
         <div class="text-xs text-dark-400 mt-2 break-all">${escapeHtml(target)}</div>
         <div class="text-xs ${success ? 'text-emerald-300' : 'text-amber-200'} mt-2">${escapeHtml(message)}</div>
+    `;
+}
+
+function renderProviderRequestPreviewResult(result) {
+    if (!result) return '';
+    if (result.success === false) {
+        return `<div class="text-xs text-red-300 mt-3">${escapeHtml(result.error || t('unknownError'))}</div>`;
+    }
+    const requestedModel = result.requested_model || t('notSelected');
+    const upstreamModel = result.upstream_model || t('notSelected');
+    const headers = result.headers && typeof result.headers === 'object' ? result.headers : {};
+    return `
+        <div class="enhance-status-strip mt-3">
+            ${renderStatusPill('requested', requestedModel, result.requested_model ? 'accent' : 'amber')}
+            ${renderStatusPill('upstream', upstreamModel, result.upstream_model ? 'emerald' : 'amber')}
+            ${renderStatusPill('format', result.api_format || t('formatUnknown'), 'dark')}
+            ${renderStatusPill('mode', result.network_request ? t('sent') : t('previewOnly'), result.network_request ? 'amber' : 'emerald')}
+        </div>
+        <div class="text-xs text-dark-400 mt-3 break-all">${escapeHtml(t('upstreamPathLabel'))}: ${escapeHtml(result.base_url || '-')}</div>
+        <div class="mt-3">
+            <div class="text-xs font-semibold text-dark-300 mb-2">${escapeHtml(t('requestHeadersRedacted'))}</div>
+            <pre class="preview-code">${escapeHtml(JSON.stringify(headers, null, 2))}</pre>
+        </div>
+        ${renderProviderRequestRouteExplanation(result)}
+    `;
+}
+
+function renderProviderRequestRouteExplanation(result) {
+    const lines = Array.isArray(result.route_explanation) ? result.route_explanation : [];
+    if (!lines.length) return '';
+    const requestedModel = result.requested_model || '';
+    const upstreamModel = result.upstream_model || '';
+    const strippedModel = requestedModel.includes('/') ? requestedModel.split('/').slice(1).join('/') : requestedModel;
+    const translated = lines.map(line => {
+        const text = String(line || '');
+        if (text.startsWith('Provider prefix removed')) {
+            return t('requestRoutePrefixRemoved', { from: requestedModel, to: strippedModel });
+        }
+        if (text.startsWith('Exact model alias') || text.startsWith('Case-insensitive model alias') || text.startsWith('Model mapping applied')) {
+            return t('requestRouteAliasApplied', { from: strippedModel || requestedModel, to: upstreamModel });
+        }
+        if (text.startsWith('Regex model mapping')) {
+            return t('requestRouteRegexApplied', { from: strippedModel || requestedModel, to: upstreamModel });
+        }
+        if (text.includes('forwarded unchanged')) return t('requestRouteUnchanged');
+        if (text.startsWith('No model is selected')) return t('requestRouteNoModel');
+        if (text.startsWith('Preview only')) return t('requestRoutePreviewOnly');
+        return text;
+    });
+    return `
+        <div class="mt-3 space-y-1">
+            ${translated.map(line => `<div class="text-xs text-dark-400">${escapeHtml(line)}</div>`).join('')}
+        </div>
     `;
 }
 
@@ -1437,6 +1499,7 @@ async function selectProvider(providerId) {
     providerState.mediaAdapterPreview = null;
     providerState.quotaPreview = null;
     providerState.healthPreview = null;
+    providerState.requestPreview = null;
     renderProvidersPage();
     await refreshSelectedQuotaCache();
     renderProvidersPage();
@@ -1457,6 +1520,7 @@ async function saveSelectedProvider() {
         providerState.mediaAdapterPreview = null;
         providerState.quotaPreview = null;
         providerState.healthPreview = null;
+        providerState.requestPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
         renderProvidersPage();
@@ -1501,6 +1565,27 @@ async function checkProviderHealth() {
             showToast(t('providerHealthReachable'), 'success');
         } else {
             showToast(t('providerHealthIssue'), 'warning');
+        }
+    } catch (err) {
+        showProviderFormError(err.message);
+    }
+}
+
+async function previewProviderRequest() {
+    const provider = getSelectedProvider();
+    if (!provider) return;
+    const draft = readProviderForm(provider);
+    if (!draft) return;
+    try {
+        providerState.requestPreview = await api('/api/providers/' + encodeURIComponent(provider.id) + '/request-preview-draft', {
+            method: 'POST',
+            body: JSON.stringify({ provider: draft }),
+        });
+        refreshProviderPreviewPanels();
+        if (providerState.requestPreview && providerState.requestPreview.success) {
+            showToast(t('requestPreviewGenerated'), 'success');
+        } else {
+            showToast(t('requestPreviewIssue'), 'warning');
         }
     } catch (err) {
         showProviderFormError(err.message);

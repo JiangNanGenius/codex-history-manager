@@ -33,13 +33,13 @@
 
 ## 供应商与纯原生代理支持
 
-- [ ] 连接测试必须和真实代理请求使用一致的 User-Agent 和自定义 headers。
+- [x] 连接测试/预览必须和真实代理请求使用一致的 User-Agent 和自定义 headers。本轮新增“请求预览”dry-run：复用真实代理 `_build_upstream_headers`，显示 Content-Type、User-Agent、自定义 headers，并在返回前隐藏 Authorization/x-api-key 等敏感值；原有轻量网络检查仍保持低风险 HEAD。
 - [ ] 纯原生 Responses 代理要检查图片/视频接口是否被同一 base URL 代理；若没有，界面应提示需要配置媒体供应商或开启全局 fallback。
 - [ ] 一个供应商可提供多个不同能力模型，路由和目录不能只按供应商级能力判断。
 - [x] 托盘/悬浮窗快速切换供应商：本轮新增持久化 `focus_provider_id`、`/api/providers/focus`、桌面 API 和本地代理焦点优先路由；媒体请求在焦点供应商具备能力时优先使用焦点，否则仍走全局媒体 fallback。
 - [x] Responses 和 Chat 接口要能区分到模型级：本轮已增加模型级 `api_format`，目录预览显示最终接口来源，`/v1/responses` 路由会按模型级 Responses/Chat 选择原生或转换路径。
 - [x] 模型是否原生支持审批要有设置项：本轮已增加模型级 `native_approval` 标记，并在模型能力 badge 中显示。
-- [ ] 模型名映射支持 exact、alias、regex，并在测试页显示最终上游模型名。
+- [x] 模型名映射支持 exact、alias、regex，并在测试页显示最终上游模型名。本轮新增 provider 请求预览：显示 requested_model、upstream_model、api_format 和路由说明，覆盖 provider 前缀剥离、exact/case-insensitive alias 与 regex rewrite。
 - [ ] 对不支持图片/视频的纯文本代理，不显示“全部不支持”，而是引导配置媒体 fallback。
 - [x] 自动审批默认开启后不应破坏媒体代理：隐式默认无 reviewer 时允许媒体请求继续，用户显式开启的严格审批仍按失败策略处理。
 

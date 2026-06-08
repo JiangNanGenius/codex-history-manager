@@ -62,3 +62,12 @@ def test_monitor_context_menu_exposes_desktop_actions():
     assert "switch_provider" in js
     assert "autoProvider" in js
     assert "/api/providers/focus" in js
+
+
+def test_provider_request_preview_ui_is_wired():
+    js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+
+    assert "previewProviderRequest" in js
+    assert "/request-preview-draft" in js
+    assert "provider-request-preview" in js
+    assert "requestHeadersRedacted" in js
