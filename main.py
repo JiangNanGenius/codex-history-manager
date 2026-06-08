@@ -33,6 +33,7 @@ import traceback
 import urllib.error
 import urllib.request
 import queue
+import socket
 import webview
 
 try:
@@ -45,7 +46,8 @@ except Exception:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-PORT = 51234
+DEFAULT_PORT = 51234
+PORT = DEFAULT_PORT
 URL = f"http://127.0.0.1:{PORT}"
 APP_TITLE = "Codex 历史记录管理器"
 SMOKE_TEST_ARG = "--smoke-test"
@@ -58,7 +60,9 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 GWL_EXSTYLE = -20
 SW_HIDE = 0
 SW_SHOWNOACTIVATE = 4
+SW_RESTORE = 9
 HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
 WS_EX_NOACTIVATE = 0x08000000
@@ -76,6 +80,7 @@ LR_DEFAULTSIZE = 0x00000040
 IDYES = 6
 IDNO = 7
 LOCAL_API_TIMEOUT = 10
+PORT_SCAN_LIMIT = 30
 TRAY_MENU_TEXT = {
     "show_main": "显示主窗口",
     "show_settings": "打开设置",
@@ -158,11 +163,85 @@ def _start_pyinstaller_parent_watchdog() -> bool:
 
 
 def _existing_instance_responds() -> bool:
+    health = _desktop_backend_health(DEFAULT_PORT)
+    if health.get("desktop_mode"):
+        _show_existing_desktop_window()
+        return True
+    return False
+
+
+def _set_backend_port(port: int):
+    """Update the local backend URL before creating WebView windows."""
+    global PORT, URL
+    PORT = int(port)
+    URL = f"http://127.0.0.1:{PORT}"
+
+
+def _desktop_backend_health(port: int = DEFAULT_PORT) -> dict:
     try:
-        with urllib.request.urlopen(f"{URL}/api/settings", timeout=0.8) as response:
-            return response.status == 200
+        with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/api/health", timeout=0.8) as response:
+            if response.status != 200:
+                return {}
+            raw = response.read().decode("utf-8", errors="replace")
+            data = json.loads(raw) if raw else {}
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _port_is_free(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.2)
+            return sock.connect_ex(("127.0.0.1", int(port))) != 0
     except Exception:
         return False
+
+
+def _select_backend_port(preferred: int = DEFAULT_PORT) -> int:
+    """Choose a backend port, skipping non-desktop services left by tests/dev servers."""
+    health = _desktop_backend_health(preferred)
+    if health.get("desktop_mode"):
+        return int(preferred)
+    if _port_is_free(preferred):
+        return int(preferred)
+    for offset in range(1, PORT_SCAN_LIMIT + 1):
+        candidate = int(preferred) + offset
+        if _port_is_free(candidate):
+            return candidate
+    raise RuntimeError(f"No free local port found near {preferred}.")
+
+
+def _show_existing_desktop_window() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        handles: list[int] = []
+
+        enum_proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def enum_proc(hwnd, lparam):
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buffer = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buffer, length + 1)
+                if buffer.value == APP_TITLE:
+                    handles.append(int(hwnd))
+            return True
+
+        user32.EnumWindows(enum_proc_type(enum_proc), 0)
+        for hwnd in handles:
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+            user32.SetForegroundWindow(hwnd)
+            return True
+    except Exception:
+        return False
+    return False
 
 
 def _acquire_single_instance_lock() -> bool:
@@ -239,6 +318,8 @@ def start_flask():
         否则会在子进程中再次启动 Flask，导致端口冲突和窗口重复。
     """
     from app import create_app
+    os.environ["CODEX_ENHANCE_MANAGER_DESKTOP"] = "1"
+    os.environ["CODEX_ENHANCE_MANAGER_PORT"] = str(PORT)
     app = create_app()
     app.run(host="127.0.0.1", port=PORT, debug=False, use_reloader=False, threaded=True)
 
@@ -1308,7 +1389,7 @@ def _setup_tray(window):
     window.events.minimized += on_minimized
 
 
-def _wait_for_flask(host="127.0.0.1", port=PORT, timeout=10):
+def _wait_for_flask(host="127.0.0.1", port=None, timeout=10):
     """
     轮询等待 Flask 服务就绪，替代脆弱的 time.sleep(2)。
 
@@ -1331,15 +1412,18 @@ def _wait_for_flask(host="127.0.0.1", port=PORT, timeout=10):
     Returns:
         是否在超时前检测到服务就绪。
     """
-    import socket
     import time
+    target_port = PORT if port is None else int(port)
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with socket.create_connection((host, port), timeout=0.5):
-                return True
+            with socket.create_connection((host, target_port), timeout=0.5):
+                health = _desktop_backend_health(target_port)
+                if health.get("desktop_mode"):
+                    return True
         except (socket.error, OSError):
-            time.sleep(0.1)
+            pass
+        time.sleep(0.1)
     return False
 
 
@@ -1462,12 +1546,18 @@ def main():
         避免用户看到空白窗口。
     """
     global main_window, monitor_window, desktop_api
+    if not _acquire_single_instance_lock():
+        _show_existing_desktop_window()
+        print("Codex Enhance Manager is already running or still shutting down.")
+        return
     if _existing_instance_responds():
         print("Codex Enhance Manager is already running.")
         return
-    if not _acquire_single_instance_lock():
-        print("Codex Enhance Manager is already running or still shutting down.")
-        return
+    try:
+        _set_backend_port(_select_backend_port(DEFAULT_PORT))
+    except Exception as exc:
+        print(f"Unable to choose local backend port: {exc}")
+        sys.exit(1)
     _start_pyinstaller_parent_watchdog()
     # 启动 Flask 后台线程
     flask_thread = threading.Thread(target=start_flask, daemon=True)

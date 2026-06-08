@@ -1,5 +1,23 @@
 # Release Notes
 
+## v2.2.9 - 2026-06-08
+
+### 中文
+
+- 修复双击应用后没有窗口的问题：如果 `51234` 被旧测试服务或普通 Flask 服务占用，启动器不再误判为“桌面应用已启动”，会自动切到 `51235` 之后的可用端口。
+- 健康检查新增 `desktop_mode` 和 `desktop_port`，单实例逻辑只把真正的桌面实例当作已启动。
+- 如果真实桌面实例已经在运行，再次启动会尝试把已有主窗口恢复到前台。
+- 已补充入口测试，覆盖非桌面端口占用、真实桌面健康标记和动态端口 URL 更新。
+- 本次 EXE 大小 `73.15 MB`，SHA256 `468bff7b618f9fa7c9f6e622422d40bb4d8acc0fd5a0c19afb257773b9f89e5a`；已验证源码桌面和打包 EXE 都能在端口冲突时启动到 `51235`。
+
+### English
+
+- Fixed the no-window launch failure: if `51234` is occupied by an old test server or a plain Flask server, the launcher no longer treats it as an already-running desktop app and automatically moves to the next available port after `51235`.
+- Added `desktop_mode` and `desktop_port` to the health endpoint so single-instance checks only trust real desktop instances.
+- When a real desktop instance is already running, launching again now tries to restore the existing main window.
+- Added entrypoint tests for non-desktop port conflicts, desktop health markers, and dynamic backend URL updates.
+- This EXE is `73.15 MB` with SHA256 `468bff7b618f9fa7c9f6e622422d40bb4d8acc0fd5a0c19afb257773b9f89e5a`; both source desktop startup and packaged EXE startup were verified to move to `51235` during a port conflict.
+
 ## v2.2.8 - 2026-06-08
 
 ### 中文

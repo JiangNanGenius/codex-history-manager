@@ -4,12 +4,14 @@
 
 ## 本轮发布目标
 
+- [x] 启动 hotfix 升至 `v2.2.9`：修复 `51234` 被旧测试/开发服务占用时，EXE 误判已启动并静默退出的问题。
 - [x] 版本号升至 `v2.2.8`，避免复用已发布的 `v2.2.7`。
 - [x] README 中英文重写为面向用户的说明，去掉旧的技术化检查说明和“手动修改限制”表达。
 - [x] 新增中英文 `RELEASE_NOTES.md`，作为 GitHub Release 描述来源。
 - [x] 跑完整测试、重新打包 `dist/CodexHistoryManager.exe`，并生成 `dist/release-manifest.json`。
 - [x] 对打包后的 EXE 运行 `--smoke-test`。真实桌面冒烟仍需继续覆盖：主界面、设置向导、悬浮窗、托盘菜单、启动/关闭 Codex、退出清理。
-- [ ] 提交、推送，并创建带 EXE 资产的 GitHub Release。
+- [x] 提交、推送，并创建带 EXE 资产的 GitHub Release：`https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases/tag/v2.2.8`。
+- [ ] 提交、推送，并创建带 EXE 资产的 hotfix Release：`v2.2.9`。
 
 ## 最高优先级
 
@@ -65,9 +67,10 @@
 - [x] `node --check static/js/i18n.js static/js/providers.js static/js/amr.js static/js/sync.js`
 - [x] `python -m py_compile approval_broker.py app.py main.py providers.py capabilities.py`
 - [x] `python build_exe.py --no-desktop-copy --smoke-test --write-release-manifest`
+- [x] 端口冲突真实启动验证：源码桌面和打包 EXE 在 `51234` 被非桌面服务占用时均成功启动到 `51235`。
 - [ ] 打开打包版 EXE，检查主界面、设置页、总览、悬浮窗、托盘菜单、启动 Codex 和退出清理。
-- [ ] GitHub Release 上传 `dist/CodexHistoryManager.exe` 和 `dist/release-manifest.json`。
-- [ ] Release 描述必须中英文双语，并写清测试结果和已知风险。
+- [x] GitHub Release 上传 `dist/CodexHistoryManager.exe` 和 `dist/release-manifest.json`。
+- [x] Release 描述必须中英文双语，并写清测试结果和已知风险。
 
 ## 已知提醒安排
 

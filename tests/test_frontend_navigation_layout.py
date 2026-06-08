@@ -176,3 +176,17 @@ def test_readme_omits_external_project_body_references():
         assert "cc-switch" not in content
         assert "真实修改测试必须由用户手动执行" not in content
         assert "Real mutation testing must be performed manually by the user" not in content
+
+
+def test_health_endpoint_exposes_desktop_marker(monkeypatch):
+    monkeypatch.setenv("CODEX_ENHANCE_MANAGER_DESKTOP", "1")
+    monkeypatch.setenv("CODEX_ENHANCE_MANAGER_PORT", "51235")
+
+    from app import create_app
+
+    flask_app = create_app()
+    flask_app.config["TESTING"] = True
+    payload = flask_app.test_client().get("/api/health").get_json()
+
+    assert payload["desktop_mode"] is True
+    assert payload["desktop_port"] == "51235"

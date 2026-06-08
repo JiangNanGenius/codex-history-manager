@@ -2027,6 +2027,8 @@ def create_app() -> Flask:
         sessions_dir = settings.get("sessions_dir", "")
         return jsonify({
             "ok": True,
+            "desktop_mode": os.environ.get("CODEX_ENHANCE_MANAGER_DESKTOP") == "1",
+            "desktop_port": os.environ.get("CODEX_ENHANCE_MANAGER_PORT", ""),
             "db_path_configured": bool(db_path),
             "db_path_exists": bool(db_path and os.path.exists(db_path)),
             "sessions_dir_configured": bool(sessions_dir),

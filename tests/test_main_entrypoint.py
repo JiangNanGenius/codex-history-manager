@@ -17,6 +17,28 @@ class MainEntrypointTest(unittest.TestCase):
         with patch.object(main.sys, "frozen", False, create=True):
             self.assertFalse(main._start_pyinstaller_parent_watchdog())
 
+    def test_backend_port_selection_skips_non_desktop_service(self):
+        with patch.object(main, "_desktop_backend_health", return_value={"ok": True}), \
+                patch.object(main, "_port_is_free", side_effect=lambda port: port == main.DEFAULT_PORT + 1):
+            self.assertEqual(main._select_backend_port(main.DEFAULT_PORT), main.DEFAULT_PORT + 1)
+
+    def test_backend_port_selection_keeps_desktop_service(self):
+        with patch.object(main, "_desktop_backend_health", return_value={"ok": True, "desktop_mode": True}), \
+                patch.object(main, "_port_is_free") as port_is_free:
+            self.assertEqual(main._select_backend_port(main.DEFAULT_PORT), main.DEFAULT_PORT)
+            port_is_free.assert_not_called()
+
+    def test_set_backend_port_updates_webview_url(self):
+        original_port = main.PORT
+        original_url = main.URL
+        try:
+            main._set_backend_port(51235)
+            self.assertEqual(main.PORT, 51235)
+            self.assertEqual(main.URL, "http://127.0.0.1:51235")
+        finally:
+            main._set_backend_port(original_port)
+            main.URL = original_url
+
     def test_monitor_window_uses_stable_non_white_background_and_auto_shows(self):
         original_windows = list(webview.windows)
         try:
