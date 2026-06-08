@@ -11,7 +11,7 @@
 - [x] 跑完整测试、重新打包 `dist/CodexHistoryManager.exe`，并生成 `dist/release-manifest.json`。
 - [x] 对打包后的 EXE 运行 `--smoke-test`。真实桌面冒烟仍需继续覆盖：主界面、设置向导、悬浮窗、托盘菜单、启动/关闭 Codex、退出清理。
 - [x] 提交、推送，并创建带 EXE 资产的 GitHub Release：`https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases/tag/v2.2.8`。
-- [ ] 提交、推送，并创建带 EXE 资产的 hotfix Release：`v2.2.9`。
+- [x] 提交、推送，并创建带 EXE 资产的 hotfix Release：`https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases/tag/v2.2.9`。
 
 ## 最高优先级
 
