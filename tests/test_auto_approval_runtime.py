@@ -47,7 +47,7 @@ class AutoApprovalRuntimeTest(unittest.TestCase):
             "enabled": True,
             "api_format": "openai_chat",
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "api_key": "sk-test",
+            "api_key": "testkey-test",
             "user_agent": "CodexEnhance/Test",
             "capabilities": {"text": True},
             "models": [{"id": "qwen3-coder-plus", "enabled": True}],
@@ -72,7 +72,7 @@ class AutoApprovalRuntimeTest(unittest.TestCase):
         headers = {key.lower(): value for key, value in request.header_items()}
         self.assertEqual(timeout, 3)
         self.assertEqual(request.full_url, "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
-        self.assertEqual(headers["authorization"], "Bearer sk-test")
+        self.assertEqual(headers["authorization"], "Bearer testkey-test")
         self.assertEqual(headers["user-agent"], "CodexEnhance/Test")
         self.assertEqual(body["model"], "qwen3-coder-plus")
         self.assertEqual(body["response_format"], {"type": "json_object"})
@@ -86,7 +86,7 @@ class AutoApprovalRuntimeTest(unittest.TestCase):
             "enabled": True,
             "api_format": "openai_chat",
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "api_key": "sk-test",
+            "api_key": "testkey-test",
             "capabilities": {"text": True},
             "models": [{"id": "qwen3-coder-plus", "enabled": True}],
         }]
@@ -116,7 +116,7 @@ class AutoApprovalRuntimeTest(unittest.TestCase):
             "enabled": True,
             "api_format": "openai_responses",
             "base_url": "https://api.openai.com/v1",
-            "api_key": "sk-test",
+            "api_key": "testkey-test",
             "capabilities": {"text": True},
             "models": [{"id": "gpt-5.1-codex", "enabled": True}],
         }]
@@ -182,7 +182,7 @@ class AutoApprovalRuntimeTest(unittest.TestCase):
             "enabled": True,
             "api_format": "anthropic",
             "base_url": "https://api.anthropic.com",
-            "api_key": "sk-ant",
+            "api_key": "testkey-ant",
             "capabilities": {"text": True},
             "models": [{"id": "claude-sonnet-4-5", "enabled": True}],
         }]
@@ -204,7 +204,7 @@ class AutoApprovalRuntimeTest(unittest.TestCase):
         body = json.loads(request.data.decode("utf-8"))
         headers = {key.lower(): value for key, value in request.header_items()}
         self.assertEqual(request.full_url, "https://api.anthropic.com/v1/messages")
-        self.assertEqual(headers["x-api-key"], "sk-ant")
+        self.assertEqual(headers["x-api-key"], "testkey-ant")
         self.assertEqual(headers["anthropic-version"], "2023-06-01")
         self.assertEqual(body["system"].startswith("You are the Auto Approval Broker"), True)
         self.assertEqual(body["messages"][0]["role"], "user")

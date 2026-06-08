@@ -41,7 +41,7 @@ class ProviderRoutingTest(unittest.TestCase):
                         "display_name": "OpenAI",
                         "enabled": True,
                         "base_url": "https://api.openai.com/v1",
-                        "api_key": "sk-openai",
+                        "api_key": "testkey-openai",
                         "user_agent": "Custom-UA/1.0",
                         "headers": {"X-Custom": "value"},
                         "aliases": {"latest-openai": "gpt-5"},
@@ -57,7 +57,7 @@ class ProviderRoutingTest(unittest.TestCase):
                         "display_name": "Qwen",
                         "enabled": True,
                         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                        "api_key": "sk-qwen",
+                        "api_key": "testkey-qwen",
                         "aliases": {"coder-pro": "qwen3-coder-plus"},
                         "models": [
                             {"id": "qwen3-coder-plus", "enabled": True},
@@ -72,7 +72,7 @@ class ProviderRoutingTest(unittest.TestCase):
                         "display_name": "Volcengine Coding Plan",
                         "enabled": True,
                         "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-                        "api_key": "sk-ark",
+                        "api_key": "testkey-ark",
                         "user_agent": "CodexPlusPlus-Compatible/1.0",
                         "models": [
                             {
@@ -89,7 +89,7 @@ class ProviderRoutingTest(unittest.TestCase):
                         "display_name": "Disabled",
                         "enabled": False,
                         "base_url": "https://example.com/v1",
-                        "api_key": "sk-disabled",
+                        "api_key": "testkey-disabled",
                         "models": [
                             {"id": "some-model", "enabled": True},
                         ],
@@ -238,9 +238,9 @@ class ModelIdExtractionTest(unittest.TestCase):
 
 class HeaderBuilderTest(unittest.TestCase):
     def test_api_key_becomes_bearer(self):
-        provider = {"api_key": "sk-test", "user_agent": "", "headers": {}}
+        provider = {"api_key": "testkey-test", "user_agent": "", "headers": {}}
         headers = _build_upstream_headers(provider)
-        self.assertEqual(headers["Authorization"], "Bearer sk-test")
+        self.assertEqual(headers["Authorization"], "Bearer testkey-test")
 
     def test_user_agent_from_provider(self):
         provider = {"api_key": "", "user_agent": "MyBot/1.0", "headers": {}}
@@ -264,11 +264,11 @@ class HeaderBuilderTest(unittest.TestCase):
         self.assertEqual(headers["X-Other"], "123")
 
     def test_authorization_not_duplicated_from_headers(self):
-        provider = {"api_key": "sk-main", "user_agent": "", "headers": {"Authorization": "Bearer sk-other"}}
+        provider = {"api_key": "testkey-main", "user_agent": "", "headers": {"Authorization": "Bearer testkey-other"}}
         headers = _build_upstream_headers(provider)
         # provider api_key 优先，自定义 headers 中的 Authorization 应被忽略
-        self.assertEqual(headers["Authorization"], "Bearer sk-main")
-        self.assertNotIn("Bearer sk-other", headers.values())
+        self.assertEqual(headers["Authorization"], "Bearer testkey-main")
+        self.assertNotIn("Bearer testkey-other", headers.values())
 
     def test_no_auth_when_no_key(self):
         provider = {"api_key": "", "user_agent": "", "headers": {}}
@@ -278,12 +278,12 @@ class HeaderBuilderTest(unittest.TestCase):
     def test_anthropic_headers_use_x_api_key_and_version(self):
         provider = {
             "api_format": "anthropic",
-            "api_key": "sk-anthropic",
+            "api_key": "testkey-anthropic",
             "user_agent": "ClaudeUA/1.0",
             "headers": {"Authorization": "Bearer ignored", "anthropic-beta": "tools-2024-04-04"},
         }
         headers = _build_upstream_headers(provider)
-        self.assertEqual(headers["x-api-key"], "sk-anthropic")
+        self.assertEqual(headers["x-api-key"], "testkey-anthropic")
         self.assertEqual(headers["anthropic-version"], "2023-06-01")
         self.assertEqual(headers["anthropic-beta"], "tools-2024-04-04")
         self.assertEqual(headers["User-Agent"], "ClaudeUA/1.0")
@@ -568,7 +568,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "display_name": "OpenAI",
                     "enabled": True,
                     "base_url": "https://api.openai.com/v1",
-                    "api_key": "sk-openai",
+                    "api_key": "testkey-openai",
                     "user_agent": "TestUA/1.0",
                     "headers": {"X-Custom": "value"},
                     "models": [{"id": "gpt-5", "enabled": True}],
@@ -676,7 +676,7 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(args[0][0], "POST")
         self.assertEqual(args[0][1], "https://api.openai.com/v1/chat/completions")
         upstream_headers = args[0][2]
-        self.assertEqual(upstream_headers["Authorization"], "Bearer sk-openai")
+        self.assertEqual(upstream_headers["Authorization"], "Bearer testkey-openai")
         self.assertEqual(upstream_headers["User-Agent"], "TestUA/1.0")
         self.assertEqual(upstream_headers["X-Custom"], "value")
         self.assertEqual(upstream_headers["Content-Type"], "application/json")
@@ -703,7 +703,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "display_name": "OpenAI",
                     "enabled": True,
                     "base_url": "https://api.openai.com/v1",
-                    "api_key": "sk-openai",
+                    "api_key": "testkey-openai",
                     "native_currency": "USD",
                     "pricing": {"input_per_million": 1.0, "output_per_million": 2.0},
                     "models": [{"id": "gpt-5", "enabled": True}],
@@ -743,7 +743,7 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertTrue(entry["cost_estimate"]["estimate"])
         log_text = log_path.read_text(encoding="utf-8")
         self.assertNotIn("private prompt", log_text)
-        self.assertNotIn("sk-openai", log_text)
+        self.assertNotIn("testkey-openai", log_text)
 
     @patch("proxy_server._upstream_request")
     def test_chat_completions_streaming(self, mock_upstream):
@@ -786,7 +786,7 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(entry["usage"]["output_tokens"], 4)
         log_text = log_path.read_text(encoding="utf-8")
         self.assertNotIn("Hi", log_text)
-        self.assertNotIn("sk-openai", log_text)
+        self.assertNotIn("testkey-openai", log_text)
 
     @patch("proxy_server._upstream_request")
     def test_responses_streaming_writes_metadata_log(self, mock_upstream):
@@ -829,7 +829,7 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(entry["usage"]["output_tokens"], 6)
         log_text = log_path.read_text(encoding="utf-8")
         self.assertNotIn("private response prompt", log_text)
-        self.assertNotIn("sk-openai", log_text)
+        self.assertNotIn("testkey-openai", log_text)
 
     @patch("proxy_server._upstream_request")
     def test_image_generation_uses_default_media_provider(self, mock_upstream):
@@ -841,7 +841,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "display_name": "Text Provider",
                     "enabled": True,
                     "base_url": "https://text.example.test/v1",
-                    "api_key": "sk-text",
+                    "api_key": "testkey-text",
                     "capabilities": {"text": True, "images": False},
                     "models": [{"id": "gpt-5", "enabled": True}],
                 },
@@ -852,7 +852,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://image.example.test/v1",
                     "api_format": "openai_images",
-                    "api_key": "sk-image",
+                    "api_key": "testkey-image",
                     "user_agent": "ImageUA/1.0",
                     "capabilities": {"images": True},
                     "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
@@ -893,7 +893,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://native.example.test/v1",
                     "api_format": "openai_responses",
-                    "api_key": "sk-native",
+                    "api_key": "testkey-native",
                     "capabilities": {"text": True},
                     "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
                     "models": [{"id": "auto", "enabled": True}],
@@ -932,7 +932,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://default-image.example.test/v1",
                     "api_format": "openai_images",
-                    "api_key": "sk-default",
+                    "api_key": "testkey-default",
                     "capabilities": {"images": True},
                     "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
                     "models": [{"id": "gpt-image-1", "enabled": True, "capabilities": {"images": True}}],
@@ -944,7 +944,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://special-image.example.test/v1",
                     "api_format": "openai_images",
-                    "api_key": "sk-special",
+                    "api_key": "testkey-special",
                     "capabilities": {"images": True},
                     "media_profile": {
                         "openai_compatible_media": True,
@@ -985,7 +985,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://video.example.test/v1",
                     "api_format": "openai_videos",
-                    "api_key": "sk-video",
+                    "api_key": "test-video-secret",
                     "capabilities": {"videos": True},
                     "media_profile": {"default_video_provider": True, "openai_compatible_media": True},
                     "models": [{"id": "sora-2", "enabled": True, "capabilities": {"videos": True}}],
@@ -1022,7 +1022,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://video.example.test/v1",
                     "api_format": "openai_videos",
-                    "api_key": "sk-video",
+                    "api_key": "test-video-secret",
                     "capabilities": {"videos": True},
                     "media_profile": {"default_video_provider": True, "openai_compatible_media": True},
                     "models": [{"id": "sora-2", "enabled": True, "capabilities": {"videos": True}}],
@@ -1057,7 +1057,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://image.example.test/v1",
                     "api_format": "openai_images",
-                    "api_key": "sk-image",
+                    "api_key": "testkey-image",
                     "capabilities": {"images": True},
                     "approval_profile": {"mode": "proxy_auto_approve"},
                     "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
@@ -1098,7 +1098,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://video.example.test/v1",
                     "api_format": "openai_videos",
-                    "api_key": "sk-video",
+                    "api_key": "test-video-secret",
                     "capabilities": {"videos": True},
                     "approval_profile": {"mode": "proxy_auto_approve"},
                     "media_profile": {"default_video_provider": True, "openai_compatible_media": True},
@@ -1141,7 +1141,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "display_name": "Ark",
                     "enabled": True,
                     "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-                    "api_key": "sk-ark",
+                    "api_key": "testkey-ark",
                     "capabilities": {"videos": True},
                     "media_profile": {"default_video_provider": True, "adapter_required": True, "openai_compatible_media": False},
                     "models": [{"id": "seedance", "enabled": True, "capabilities": {"videos": True}}],
@@ -1211,7 +1211,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "display_name": "OpenAI",
                     "enabled": True,
                     "base_url": "https://api.openai.com/v1",
-                    "api_key": "sk-openai",
+                    "api_key": "testkey-openai",
                     "models": [{"id": "gpt-5", "enabled": True}],
                 },
                 {
@@ -1220,7 +1220,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "display_name": "Qwen",
                     "enabled": True,
                     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                    "api_key": "sk-qwen",
+                    "api_key": "testkey-qwen",
                     "models": [{"id": "qwen-vl", "enabled": True}],
                 },
             ]
@@ -1295,7 +1295,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "display_name": "Basic Tools",
                     "enabled": True,
                     "base_url": "https://basic.example.test/v1",
-                    "api_key": "sk-basic",
+                    "api_key": "testkey-basic",
                     "models": [{"id": "basic-model", "enabled": True}],
                 },
                 {
@@ -1304,7 +1304,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "display_name": "Custom Tools",
                     "enabled": True,
                     "base_url": "https://custom.example.test/v1",
-                    "api_key": "sk-custom",
+                    "api_key": "testkey-custom",
                     "models": [{"id": "custom-model", "enabled": True}],
                 },
             ]
@@ -1371,7 +1371,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "display_name": "A",
                     "enabled": True,
                     "base_url": "https://a.example.test/v1",
-                    "api_key": "sk-a",
+                    "api_key": "testkey-a",
                     "models": [{"id": "m1", "enabled": True}],
                 },
                 {
@@ -1380,7 +1380,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "display_name": "Z",
                     "enabled": True,
                     "base_url": "https://z.example.test/v1",
-                    "api_key": "sk-z",
+                    "api_key": "testkey-z",
                     "models": [{"id": "m2", "enabled": True}],
                 },
             ]
@@ -1415,7 +1415,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://api.openai.com/v1",
                     "api_format": "openai_responses",
-                    "api_key": "sk-openai",
+                    "api_key": "testkey-openai",
                     "models": [{"id": "gpt-5", "enabled": True}],
                 }
             ]
@@ -1466,7 +1466,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://mixed.example.test/v1",
                     "api_format": "openai_responses",
-                    "api_key": "sk-mixed",
+                    "api_key": "testkey-mixed",
                     "models": [{"id": "chat-model", "enabled": True, "api_format": "openai_chat"}],
                 }
             ]
@@ -1506,7 +1506,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://mixed.example.test/v1",
                     "api_format": "openai_chat",
-                    "api_key": "sk-mixed",
+                    "api_key": "testkey-mixed",
                     "models": [{"id": "responses-model", "enabled": True, "api_format": "openai_responses"}],
                 }
             ]
@@ -1546,7 +1546,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
                     "api_format": "openai_responses",
-                    "api_key": "sk-qwen",
+                    "api_key": "testkey-qwen",
                     "responses_profile": {
                         "domestic_responses": True,
                         "partial_compatibility": True,
@@ -1586,7 +1586,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
                     "api_format": "openai_responses",
-                    "api_key": "sk-qwen",
+                    "api_key": "testkey-qwen",
                     "responses_profile": {
                         "domestic_responses": True,
                         "profile_id": "alibaba_bailian",
@@ -1640,7 +1640,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://ark.cn-beijing.volces.com/api/v3",
                     "api_format": "openai_responses",
-                    "api_key": "sk-ark",
+                    "api_key": "testkey-ark",
                     "responses_profile": {
                         "domestic_responses": True,
                         "partial_compatibility": True,
@@ -1676,7 +1676,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "base_url": "https://api.anthropic.com",
                     "api_format": "anthropic",
-                    "api_key": "sk-claude",
+                    "api_key": "testkey-claude",
                     "user_agent": "ClaudeUA/1.0",
                     "models": [{"id": "claude-sonnet-4-5", "enabled": True}],
                 }
@@ -1716,7 +1716,7 @@ class ProxyIntegrationTest(unittest.TestCase):
         args = mock_upstream.call_args
         self.assertEqual(args[0][1], "https://api.anthropic.com/v1/messages")
         upstream_headers = args[0][2]
-        self.assertEqual(upstream_headers["x-api-key"], "sk-claude")
+        self.assertEqual(upstream_headers["x-api-key"], "testkey-claude")
         self.assertNotIn("Authorization", upstream_headers)
         upstream_body = json.loads(args[1]["body"])
         self.assertEqual(upstream_body["model"], "claude-sonnet-4-5")

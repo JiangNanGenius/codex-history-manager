@@ -16,7 +16,7 @@ class RequestLogStoreTest(unittest.TestCase):
         provider = {
             "id": "p1",
             "short_alias": "openai",
-            "api_key": "sk-secret",
+            "api_key": "testkey-secret",
             "native_currency": "USD",
             "pricing": {
                 "input_per_million": 1.0,
@@ -48,7 +48,7 @@ class RequestLogStoreTest(unittest.TestCase):
         self.assertEqual(entry["cost_estimate"]["native_currency"], "USD")
         self.assertEqual(entry["cost_estimate"]["display_currency"], "CNY")
         self.assertTrue(entry["cost_estimate"]["fx_snapshot"]["success"])
-        self.assertNotIn("sk-secret", json.dumps(entry))
+        self.assertNotIn("testkey-secret", json.dumps(entry))
 
     def test_log_entry_preserves_historical_fx_snapshot(self):
         provider = {

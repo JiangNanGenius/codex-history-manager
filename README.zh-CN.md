@@ -72,6 +72,19 @@ Codex Enhance Manager 做的就是这件事：尽量不破坏 Codex 原生体验
 | 保留登录并接入代理/API | 想保留官方登录，同时使用本地代理或 API 路由的用户。 | 启动本地代理，写入真实退避端口和强 token，再带进度同步历史记录。 |
 | 第三方供应商 | 使用自定义供应商、代理商或兼容 API 的用户。 | 启用供应商密钥、Responses/Chat 协议选择、模型映射、媒体 fallback、额度脚本和智能路由。 |
 
+## Codex 实际怎么请求模型
+
+这里按 OpenAI Codex 当前源码设计来做，不猜传输层。Codex 会构造 Responses API 请求，并用 SSE 流式发送到 `POST /responses`。OpenAI 的 Codex agent-loop 文章也明确了同一套端点：ChatGPT 登录、API key、本地 provider 和云端 Responses provider 都围绕 `/responses`。
+
+因此本工具的边界是：
+
+- 写入 Codex 配置时只使用 `wire_api = "responses"`，并把 base URL 指向本地代理的 `/v1`。
+- 原生 Responses 供应商会直通到上游 `/responses`，保留 Codex 的请求形态。
+- 只有 Chat-only 供应商才由本地代理做 Responses 到 Chat Completions 的适配。
+- 纯原生代理供应商不会被强行接到 `/images/generations`；OpenAI 兼容媒体桥是单独的供应商媒体设置。
+
+参考：[openai/codex `responses.rs`](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/endpoint/responses.rs) 和 [OpenAI: Unrolling the Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/)。
+
 ## 你会得到什么
 
 - 设置向导：Codex 路径、官方登录态、供应商、模型能力、路由、媒体 fallback、开机启动和保存检查。

@@ -237,6 +237,7 @@ class MediaProxyHelperTest(unittest.TestCase):
             "id": "native-mixed",
             "base_url": "https://native.example.test/v1",
             "api_format": "openai_responses",
+            "responses_profile": {"mode": "native"},
             "capabilities": {"text": True, "images": True, "videos": False},
         })
 
@@ -244,12 +245,26 @@ class MediaProxyHelperTest(unittest.TestCase):
         video_check = next(item for item in readiness["checks"] if item["media_kind"] == MEDIA_KIND_VIDEO)
         self.assertFalse(readiness["live_forwarding_enabled"])
         self.assertIn("mediaNativeResponsesNeedsMediaProxy", readiness["guidance_keys"])
-        self.assertIn("mediaCapabilityNeedsEnableOrFallback", readiness["guidance_keys"])
         self.assertFalse(image_check["can_forward"])
         self.assertEqual(image_check["error_type"], "media_adapter_required")
         self.assertEqual(image_check["guidance_key"], "mediaNativeResponsesNeedsMediaProxy")
         self.assertEqual(image_check["action_key"], "mediaConfirmNativeMediaProxyAction")
-        self.assertEqual(video_check["guidance_key"], "mediaCapabilityNeedsEnableOrFallback")
+        self.assertEqual(video_check["guidance_key"], "mediaNativeResponsesNeedsMediaProxy")
+
+    def test_pure_native_responses_does_not_enable_openai_media_bridge_by_default(self):
+        readiness = build_media_route_readiness({
+            "id": "pure-native",
+            "base_url": "https://native.example.test/v1",
+            "api_format": "openai_responses",
+            "responses_profile": {"mode": "native"},
+            "media_profile": {"default_image_provider": False, "openai_compatible_media": False},
+        })
+
+        image_check = next(item for item in readiness["checks"] if item["media_kind"] == MEDIA_KIND_IMAGE)
+        self.assertFalse(readiness["live_forwarding_enabled"])
+        self.assertFalse(image_check["can_forward"])
+        self.assertEqual(image_check["error_type"], "media_adapter_required")
+        self.assertEqual(image_check["guidance_key"], "mediaNativeResponsesNeedsMediaProxy")
 
     def test_media_route_readiness_exposes_adapter_required_blocker(self):
         readiness = build_media_route_readiness({

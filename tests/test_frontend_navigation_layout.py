@@ -202,6 +202,8 @@ def test_official_login_start_keeps_safe_enhancement_copy_wired():
     assert "media-default-video" not in js
     assert "route-sim-cap-tools" not in js
     assert "route-sim-cap-videos" not in js
+    visible_api_formats = js.split("const VISIBLE_PROVIDER_API_FORMATS = [", 1)[1].split("];", 1)[0]
+    assert "openai_videos" not in visible_api_formats
     assert "setting-codex-goals-enabled" in (ROOT / "static" / "index.html").read_text(encoding="utf-8")
     assert "features.goals" in i18n
 
@@ -237,6 +239,17 @@ def test_readme_omits_external_project_body_references():
         assert "cc-switch" not in content
         assert "真实修改测试必须由用户手动执行" not in content
         assert "Real mutation testing must be performed manually by the user" not in content
+
+
+def test_readme_documents_codex_responses_wire_path():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_zh = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    for content in (readme, readme_zh):
+        assert "POST /responses" in content
+        assert 'wire_api = "responses"' in content
+        assert "/images/generations" in content
+        assert "openai/codex" in content
 
 
 def test_health_endpoint_exposes_desktop_marker(monkeypatch):

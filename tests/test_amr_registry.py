@@ -23,6 +23,36 @@ from capabilities import normalize_capabilities
 from amr_registry import AMRRegistry, normalize_group, normalize_candidate, _empty_store
 
 
+def test_default_store_path_uses_app_data():
+    import amr_registry
+
+    assert amr_registry.DEFAULT_STORE_PATH.name == "groups.json"
+    assert amr_registry.DEFAULT_STORE_PATH.parent.name == "amr"
+    assert "Codex Enhance Manager" in str(amr_registry.DEFAULT_STORE_PATH)
+
+
+def test_default_store_migrates_legacy_path(tmp_path, monkeypatch):
+    import amr_registry
+
+    legacy_path = tmp_path / "legacy" / "amr_groups.json"
+    default_path = tmp_path / "app-data" / "amr" / "groups.json"
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(json.dumps({
+        "schema_version": 1,
+        "groups": [{"id": "default", "display_name": "Default", "candidates": []}],
+        "updated_at": "2026-01-01T00:00:00Z",
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(amr_registry, "LEGACY_STORE_PATH", legacy_path)
+    monkeypatch.setattr(amr_registry, "DEFAULT_STORE_PATH", default_path)
+
+    reg = AMRRegistry()
+
+    assert default_path.exists()
+    assert legacy_path.exists()
+    assert reg.list_groups()["groups"][0]["id"] == "default"
+
+
 # ─────────────── Normalize ───────────────
 
 class TestNormalize:

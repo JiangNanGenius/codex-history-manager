@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from app_paths import app_data_path
 from model_rotation import AdaptiveModelRotation
 from capabilities import merge_provider_model_capabilities
 from provider_routing import provider_allows_local_routing
@@ -48,8 +49,10 @@ from providers import ProviderRegistry, normalize_capabilities, redact_secrets
 
 # Schema version：当 group/candidate 数据结构发生不兼容变更时递增。
 SCHEMA_VERSION = 1
-# 默认存储路径：Windows 下为 C:\Users\<用户名>\.codex_enhance_manager\amr_groups.json
-DEFAULT_STORE_PATH = Path.home() / ".codex_enhance_manager" / "amr_groups.json"
+# 默认存储路径：Windows 下为 Documents/Codex Enhance Manager/amr/groups.json。
+# 首次使用新路径时会从旧版 ~/.codex_enhance_manager/amr_groups.json 迁移。
+LEGACY_STORE_PATH = Path.home() / ".codex_enhance_manager" / "amr_groups.json"
+DEFAULT_STORE_PATH = app_data_path("amr", "groups.json")
 
 
 def _empty_store() -> Dict[str, Any]:
@@ -195,6 +198,8 @@ class AMRRegistry:
         """
         # expanduser 在 Windows 上将 ~ 解析为 %USERPROFILE%，确保跨平台一致
         self.store_path = Path(store_path).expanduser() if store_path else DEFAULT_STORE_PATH
+        if not store_path:
+            self._migrate_legacy_store()
 
     # ─────────────── 公开 CRUD API ───────────────
 
@@ -490,6 +495,16 @@ class AMRRegistry:
         }
 
     # ─────────────── 内部方法 ───────────────
+
+    def _migrate_legacy_store(self) -> None:
+        if self.store_path.exists() or not LEGACY_STORE_PATH.exists():
+            return
+        try:
+            self.store_path.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy2(str(LEGACY_STORE_PATH), str(self.store_path))
+        except Exception:
+            pass
 
     def _load_store(self) -> Dict[str, Any]:
         """

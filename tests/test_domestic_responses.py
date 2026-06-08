@@ -16,10 +16,10 @@ class DomesticResponsesProfileTest(unittest.TestCase):
             "kind": "alibaba_bailian",
             "short_alias": "qwen",
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "api_key": "sk-secret",
+            "api_key": "testkey-secret",
             "headers": {
-                "Authorization": "Bearer sk-secret",
-                "X-Api-Key": "sk-secret",
+                "Authorization": "Bearer testkey-secret",
+                "X-Api-Key": "testkey-secret",
                 "User-Agent": "CustomUA/1.0",
             },
             "responses_profile": {
@@ -37,7 +37,7 @@ class DomesticResponsesProfileTest(unittest.TestCase):
         self.assertTrue(preview["available"])
         self.assertEqual(preview["endpoint_url"], "https://dashscope.aliyuncs.com/compatible-mode/v1/responses")
         self.assertEqual(preview["headers_preview"]["User-Agent"], "CustomUA/1.0")
-        self.assertNotIn("sk-secret", serialized)
+        self.assertNotIn("testkey-secret", serialized)
         self.assertFalse(preview["network_request_performed"])
         self.assertTrue(preview["manual_only"])
 

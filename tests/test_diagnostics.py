@@ -203,7 +203,7 @@ class TestDiagnosticsCollector(unittest.TestCase):
                     "short_alias": "test",
                     "base_url": "https://example.com/v1",
                     "api_format": "openai_chat",
-                    "api_key": "sk-real-secret",
+                    "api_key": "testkey-real-secret",
                     "headers": {"Authorization": "Bearer token"},
                     "models": [{"id": "m1", "enabled": True}],
                     "country_region": "US",

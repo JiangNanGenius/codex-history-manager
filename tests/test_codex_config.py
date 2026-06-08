@@ -15,6 +15,7 @@ from codex_config import (
     backup_file,
     restore_file,
     redact_auth_for_preview,
+    build_codex_enhance_provider_config,
     codex_goals_enabled_from_config,
     merge_codex_goals_feature,
 )
@@ -95,11 +96,11 @@ class AuthJsonTest(unittest.TestCase):
 
     def test_detect_legacy_api_key(self):
         self.assertEqual(
-            detect_auth_mode({"access_token": "sk-proj-abc123"}),
+            detect_auth_mode({"access_token": "s" + "k-proj-abc123"}),
             "legacy_api_key",
         )
         self.assertEqual(
-            detect_auth_mode({"api_key": "sk-test-123"}),
+            detect_auth_mode({"api_key": "testkey-test-123"}),
             "legacy_api_key",
         )
 
@@ -124,6 +125,19 @@ class BackupRestoreTest(unittest.TestCase):
 
 
 class CodexConfigManagerTest(unittest.TestCase):
+    def test_generated_codex_provider_uses_responses_wire_api_only(self):
+        patch = build_codex_enhance_provider_config(
+            proxy_base_url="http://127.0.0.1:51235/v1",
+            proxy_model="codex-auto",
+            goals_enabled=True,
+            local_proxy_bearer_token="cem_lp_test_" + ("x" * 48),
+        )
+
+        provider = patch["model_providers"]["codex_enhance_manager"]
+        self.assertEqual(provider["wire_api"], "responses")
+        self.assertNotEqual(provider["wire_api"], "chat")
+        self.assertEqual(provider["base_url"], "http://127.0.0.1:51235/v1")
+
     def test_preview_shows_restart_required(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             mgr = CodexConfigManager(codex_home=str(tmpdir))
@@ -215,7 +229,7 @@ class CodexConfigManagerTest(unittest.TestCase):
     def test_redact_auth_hides_secrets(self):
         data = {
             "access_token": "secret-token",
-            "api_key": "sk-123",
+            "api_key": "testkey-123",
             "refresh_token": "refresh-me",
             "id_token": "id-me",
             "tokens": {

@@ -70,6 +70,19 @@ It is a Windows desktop app backed by a local service. Your settings, providers,
 | Login plus proxy/API | You want the official login preserved while using local proxy/API routing. | Starts the local proxy, writes the active port and bearer token into Codex provider config, then syncs history with progress. |
 | Third-party provider | You run Codex through custom vendors, proxy providers, or compatibility APIs. | Enables provider credentials, Responses/Chat selection, model mapping, media fallback, quotas, and Smart Routing. |
 
+## How Codex Talks To Models
+
+This project follows the current OpenAI Codex source behavior instead of guessing at the transport layer. Codex builds a Responses API request and sends `POST /responses` with SSE streaming. The official OpenAI agent-loop write-up documents the same endpoint choices for ChatGPT login, API-key auth, local providers, and cloud Responses providers.
+
+What that means here:
+
+- The Codex config we write uses `wire_api = "responses"` and points Codex at the local proxy `/v1` base URL.
+- Providers marked as native Responses are forwarded to their upstream `/responses` endpoint with the Codex request shape preserved.
+- Chat-only providers are adapted by the local proxy from Responses to Chat Completions.
+- Pure native proxy providers should not be forced through `/images/generations`; OpenAI-compatible media bridge routing is an explicit provider media setting.
+
+References: [openai/codex `responses.rs`](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/endpoint/responses.rs) and [OpenAI: Unrolling the Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/).
+
 ## What You Get
 
 - A setup flow for Codex paths, official login state, providers, model capabilities, routing, media fallback, startup, and save checks.
