@@ -19,6 +19,7 @@ from approval_broker import (
 )
 from media_adapters import build_media_adapter_preview, summarize_media_adapter_preview
 from capabilities import effective_provider_capabilities, merge_provider_model_capabilities
+from provider_routing import provider_allows_local_routing
 from providers import normalize_approval_profile
 
 
@@ -104,7 +105,7 @@ def resolve_media_route(
     model_id: str = "",
 ) -> Dict[str, Any]:
     """Resolve a provider and upstream model rewrite for a media request."""
-    enabled = [p for p in providers if isinstance(p, dict) and p.get("enabled", True)]
+    enabled = [p for p in providers if provider_allows_local_routing(p)]
     if not enabled:
         return {"provider": None, "upstream_model_id": "", "route_explanation": ["No enabled providers."]}
 

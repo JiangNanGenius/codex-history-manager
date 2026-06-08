@@ -78,7 +78,7 @@ html, body {
 
 .monitor-body {
     padding: 0 14px 14px;
-    max-height: 140px;
+    max-height: 170px;
     opacity: 1;
     transition: max-height 180ms ease, opacity 180ms ease, padding 180ms ease;
 }

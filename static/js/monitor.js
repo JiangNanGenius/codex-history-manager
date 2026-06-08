@@ -1,9 +1,11 @@
 const TOKEN_ALERT_DEFAULT = 100000;
 const REFRESH_MS = 5000;
 const PROVIDER_REFRESH_MS = 15000;
+const SPEED_SAMPLE_WINDOW_MS = 60000;
+const SPEED_SAMPLE_LIMIT = 20;
 const MONITOR_WINDOW_WIDTH = 300;
 const MONITOR_COMPACT_MIN_HEIGHT = 92;
-const MONITOR_EXPANDED_MIN_HEIGHT = 176;
+const MONITOR_EXPANDED_MIN_HEIGHT = 204;
 const MONITOR_MAX_HEIGHT = 360;
 const monitorLang = localStorage.getItem('codex_gui_lang') === 'en' ? 'en' : 'zh';
 const monitorCopy = {
@@ -15,6 +17,12 @@ const monitorCopy = {
         reused: '复用',
         newReusable: '新增',
         totalSaved: '合计',
+        speed: '速度',
+        avgSpeed: '平均',
+        currentSpeed: '当前',
+        tokensPerMin: 'tokens/min',
+        speedUnavailable: '速度: --',
+        sampleCount: '采样点',
         source: '来源',
         sourceCodex: 'Codex 记录',
         sourceLocal: '本地复用记录',
@@ -47,6 +55,12 @@ const monitorCopy = {
         reused: 'Reused',
         newReusable: 'New',
         totalSaved: 'Total',
+        speed: 'Speed',
+        avgSpeed: 'avg',
+        currentSpeed: 'now',
+        tokensPerMin: 'tokens/min',
+        speedUnavailable: 'Speed: --',
+        sampleCount: 'samples',
         source: 'Source',
         sourceCodex: 'Codex records',
         sourceLocal: 'Local reuse history',
@@ -76,6 +90,7 @@ const monitorCopy = {
 let lastAlertBucket = 0;
 let monitorSettings = null;
 let providerFocus = { providers: [], focus_provider_id: '' };
+let speedSamples = [];
 
 function mt(key) {
     return (monitorCopy[monitorLang] && monitorCopy[monitorLang][key]) || monitorCopy.zh[key] || key;
@@ -157,10 +172,36 @@ function monitorFields() {
         tokens: true,
         progress: true,
         threshold: true,
+        speed: true,
         cache: true,
         context_window: true,
         updated_at: true,
     };
+}
+
+function rememberSpeedSample(totalTokens) {
+    const now = Date.now();
+    const total = Number(totalTokens || 0);
+    if (!Number.isFinite(total)) return null;
+    speedSamples.push({ ts: now, total });
+    speedSamples = speedSamples
+        .filter(sample => now - sample.ts <= SPEED_SAMPLE_WINDOW_MS)
+        .slice(-SPEED_SAMPLE_LIMIT);
+    if (speedSamples.length < 2) return null;
+    const first = speedSamples[0];
+    const last = speedSamples[speedSamples.length - 1];
+    const elapsedMinutes = Math.max((last.ts - first.ts) / 60000, 0);
+    if (elapsedMinutes <= 0) return null;
+    const avg = Math.max((last.total - first.total) / elapsedMinutes, 0);
+    const previous = speedSamples[speedSamples.length - 2];
+    const instantMinutes = Math.max((last.ts - previous.ts) / 60000, 0);
+    const instant = instantMinutes > 0 ? Math.max((last.total - previous.total) / instantMinutes, 0) : avg;
+    return { avg, instant, samples: speedSamples.length };
+}
+
+function formatSpeedLine(speed) {
+    if (!speed) return mt('speedUnavailable');
+    return `${mt('speed')}: ${mt('avgSpeed')} ${formatCompact(speed.avg)} ${mt('tokensPerMin')}`;
 }
 
 function oneHourQuery() {
@@ -170,6 +211,16 @@ function oneHourQuery() {
         start: start.toISOString(),
         end: end.toISOString(),
         granularity: 'total',
+        rollout_total_source: '1',
+        rollout_scan_fallback: '1',
+    });
+    return `/api/token/current?${params.toString()}`;
+}
+
+function currentUsageQuery() {
+    const params = new URLSearchParams({
+        rollout_total_source: '1',
+        rollout_scan_fallback: '1',
     });
     return `/api/token/current?${params.toString()}`;
 }
@@ -200,7 +251,7 @@ async function refreshMonitor() {
     let mode = mt('lastHourUsage');
 
     if (state.running && Number(state.baseTotalTokens || 0) >= 0) {
-        data = await api('/api/token/current');
+        data = await api(currentUsageQuery());
         value = Math.max(Number(data.total_tokens || 0) - Number(state.baseTotalTokens || 0), 0);
         mode = mt('trackingDelta');
     } else {
@@ -220,6 +271,7 @@ function render(value, threshold, mode, data) {
     const updatedEl = document.getElementById('monitor-updated');
     const cacheEl = document.getElementById('monitor-cache');
     const contextEl = document.getElementById('monitor-context');
+    const speedEl = document.getElementById('monitor-speed');
     const progressEl = document.querySelector('.progress');
     const fields = monitorFields();
 
@@ -236,6 +288,11 @@ function render(value, threshold, mode, data) {
     thresholdEl.textContent = `${formatCompact(value)} / ${formatCompact(threshold)}`;
     updatedEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+    const speed = rememberSpeedSample(data.total_tokens || value);
+    speedEl.textContent = formatSpeedLine(speed);
+    speedEl.title = speed
+        ? `${mt('currentSpeed')}: ${formatCompact(speed.instant)} ${mt('tokensPerMin')} · ${mt('sampleCount')}: ${speed.samples}`
+        : speedEl.textContent;
     cacheEl.textContent = formatCacheLine(data);
     cacheEl.title = cacheEl.textContent;
     const contextWindow = Number(data.current_context_window || 0);
@@ -253,6 +310,7 @@ function render(value, threshold, mode, data) {
     progressEl.style.display = fields.progress ? 'block' : 'none';
     thresholdEl.style.display = fields.threshold ? 'inline' : 'none';
     updatedEl.style.display = fields.updated_at ? 'inline' : 'none';
+    speedEl.style.display = fields.speed ? 'block' : 'none';
     cacheEl.style.display = fields.cache ? 'block' : 'none';
     contextEl.style.display = fields.context_window ? 'block' : 'none';
 

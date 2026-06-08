@@ -4,6 +4,7 @@ import socket
 import tempfile
 import unittest
 import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -360,6 +361,11 @@ class UpstreamRequestTest(unittest.TestCase):
 
 
 class LocalProxyServerTest(unittest.TestCase):
+    def _free_port(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
     def test_status_when_stopped(self):
         server = LocalProxyServer(port=18080)
         status = server.status()
@@ -454,6 +460,34 @@ class LocalProxyServerTest(unittest.TestCase):
         finally:
             server.stop()
             blocker.close()
+
+    def test_local_proxy_requires_configured_bearer_token(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "providers.json"
+            store_path.write_text(json.dumps({"providers": []}), encoding="utf-8")
+            token = "cem_lp_test_" + ("x" * 48)
+            server = LocalProxyServer(
+                port=self._free_port(),
+                provider_store_path=str(store_path),
+                local_proxy_bearer_token=token,
+            )
+            try:
+                self.assertTrue(server.start())
+                status = server.status()
+                self.assertTrue(status["local_proxy_auth_required"])
+                self.assertTrue(status["local_proxy_token_fingerprint"])
+                url = f"http://127.0.0.1:{status['port']}/v1/models"
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(url, timeout=2)
+                self.assertEqual(ctx.exception.code, 401)
+
+                request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+                with urllib.request.urlopen(request, timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    payload = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(payload["object"], "list")
+            finally:
+                server.stop()
 
     def test_sets_provider_store_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:

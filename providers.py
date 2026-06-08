@@ -48,6 +48,7 @@ from capabilities import (
     responses_profile_mode,
 )
 from model_catalog import resolve_catalog_id_collisions
+from provider_routing import provider_allows_local_routing
 
 
 # Schema version：当数据结构发生不兼容变更时递增，用于未来迁移逻辑。
@@ -122,7 +123,11 @@ class ProviderRegistry:
         # expanduser 在 Windows 上将 ~ 解析为 %USERPROFILE%，确保跨平台一致
         self.store_path = Path(store_path).expanduser() if store_path else DEFAULT_STORE_PATH
 
-    def list_providers(self, include_secrets: bool = False) -> Dict[str, Any]:
+    def list_providers(
+        self,
+        include_secrets: bool = False,
+        extra_providers: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         列出所有 provider。
 
@@ -135,7 +140,7 @@ class ProviderRegistry:
             包含 schema_version、store_path、providers 列表、focus_provider_id 的字典。
         """
         store = self._load_store()
-        providers = store.get("providers", [])
+        providers = self._with_extra_providers(store.get("providers", []), extra_providers)
         if not include_secrets:
             providers = redact_secrets(providers)
         return {
@@ -146,7 +151,12 @@ class ProviderRegistry:
             "updated_at": store.get("updated_at", ""),
         }
 
-    def get_provider(self, provider_id: str, include_secrets: bool = False) -> Optional[Dict[str, Any]]:
+    def get_provider(
+        self,
+        provider_id: str,
+        include_secrets: bool = False,
+        extra_providers: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         读取单个 provider。
 
@@ -160,6 +170,8 @@ class ProviderRegistry:
         """
         store = self._load_store()
         provider = self._find_provider(store, provider_id)
+        if not provider:
+            provider = self._find_extra_provider(extra_providers, provider_id)
         if not provider:
             return None
         # deepcopy 隔离：防止调用方修改返回字典后意外污染内存中的 store
@@ -464,7 +476,11 @@ class ProviderRegistry:
         self.update_provider(provider_id, provider)
         return {"success": True, "previous": previous, "current": visibility, "changed": True}
 
-    def set_focus_provider(self, provider_id: str = "") -> Dict[str, Any]:
+    def set_focus_provider(
+        self,
+        provider_id: str = "",
+        extra_providers: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Persist the provider used for quick switching and focused routing.
 
@@ -474,7 +490,7 @@ class ProviderRegistry:
         store = self._load_store()
         provider_id = str(provider_id or "").strip()
         previous = str(store.get("focus_provider_id") or "")
-        if provider_id and not self._find_provider(store, provider_id):
+        if provider_id and not self._find_provider(store, provider_id) and not self._find_extra_provider(extra_providers, provider_id):
             return {"success": False, "error": "Provider not found", "focus_provider_id": previous}
         if previous == provider_id:
             return {"success": True, "focus_provider_id": provider_id, "previous": previous, "changed": False}
@@ -482,7 +498,11 @@ class ProviderRegistry:
         self._save_store(store)
         return {"success": True, "focus_provider_id": provider_id, "previous": previous, "changed": True}
 
-    def preview_catalog(self, focus_provider_id: str = "") -> Dict[str, Any]:
+    def preview_catalog(
+        self,
+        focus_provider_id: str = "",
+        extra_providers: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         生成 Unified Model Catalog（UMC）预览。
 
@@ -504,7 +524,7 @@ class ProviderRegistry:
         if not focus_provider_id:
             focus_provider_id = str(store.get("focus_provider_id") or "")
         return build_catalog_preview_from_providers(
-            store.get("providers", []),
+            self._with_extra_providers(store.get("providers", []), extra_providers),
             focus_provider_id=focus_provider_id,
         )
 
@@ -639,6 +659,29 @@ class ProviderRegistry:
         """在 store 中按 ID 查找 provider。返回深拷贝前的原始引用（内部使用）。"""
         return next((p for p in store.get("providers", []) if p.get("id") == provider_id), None)
 
+    def _find_extra_provider(
+        self,
+        extra_providers: Optional[List[Dict[str, Any]]],
+        provider_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        provider_id = str(provider_id or "").strip()
+        if not provider_id:
+            return None
+        return next((p for p in extra_providers or [] if isinstance(p, dict) and p.get("id") == provider_id), None)
+
+    def _with_extra_providers(
+        self,
+        providers: List[Dict[str, Any]],
+        extra_providers: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        result = [copy.deepcopy(p) for p in providers if isinstance(p, dict)]
+        extras = [normalize_provider(p) for p in (extra_providers or []) if isinstance(p, dict)]
+        if not extras:
+            return result
+        extra_ids = {p.get("id") for p in extras}
+        result = [p for p in result if p.get("id") not in extra_ids]
+        return result + extras
+
     def _allocate_provider_id(self, store: Dict[str, Any], provider: Dict[str, Any]) -> str:
         """
         为新建 provider 分配唯一 ID。
@@ -730,6 +773,11 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         "endpoint_overrides": raw.get("endpoint_overrides") if isinstance(raw.get("endpoint_overrides"), dict) else {},
         "api_format": api_format,
         "auth_mode": auth_mode,
+        "codex_login": _coerce_bool(raw.get("codex_login"), False),
+        "switch_only": _coerce_bool(raw.get("switch_only"), False),
+        "amr_excluded": _coerce_bool(raw.get("amr_excluded"), False),
+        "local_proxy_routing": _coerce_bool(raw.get("local_proxy_routing"), True),
+        "routing_mode": str(raw.get("routing_mode") or "").strip(),
         "api_key": str(raw.get("api_key") or "").strip(),
         "secondary_usage_key": str(raw.get("secondary_usage_key") or "").strip(),
         "headers": headers,
@@ -1300,7 +1348,7 @@ def build_catalog_preview_from_providers(
     seen: set[str] = set()
 
     for provider in providers:
-        if not isinstance(provider, dict) or not provider.get("enabled", True):
+        if not provider_allows_local_routing(provider):
             continue
         visibility = provider.get("catalog_visibility", "focused_only")
         is_focused = bool(focus_provider_id and provider.get("id") == focus_provider_id)

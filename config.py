@@ -15,6 +15,7 @@ from typing import Any, Dict
 
 from app_paths import LEGACY_CONFIG_FILE, app_data_path, ensure_app_dirs
 from approval_broker import DEFAULT_AUTO_APPROVAL_SYSTEM_PROMPT, normalize_auto_approval_system_prompt
+from local_proxy_auth import generate_local_proxy_bearer_token, local_proxy_token_is_strong
 from auto_detect import (
     detect_archived_dir,
     detect_codex_db,
@@ -56,6 +57,8 @@ DEFAULT_CONFIG = {
     "plugin_unlock_enabled": False,
     "codex_cdp_port": 51236,
     "codex_injection_enabled": True,
+    "codex_goals_enabled": True,
+    "local_proxy_bearer_token": "",
     "proxy_upstream_timeout_seconds": 120,
     "proxy_retry_attempts": 0,
     "proxy_retry_backoff_ms": 250,
@@ -91,6 +94,7 @@ DEFAULT_CONFIG = {
         "tokens": True,
         "progress": True,
         "threshold": True,
+        "speed": True,
         "cache": True,
         "context_window": True,
         "updated_at": True,
@@ -117,7 +121,10 @@ class Config:
         ensure_app_dirs()
         self._data: Dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
         self.load()
+        token_changed = self._ensure_local_proxy_token()
         self._auto_detect_if_needed()
+        if token_changed:
+            self.save()
 
     def load(self):
         """Load settings, migrating the legacy config file when needed."""
@@ -133,7 +140,8 @@ class Config:
             if isinstance(saved, dict):
                 self._data.update(saved)
             self._normalize_storage_defaults()
-            if source == LEGACY_CONFIG_FILE and not CONFIG_FILE.exists():
+            token_changed = self._ensure_local_proxy_token()
+            if (source == LEGACY_CONFIG_FILE and not CONFIG_FILE.exists()) or token_changed:
                 self.save()
         except Exception:
             try:
@@ -161,6 +169,7 @@ class Config:
         self._ensure_writable()
         self._data[key] = value
         self._normalize_storage_defaults()
+        self._ensure_local_proxy_token()
         self.save()
 
     def get_all(self) -> Dict:
@@ -170,12 +179,14 @@ class Config:
         self._ensure_writable()
         self._data.update(data)
         self._normalize_storage_defaults()
+        self._ensure_local_proxy_token()
         self.save()
 
     def reset_defaults(self):
         self._ensure_writable()
         self._data = copy.deepcopy(DEFAULT_CONFIG)
         self._auto_detect_if_needed()
+        self._ensure_local_proxy_token()
         self.save()
 
     def lock_writes(self, reason: str):
@@ -236,7 +247,13 @@ class Config:
             self._data["desktop_monitor_opacity"] = min(max(int(round(monitor_opacity)), 35), 100)
         except (TypeError, ValueError):
             self._data["desktop_monitor_opacity"] = DEFAULT_CONFIG["desktop_monitor_opacity"]
-        for key in ("update_check_enabled", "update_include_prerelease", "plugin_unlock_enabled", "codex_injection_enabled"):
+        for key in (
+            "update_check_enabled",
+            "update_include_prerelease",
+            "plugin_unlock_enabled",
+            "codex_injection_enabled",
+            "codex_goals_enabled",
+        ):
             value = self._data.get(key)
             if isinstance(value, str):
                 self._data[key] = value.strip().lower() not in {"0", "false", "no", "off"}
@@ -299,6 +316,12 @@ class Config:
         self._data["auto_approval_system_prompt"] = normalize_auto_approval_system_prompt(
             self._data.get("auto_approval_system_prompt")
         )
+
+    def _ensure_local_proxy_token(self) -> bool:
+        if not local_proxy_token_is_strong(self._data.get("local_proxy_bearer_token")):
+            self._data["local_proxy_bearer_token"] = generate_local_proxy_bearer_token()
+            return True
+        return False
 
     def _auto_detect_if_needed(self):
         """Auto-fill Codex paths only when the user has not configured them."""

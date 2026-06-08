@@ -368,20 +368,41 @@ def codex_launch_candidates(
     return _dedupe_existing_paths(cpp_paths + gui_paths + cli_paths)
 
 
-def _launch_codex_path(path: str, extra_args: Optional[List[str]] = None) -> None:
+def _launch_codex_path(path: str, extra_args: Optional[List[str]] = None):
     import subprocess
 
     extra_args = extra_args or []
     flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
     suffix = Path(path).suffix.lower()
     if os.name == "nt" and suffix in {".bat", ".cmd"}:
-        subprocess.Popen(
+        return subprocess.Popen(
             ["cmd.exe", "/c", "start", "", path, *extra_args],
             creationflags=flags,
             close_fds=True,
         )
-        return
-    subprocess.Popen([path, *extra_args], creationflags=flags, close_fds=True)
+    return subprocess.Popen([path, *extra_args], creationflags=flags, close_fds=True)
+
+
+def _wait_for_codex_start(process, timeout_seconds: float = 6.0) -> Tuple[bool, List[int], str]:
+    """Wait briefly for a visible Codex process after launching."""
+    deadline = time.monotonic() + max(float(timeout_seconds or 0), 0.5)
+    last_exit_code = None
+    while time.monotonic() < deadline:
+        running, pids = is_codex_running(timeout=1)
+        if running:
+            return True, pids, ""
+        try:
+            if process is not None:
+                last_exit_code = process.poll()
+        except Exception:
+            last_exit_code = None
+        time.sleep(0.25)
+    running, pids = is_codex_running(timeout=1)
+    if running:
+        return True, pids, ""
+    if last_exit_code not in (None, 0):
+        return False, [], f"启动器进程已退出，退出码 {last_exit_code}"
+    return False, [], "启动命令已执行，但未检测到 Codex 进程"
 
 
 def start_codex(
@@ -410,9 +431,13 @@ def start_codex(
 
         for path in codex_launch_candidates(use_codex_plus_plus, codex_plus_plus_path, codex_cli_path):
             try:
-                _launch_codex_path(path, extra_args=extra_args)
+                process = _launch_codex_path(path, extra_args=extra_args)
                 label = "Codex++" if "codex-plus-plus" in path.lower() else "Codex"
-                message = f"已启动 {label}: {path}"
+                started, started_pids, start_note = _wait_for_codex_start(process, timeout_seconds=6)
+                if not started:
+                    errors.append(f"{path}: {start_note}")
+                    continue
+                message = f"已启动 {label}: {path} (PID: {started_pids})"
                 if enable_cdp_injection and not use_codex_plus_plus:
                     try:
                         from codex_injector import inject_codex_enhancements

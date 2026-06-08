@@ -1,5 +1,27 @@
 # Release Notes
 
+## v2.2.11 - 2026-06-09
+
+### 中文
+
+- 修复官方登录态识别：当 `auth.json` 为 ChatGPT/OAuth 登录且 `config.toml` 只配置模型时，界面会锁定显示官方 `openai` 登录态和当前模型（例如 `gpt-5.5`），不再误判为普通供应商缺失。
+- 官方登录态改为只做可切换的直连状态，不进入本地代理、AMR 或模型轮换；安全的 Codex 页面增强注入仍可启用。
+- 本地代理默认使用高熵 bearer token，设置页只显示指纹；Codex provider 写入会使用真实 token，并且代理端口被占用时会自动退避到后续可用端口。
+- 启动 Codex 改为带进度的后台任务，完整历史同步会显示阶段进度；同步默认不再每次做完整备份，并新增备份清理入口。
+- 新增一键修复 Codex 配置到模板态、首次切回官方登录的风险重置流程、Goal mode 总设置、官方用量统计读取和悬浮窗 token 消耗速度。
+- 本次 EXE 大小 `73.21 MB`，SHA256 `da20b3222acd814a2bb9e0524cb9fda5f30ee91220b0d4d77fba365d10a84d09`。
+- 已通过 `python -m pytest -q`、前端 JS 静态检查、`python build_exe.py --no-desktop-copy --smoke-test --write-release-manifest`。
+
+### English
+
+- Fixed official-login detection: when `auth.json` contains ChatGPT/OAuth auth and `config.toml` only sets a model, the UI now locks to the official `openai` login state and current model such as `gpt-5.5` instead of treating the provider as missing.
+- Official login is now a switch-only direct state and is excluded from the local proxy, AMR, and model rotation; safe Codex page enhancement injection can still run.
+- The local proxy now uses a high-entropy bearer token by default, settings only show its fingerprint, Codex provider config writes the real token, and occupied proxy ports automatically back off to the next available port.
+- Codex launch now runs as a progress-reporting background task; full history sync shows progress, full backup is no longer the default on every sync, and backups can be pruned from the UI.
+- Added one-click Codex config template repair, a risk-confirmed official-login reset flow, a global Goal mode setting, official usage reading, and token consumption speed in the floating monitor.
+- This EXE is `73.21 MB` with SHA256 `da20b3222acd814a2bb9e0524cb9fda5f30ee91220b0d4d77fba365d10a84d09`.
+- Verified with `python -m pytest -q`, frontend JS static checks, and `python build_exe.py --no-desktop-copy --smoke-test --write-release-manifest`.
+
 ## v2.2.10 - 2026-06-08
 
 ### 中文

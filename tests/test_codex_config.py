@@ -15,6 +15,8 @@ from codex_config import (
     backup_file,
     restore_file,
     redact_auth_for_preview,
+    codex_goals_enabled_from_config,
+    merge_codex_goals_feature,
 )
 
 
@@ -78,6 +80,16 @@ class AuthJsonTest(unittest.TestCase):
     def test_detect_official_oauth(self):
         self.assertEqual(
             detect_auth_mode({"access_token": "eyJhbGciOiJ..."}),
+            "official_oauth",
+        )
+
+    def test_detect_official_oauth_from_nested_tokens(self):
+        self.assertEqual(
+            detect_auth_mode({"auth_mode": "chatgpt", "tokens": {"access_token": "eyJhbGciOiJ..."}}),
+            "official_oauth",
+        )
+        self.assertEqual(
+            detect_auth_mode({"tokens": {"refresh_token": "refresh-token"}}),
             "official_oauth",
         )
 
@@ -153,16 +165,28 @@ class CodexConfigManagerTest(unittest.TestCase):
     def test_write_provider_config_creates_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             mgr = CodexConfigManager(codex_home=str(tmpdir))
-            result = mgr.write_provider_config(preserve_official_auth=True)
+            token = "cem_lp_test_" + ("x" * 48)
+            result = mgr.write_provider_config(
+                preserve_official_auth=True,
+                goals_enabled=True,
+                local_proxy_bearer_token=token,
+            )
             self.assertTrue(result["success"])
             self.assertTrue(mgr.config_path.exists())
             config = load_config_toml(str(mgr.config_path))
             self.assertEqual(config.get("model_provider"), "codex_enhance_manager")
+            self.assertTrue(codex_goals_enabled_from_config(config))
             provider = config.get("model_providers", {}).get("codex_enhance_manager", {})
             self.assertEqual(provider.get("base_url"), "http://localhost:8080/v1")
             self.assertEqual(provider.get("wire_api"), "responses")
             self.assertTrue(provider.get("requires_openai_auth"))
-            self.assertEqual(provider.get("experimental_bearer_token"), LOCAL_PROXY_BEARER_TOKEN)
+            self.assertEqual(provider.get("experimental_bearer_token"), token)
+            self.assertNotEqual(provider.get("experimental_bearer_token"), "codex-enhance-manager-local")
+
+    def test_goals_feature_merge_preserves_existing_features(self):
+        merged = merge_codex_goals_feature({"features": {"hooks": False}}, True)
+        self.assertTrue(merged["features"]["goals"])
+        self.assertFalse(merged["features"]["hooks"])
 
     def test_preserve_official_oauth_does_not_touch_auth(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -194,6 +218,10 @@ class CodexConfigManagerTest(unittest.TestCase):
             "api_key": "sk-123",
             "refresh_token": "refresh-me",
             "id_token": "id-me",
+            "tokens": {
+                "access_token": "nested-access",
+                "refresh_token": "nested-refresh",
+            },
             "safe_field": "visible",
         }
         redacted = redact_auth_for_preview(data)
@@ -201,6 +229,8 @@ class CodexConfigManagerTest(unittest.TestCase):
         self.assertEqual(redacted["api_key"], "********")
         self.assertEqual(redacted["refresh_token"], "********")
         self.assertEqual(redacted["id_token"], "********")
+        self.assertEqual(redacted["tokens"]["access_token"], "********")
+        self.assertEqual(redacted["tokens"]["refresh_token"], "********")
         self.assertEqual(redacted["safe_field"], "visible")
 
 

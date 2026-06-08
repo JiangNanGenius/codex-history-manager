@@ -36,10 +36,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app_paths import app_data_path
 from codex_permissions import inspect_codex_permissions, preview_codex_permissions_update
+from local_proxy_auth import generate_local_proxy_bearer_token
 
 CODEX_CONFIG_BACKUP_DIR = app_data_path("codex_backups")
 REDACTED = "********"
-LOCAL_PROXY_BEARER_TOKEN = "codex-enhance-manager-local"
+LOCAL_PROXY_BEARER_TOKEN = generate_local_proxy_bearer_token()
 
 
 def resolve_codex_home(codex_home: str = "") -> Path:
@@ -311,6 +312,20 @@ def list_backups(backup_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
     return backups
 
 
+def _first_auth_token(auth_data: Dict[str, Any], keys: Tuple[str, ...]) -> str:
+    for key in keys:
+        value = auth_data.get(key)
+        if value:
+            return str(value)
+    tokens = auth_data.get("tokens")
+    if isinstance(tokens, dict):
+        for key in keys:
+            value = tokens.get(key)
+            if value:
+                return str(value)
+    return ""
+
+
 def detect_auth_mode(auth_data: Dict[str, Any]) -> str:
     """
     从 auth.json 内容检测当前认证模式。
@@ -336,15 +351,23 @@ def detect_auth_mode(auth_data: Dict[str, Any]) -> str:
     """
     if not auth_data:
         return "none"
-    # Official OAuth: has access_token with specific prefixes or expires_at
-    if auth_data.get("access_token"):
-        token = str(auth_data["access_token"])
+
+    auth_mode = str(auth_data.get("auth_mode") or auth_data.get("mode") or "").strip().lower()
+    if auth_mode in {"chatgpt", "oauth", "official_oauth", "official-oauth", "official"}:
+        return "official_oauth"
+    if auth_mode in {"api_key", "apikey", "openai_api_key", "legacy_api_key", "legacy-api-key"}:
+        return "legacy_api_key"
+
+    api_key = _first_auth_token(auth_data, ("api_key", "OPENAI_API_KEY", "openai_api_key"))
+    if api_key:
+        return "legacy_api_key"
+
+    # Official OAuth: current Codex stores ChatGPT tokens under tokens.*.
+    token = _first_auth_token(auth_data, ("access_token", "id_token", "refresh_token"))
+    if token:
         if token.startswith("sk-"):
             return "legacy_api_key"
         return "official_oauth"
-    # Legacy API key stored directly
-    if auth_data.get("api_key") or auth_data.get("OPENAI_API_KEY"):
-        return "legacy_api_key"
     return "unknown"
 
 
@@ -367,13 +390,47 @@ def merge_toml_dict(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, 
     return merged
 
 
+def _coerce_bool_flag(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def codex_goals_enabled_from_config(config_data: Dict[str, Any], default: bool = True) -> bool:
+    """Read Codex features.goals from parsed config.toml."""
+    features = config_data.get("features") if isinstance(config_data, dict) else {}
+    if not isinstance(features, dict) or "goals" not in features:
+        return default
+    return _coerce_bool_flag(features.get("goals"), default)
+
+
+def build_codex_goals_config(goals_enabled: bool = True) -> Dict[str, Any]:
+    """Build the official Codex Goal mode feature flag fragment."""
+    return {"features": {"goals": bool(goals_enabled)}}
+
+
+def merge_codex_goals_feature(config_data: Dict[str, Any], goals_enabled: bool = True) -> Dict[str, Any]:
+    """Return config_data with features.goals merged in, preserving other keys."""
+    return merge_toml_dict(config_data if isinstance(config_data, dict) else {}, build_codex_goals_config(goals_enabled))
+
+
 def build_codex_enhance_provider_config(
     proxy_base_url: str = "http://localhost:8080/v1",
     proxy_model: str = "auto",
+    goals_enabled: Optional[bool] = None,
+    local_proxy_bearer_token: str = "",
 ) -> Dict[str, Any]:
     """Build a config.toml fragment for the local proxy provider."""
     base_url = str(proxy_base_url or "http://localhost:8080/v1").strip().rstrip("/")
-    return {
+    bearer_token = str(local_proxy_bearer_token or LOCAL_PROXY_BEARER_TOKEN).strip()
+    config = {
         "model_provider": "codex_enhance_manager",
         "model": proxy_model,
         "provider": "codex_enhance_manager",
@@ -387,10 +444,13 @@ def build_codex_enhance_provider_config(
                 "base_url": base_url,
                 "wire_api": "responses",
                 "requires_openai_auth": True,
-                "experimental_bearer_token": LOCAL_PROXY_BEARER_TOKEN,
+                "experimental_bearer_token": bearer_token,
             },
         },
     }
+    if goals_enabled is not None:
+        config = merge_toml_dict(config, build_codex_goals_config(bool(goals_enabled)))
+    return config
 
 
 class CodexConfigManager:
@@ -441,10 +501,17 @@ class CodexConfigManager:
         self,
         proxy_base_url: str = "http://localhost:8080/v1",
         proxy_model: str = "auto",
+        goals_enabled: Optional[bool] = None,
+        local_proxy_bearer_token: str = "",
     ) -> Dict[str, Any]:
         """Generate a diff preview without writing anything."""
         current_config = self.read_config()
-        desired_updates = build_codex_enhance_provider_config(proxy_base_url, proxy_model)
+        desired_updates = build_codex_enhance_provider_config(
+            proxy_base_url,
+            proxy_model,
+            goals_enabled,
+            local_proxy_bearer_token,
+        )
         merged = merge_toml_dict(current_config, desired_updates)
 
         current_auth = self.read_auth()
@@ -468,6 +535,8 @@ class CodexConfigManager:
         proxy_base_url: str = "http://localhost:8080/v1",
         proxy_model: str = "auto",
         preserve_official_auth: bool = True,
+        goals_enabled: Optional[bool] = None,
+        local_proxy_bearer_token: str = "",
     ) -> Dict[str, Any]:
         """
         将本地代理 provider 写入 Codex config.toml。
@@ -518,7 +587,12 @@ class CodexConfigManager:
 
         # Build and merge config
         current_config = self.read_config()
-        updates = build_codex_enhance_provider_config(proxy_base_url, proxy_model)
+        updates = build_codex_enhance_provider_config(
+            proxy_base_url,
+            proxy_model,
+            goals_enabled,
+            local_proxy_bearer_token,
+        )
         merged = merge_toml_dict(current_config, updates)
 
         # Write config.toml
@@ -532,6 +606,48 @@ class CodexConfigManager:
             return result
 
         result["success"] = len(result["errors"]) == 0
+        return result
+
+    def preview_goals_feature(self, goals_enabled: bool = True) -> Dict[str, Any]:
+        """Preview writing Codex features.goals without touching auth.json."""
+        current_config = self.read_config()
+        merged = merge_codex_goals_feature(current_config, goals_enabled)
+        return {
+            "will_write_config": current_config != merged,
+            "config_diff": _compute_diff(current_config, merged),
+            "restart_required": True,
+            "goals_enabled": bool(goals_enabled),
+            "current_goals_enabled": codex_goals_enabled_from_config(current_config, True),
+        }
+
+    def write_goals_feature(self, goals_enabled: bool = True) -> Dict[str, Any]:
+        """Safely write Codex features.goals, preserving the rest of config.toml."""
+        result = {
+            "success": False,
+            "changed": False,
+            "restart_required": True,
+            "backups": {},
+            "errors": [],
+            "goals_enabled": bool(goals_enabled),
+        }
+        current_config = self.read_config()
+        merged = merge_codex_goals_feature(current_config, goals_enabled)
+        if merged == current_config:
+            result["success"] = True
+            return result
+        if self.config_path.exists():
+            config_backup = backup_file(str(self.config_path), self.backup_dir)
+            if config_backup:
+                result["backups"]["config_toml"] = config_backup
+        try:
+            save_config_toml(str(self.config_path), merged)
+        except Exception as e:
+            result["errors"].append(f"config.toml write failed: {e}")
+            if "config_toml" in result["backups"]:
+                restore_file(str(self.config_path), result["backups"]["config_toml"])
+            return result
+        result["success"] = True
+        result["changed"] = True
         return result
 
     def restore_config(self, backup_path: str = "") -> Dict[str, Any]:
@@ -615,10 +731,32 @@ def _compute_diff(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
     return diff
 
 
+def _is_sensitive_auth_key(key: str) -> bool:
+    normalized = str(key or "").lower().replace("-", "_")
+    return normalized in {
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "api_key",
+        "openai_api_key",
+        "authorization",
+        "bearer",
+        "secret",
+        "password",
+    } or normalized.endswith("_token") or normalized.endswith("_secret")
+
+
+def _redact_auth_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_redact_auth_value(item) for item in value]
+    if isinstance(value, dict):
+        redacted: Dict[str, Any] = {}
+        for key, item in value.items():
+            redacted[key] = REDACTED if _is_sensitive_auth_key(key) and item else _redact_auth_value(item)
+        return redacted
+    return value
+
+
 def redact_auth_for_preview(data: Dict[str, Any]) -> Dict[str, Any]:
     """Redact secrets from auth data for UI display."""
-    redacted = copy.deepcopy(data)
-    for key in ("access_token", "api_key", "refresh_token", "id_token"):
-        if key in redacted and redacted[key]:
-            redacted[key] = REDACTED
-    return redacted
+    return _redact_auth_value(copy.deepcopy(data or {}))

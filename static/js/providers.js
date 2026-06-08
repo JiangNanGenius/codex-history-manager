@@ -2527,6 +2527,8 @@ function renderProxyControlCard() {
     const portLabel = status.port ? `:${status.port}` : '--';
     const baseUrl = status.base_url || t('notStarted');
     const approvalBrokerConnected = Boolean(status.media_auto_approval_reviewer_connected);
+    const authRequired = Boolean(status.local_proxy_auth_required);
+    const tokenFingerprint = status.local_proxy_token_fingerprint || '';
     const backoffNotice = backoff.used
         ? `<div class="mt-3 text-xs text-amber-200 bg-amber-950/30 border border-amber-700/40 rounded-lg p-2">
                 ${escapeHtml(t('proxyBackoffNotice', { from: backoff.from, to: backoff.to }))}
@@ -2542,6 +2544,9 @@ function renderProxyControlCard() {
             <div class="mt-2 text-xs text-dark-400 break-all">${escapeHtml(baseUrl)}</div>
             <div class="mt-2 text-xs ${approvalBrokerConnected ? 'text-emerald-300' : 'text-dark-500'}">
                 ${escapeHtml(t('approvalBrokerLabel'))} ${escapeHtml(approvalBrokerConnected ? t('connectedLabel') : t('idleLabel'))}
+            </div>
+            <div class="mt-2 text-xs ${authRequired ? 'text-emerald-300' : 'text-amber-300'}">
+                ${escapeHtml(authRequired ? t('localProxyAuthEnabled') : t('localProxyAuthDisabled'))}${tokenFingerprint ? ` · ${escapeHtml(t('tokenFingerprint', { value: tokenFingerprint }))}` : ''}
             </div>
             ${backoffNotice}
             ${status.last_start_error ? `<div class="mt-3 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2">${escapeHtml(status.last_start_error)}</div>` : ''}
@@ -2619,10 +2624,12 @@ async function addSelectedModelsToAmr() {
     if (!provider) return;
     const errorEl = document.getElementById('bulk-action-error');
     if (errorEl) errorEl.classList.add('hidden');
-    if (isCodexLoginProvider(provider)) {
+    if (isCodexLoginProvider(provider) || provider.switch_only || provider.amr_excluded || provider.local_proxy_routing === false) {
         if (errorEl) {
-            errorEl.textContent = t('codexLoginProviderReadOnly');
+            errorEl.textContent = t('officialProviderSwitchOnly');
             errorEl.classList.remove('hidden');
+        } else {
+            showToast(t('officialProviderSwitchOnly'), 'warning');
         }
         return;
     }
@@ -2800,6 +2807,7 @@ let codexIntegrationState = {
     },
     backups: [],
     injectionApplying: false,
+    startJob: null,
     loading: false,
 };
 
@@ -2999,20 +3007,25 @@ async function startCodexWithSelectedMode() {
     try {
         const draft = readCodexConnectionForm();
         setStatus(t('codexStartRequested'));
-        const result = await api('/api/codex/start', {
-            method: 'POST',
-            body: JSON.stringify({
+        const result = await startCodexWithProgress({
                 start_mode: draft.start_mode,
                 preserve_official_auth: draft.preserve_official_auth,
                 enable_cdp_injection: draft.enable_cdp_injection,
                 cdp_port: draft.cdp_port,
-            }),
+        }, {
+            onProgress: (job) => {
+                codexIntegrationState.startJob = job;
+                renderCodexIntegrationPage();
+            },
         });
         showToast(result.message || t('codexStartRequested'), result.success ? 'success' : 'error');
+        codexIntegrationState.startJob = null;
         await refreshCodexIntegrationStatus();
         renderCodexIntegrationPage();
     } catch (err) {
+        codexIntegrationState.startJob = null;
         showToast(t('codexStartFailed') + err.message, 'error');
+        renderCodexIntegrationPage();
     }
 }
 
@@ -3043,15 +3056,23 @@ async function startOfficialCodex() {
     if (!confirm(t('confirmStartOfficialCodex'))) return;
     try {
         setStatus(t('codexOfficialStartRequested'));
-        const result = await api('/api/codex/start', {
-            method: 'POST',
-            body: JSON.stringify({ start_mode: 'official_direct', official_mode: true }),
+        const result = await startCodexWithProgress({
+            start_mode: 'official_direct',
+            official_mode: true,
+        }, {
+            onProgress: (job) => {
+                codexIntegrationState.startJob = job;
+                renderCodexIntegrationPage();
+            },
         });
         showToast(result.message || t('codexOfficialStartRequested'), result.success ? 'success' : 'error');
+        codexIntegrationState.startJob = null;
         await refreshCodexIntegrationStatus();
         renderCodexIntegrationPage();
     } catch (err) {
+        codexIntegrationState.startJob = null;
         showToast(t('codexOfficialStartFailed') + err.message, 'error');
+        renderCodexIntegrationPage();
     }
 }
 
@@ -3092,6 +3113,56 @@ async function restoreCodexAuth() {
         renderCodexIntegrationPage();
     } catch (err) {
         showToast(t('restoreFailed') + err.message, 'error');
+    }
+}
+
+async function repairCodexConfigTemplate() {
+    const manual = requestCodexMutationConfirmation(t('repairCodexConfigAction'));
+    if (!manual) return;
+    const restartWindows = confirm(t('repairConfigRestartConfirm'));
+    try {
+        const result = await api('/api/codex-integration/repair-config-template', {
+            method: 'POST',
+            body: JSON.stringify({
+                ...manual,
+                restart_windows: restartWindows,
+            }),
+        });
+        showToast(result.message || t('repairConfigCompleted'), result.success ? 'success' : 'error');
+        await refreshCodexIntegrationStatus();
+        await refreshCodexIntegrationBackups();
+        renderCodexIntegrationPage();
+    } catch (err) {
+        showToast(t('repairConfigFailed') + err.message, 'error');
+    }
+}
+
+async function resetCodexForOfficialLogin() {
+    if (!confirm(t('resetOfficialLoginRisk'))) return;
+    const riskPhrase = 'CHAT_HISTORY_MAY_BE_LOST';
+    const riskValue = prompt(t('resetOfficialLoginRiskConfirm', { phrase: riskPhrase }));
+    if (riskValue !== riskPhrase) {
+        showToast(t('codexMutationCancelled'), 'warning');
+        return;
+    }
+    const manual = requestCodexMutationConfirmation(t('resetCodexOfficialLoginAction'));
+    if (!manual) return;
+    const restartWindows = confirm(t('restartWindowsAfterOfficialResetConfirm'));
+    try {
+        const result = await api('/api/codex-integration/reset-for-official-login', {
+            method: 'POST',
+            body: JSON.stringify({
+                ...manual,
+                risk_confirmation: riskPhrase,
+                restart_windows: restartWindows,
+            }),
+        });
+        showToast(result.message || t('resetOfficialLoginCompleted'), result.success ? 'success' : 'error');
+        await refreshCodexIntegrationStatus();
+        await refreshCodexIntegrationBackups();
+        renderCodexIntegrationPage();
+    } catch (err) {
+        showToast(t('resetOfficialLoginFailed') + err.message, 'error');
     }
 }
 
@@ -3164,6 +3235,74 @@ function renderCodexInjectionCard(status = {}) {
     `;
 }
 
+function renderCodexRepairCard(status = {}) {
+    const risk = status.config_risk_assessment || {};
+    const counts = risk.counts || {};
+    const issues = Array.isArray(risk.issues) ? risk.issues : [];
+    const issueSummary = `${counts.critical || 0} / ${counts.warning || 0} / ${counts.info || 0}`;
+    const topIssues = issues.slice(0, 4).map(issue => `
+        <div class="rounded-md border border-dark-800 bg-dark-950/45 p-2">
+            <div class="text-xs font-semibold ${issue.severity === 'critical' ? 'text-red-300' : issue.severity === 'warning' ? 'text-amber-300' : 'text-dark-300'}">${escapeHtml(issue.path || issue.code || '')}</div>
+            <div class="text-xs text-dark-400 mt-1">${escapeHtml(issue.message || '')}</div>
+        </div>
+    `).join('');
+    return `
+        <div class="card">
+            <div class="flex items-center justify-between gap-3">
+                <h3 class="card-title">${escapeHtml(t('codexConfigRepairTitle'))}</h3>
+                ${renderStatusPill('config-risk', t('configRiskCount', { count: issueSummary }), (counts.critical || 0) ? 'red' : (counts.warning || 0) ? 'amber' : 'emerald')}
+            </div>
+            <p class="text-sm text-dark-400 mt-2">${escapeHtml(t('codexConfigRepairDesc'))}</p>
+            <div class="mt-3 space-y-2">
+                ${topIssues || `<div class="text-sm text-dark-500">${escapeHtml(t('noConfigRisksDetected'))}</div>`}
+            </div>
+            <div class="flex flex-wrap gap-2 mt-4">
+                <button onclick="repairCodexConfigTemplate()" class="btn btn-warning text-xs">${escapeHtml(t('repairCodexConfigTemplate'))}</button>
+            </div>
+            <p class="text-xs text-dark-500 mt-3">${escapeHtml(t('repairCodexConfigTemplateDesc'))}</p>
+        </div>
+    `;
+}
+
+function renderOfficialLoginResetCard(status = {}) {
+    const official = status.auth_mode === 'official_oauth';
+    return `
+        <div class="card">
+            <div class="flex items-center justify-between gap-3">
+                <h3 class="card-title">${escapeHtml(t('officialLoginResetTitle'))}</h3>
+                ${renderStatusPill('official-reset', official ? t('officialLoginDetected') : t('manualRiskAction'), official ? 'emerald' : 'amber')}
+            </div>
+            <p class="text-sm text-dark-400 mt-2">${escapeHtml(t('officialLoginResetDesc'))}</p>
+            <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 mt-3 text-xs text-amber-100">
+                ${escapeHtml(t('officialLoginResetRiskLine'))}
+            </div>
+            <div class="flex flex-wrap gap-2 mt-4">
+                <button onclick="resetCodexForOfficialLogin()" class="btn btn-danger text-xs">${escapeHtml(t('resetCodexOfficialLogin'))}</button>
+            </div>
+        </div>
+    `;
+}
+
+function renderCodexStartProgressCard() {
+    const job = codexIntegrationState.startJob;
+    if (!job) return '';
+    const progress = Math.min(Math.max(Number(job.progress || 0), 0), 100);
+    const message = job.message || t('codexStartRequested');
+    const stage = job.stage || 'queued';
+    return `
+        <div class="rounded-lg border border-accent-500/35 bg-accent-500/10 p-3">
+            <div class="flex items-center justify-between gap-3">
+                <div class="text-sm font-semibold text-accent-100">${escapeHtml(message)}</div>
+                <div class="text-xs font-mono text-accent-200">${escapeHtml(`${progress}%`)}</div>
+            </div>
+            <div class="mt-2 h-2 rounded-full bg-dark-900 overflow-hidden">
+                <div class="h-full bg-accent-400 transition-all" style="width:${progress}%"></div>
+            </div>
+            <div class="mt-2 text-xs text-dark-400">${escapeHtml(t('codexStartStage', { stage }))}</div>
+        </div>
+    `;
+}
+
 /**
  * 渲染 Codex Integration 页面（状态查看 / Diff 预览 / 回滚）。
  * 该页卡片为静态 HTML 结构（无 .stagger-item），因此依赖 app.js 中
@@ -3190,6 +3329,11 @@ function renderCodexIntegrationPage() {
     const proxyBackoffNote = proxyBackoff.used
         ? `<div class="mt-2 text-xs text-amber-300">${escapeHtml(t('proxyBackoffNotice', { from: proxyBackoff.from, to: proxyBackoff.to }))}</div>`
         : '';
+    const effectiveProvider = status.effective_model_provider || (status.config || {}).model_provider || '';
+    const providerDisplay = status.effective_model_provider_source === 'official_oauth'
+        ? t('officialOpenAIProvider')
+        : (effectiveProvider || '-');
+    const effectiveModel = status.effective_model || (status.config || {}).model || '-';
 
     root.innerHTML = `
         <div class="animate-in">
@@ -3212,8 +3356,8 @@ function renderCodexIntegrationPage() {
                         <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('configPath'))}</span><span class="font-mono text-dark-200">${escapeHtml(status.config_path || '-')}</span></div>
                         <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('authPath'))}</span><span class="font-mono text-dark-200">${escapeHtml(status.auth_path || '-')}</span></div>
                         <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('authModeLabel'))}</span><span class="font-mono ${status.auth_mode === 'official_oauth' ? 'text-emerald-400' : 'text-amber-400'}">${escapeHtml(status.auth_mode || 'none')}</span></div>
-                        <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('modelProviderLabel'))}</span><span class="font-mono text-dark-200">${escapeHtml((status.config || {}).model_provider || '-')}</span></div>
-                        <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('modelLabelShort'))}</span><span class="font-mono text-dark-200">${escapeHtml((status.config || {}).model || '-')}</span></div>
+                        <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('modelProviderLabel'))}</span><span class="font-mono text-dark-200">${escapeHtml(providerDisplay)}</span></div>
+                        <div class="flex justify-between"><span class="text-dark-500">${escapeHtml(t('modelLabelShort'))}</span><span class="font-mono text-dark-200">${escapeHtml(effectiveModel)}</span></div>
                     </div>
                 </div>
 
@@ -3242,6 +3386,7 @@ function renderCodexIntegrationPage() {
                         <button onclick="startCodexWithSelectedMode()" class="btn btn-primary">${escapeHtml(t('startCodexSelectedMode'))}</button>
                         <button onclick="startOfficialCodex()" class="btn btn-secondary">${escapeHtml(t('startOfficialCodex'))}</button>
                     </div>
+                    <div class="mt-3">${renderCodexStartProgressCard()}</div>
                     <p class="text-xs text-dark-500 mt-3">${escapeHtml(t('officialCodexStartDesc'))}</p>
                 </div>
 
@@ -3251,6 +3396,8 @@ function renderCodexIntegrationPage() {
             <div class="space-y-4">
                 ${renderCodexConnectionSummary(preview)}
                 ${renderApprovalBridgePreviewCard(codexIntegrationState.approvalBridgePreview)}
+                ${renderCodexRepairCard(status)}
+                ${renderOfficialLoginResetCard(status)}
 
                 <div class="card">
                     <h3 class="card-title">${escapeHtml(t('backupsRollback'))}</h3>

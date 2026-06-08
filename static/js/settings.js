@@ -509,6 +509,7 @@ function populateSettingsForm(data) {
         'setting-update-check-enabled': 'update_check_enabled',
         'setting-update-include-prerelease': 'update_include_prerelease',
         'setting-plugin-unlock-enabled': 'plugin_unlock_enabled',
+        'setting-codex-goals-enabled': 'codex_goals_enabled',
     };
     for (const [elId, key] of Object.entries(checkboxFields)) {
         const el = document.getElementById(elId);
@@ -528,6 +529,7 @@ function populateSettingsForm(data) {
         'monitor-field-tokens': 'tokens',
         'monitor-field-progress': 'progress',
         'monitor-field-threshold': 'threshold',
+        'monitor-field-speed': 'speed',
         'monitor-field-cache': 'cache',
         'monitor-field-context': 'context_window',
         'monitor-field-updated': 'updated_at',
@@ -981,6 +983,7 @@ async function saveSettings() {
         update_check_enabled: document.getElementById('setting-update-check-enabled')?.checked ?? true,
         update_include_prerelease: document.getElementById('setting-update-include-prerelease')?.checked ?? false,
         plugin_unlock_enabled: document.getElementById('setting-plugin-unlock-enabled')?.checked || false,
+        codex_goals_enabled: document.getElementById('setting-codex-goals-enabled')?.checked !== false,
         proxy_upstream_timeout_seconds: parseInt(document.getElementById('setting-proxy-upstream-timeout')?.value, 10) || 120,
         proxy_retry_attempts: parseInt(document.getElementById('setting-proxy-retry-attempts')?.value, 10) || 0,
         proxy_retry_backoff_ms: parseInt(document.getElementById('setting-proxy-retry-backoff-ms')?.value, 10) || 250,
@@ -992,6 +995,7 @@ async function saveSettings() {
             tokens: document.getElementById('monitor-field-tokens')?.checked !== false,
             progress: document.getElementById('monitor-field-progress')?.checked !== false,
             threshold: document.getElementById('monitor-field-threshold')?.checked !== false,
+            speed: document.getElementById('monitor-field-speed')?.checked !== false,
             cache: document.getElementById('monitor-field-cache')?.checked !== false,
             context_window: document.getElementById('monitor-field-context')?.checked !== false,
             updated_at: document.getElementById('monitor-field-updated')?.checked !== false,

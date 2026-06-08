@@ -2,6 +2,7 @@ import copy
 import unittest
 
 from config import Config, DEFAULT_CONFIG
+from local_proxy_auth import local_proxy_token_is_strong
 
 
 class ConfigThemeTest(unittest.TestCase):
@@ -100,6 +101,15 @@ class ConfigThemeTest(unittest.TestCase):
         self.assertFalse(cfg._data["update_check_enabled"])
         self.assertTrue(cfg._data["update_include_prerelease"])
         self.assertTrue(cfg._data["plugin_unlock_enabled"])
+
+    def test_local_proxy_token_is_generated_when_missing_or_weak(self):
+        cfg = Config.__new__(Config)
+        cfg._data = {"local_proxy_bearer_token": "codex-enhance-manager-local"}
+
+        changed = cfg._ensure_local_proxy_token()
+
+        self.assertTrue(changed)
+        self.assertTrue(local_proxy_token_is_strong(cfg._data["local_proxy_bearer_token"]))
 
 
 if __name__ == "__main__":

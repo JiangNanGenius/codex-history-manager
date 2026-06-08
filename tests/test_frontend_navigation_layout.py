@@ -100,6 +100,7 @@ def test_provider_request_preview_ui_is_wired():
 
 def test_native_responses_and_codex_login_provider_locks_are_wired():
     js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    app_js = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
     i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
 
     assert "NATIVE_LOCKED_CAPABILITIES" in js
@@ -147,12 +148,13 @@ def test_user_facing_preview_copy_is_reframed_as_checks():
 
 def test_official_login_start_keeps_safe_enhancement_copy_wired():
     js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    app_js = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
     i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
 
     assert "startOfficialCodex" in js
     assert "startCodexWithSelectedMode" in js
     assert "renderCodexEnhancementModeCard" in js
-    assert "/api/codex/start" in js
+    assert "/api/codex/start" in app_js
     assert "ci-start-mode" in js
     assert "'preserve_login_proxy'" in js
     assert "start_mode: 'official_direct'" in js
@@ -161,8 +163,13 @@ def test_official_login_start_keeps_safe_enhancement_copy_wired():
     assert "startModePreserveLoginProxy" in i18n
     assert "startModeOfficialDirect" in i18n
     assert "检测到 Codex 登录" in i18n
-    assert "local or third-party routing" in i18n
+    assert "AMR 和模型轮换会关闭" in i18n
     assert "officialEnhancementModeDesc" in i18n
+    assert "repairCodexConfigTemplate" in js
+    assert "resetCodexForOfficialLogin" in js
+    assert "codexStartStage" in i18n
+    assert "setting-codex-goals-enabled" in (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    assert "features.goals" in i18n
 
 
 def test_readme_omits_external_project_body_references():

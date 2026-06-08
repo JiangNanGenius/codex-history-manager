@@ -209,15 +209,7 @@ function setStatus(text) {
 async function startCodexFromQuickAction() {
     try {
         setStatus(t('codexStartRequested'));
-        let data;
-        if (window.pywebview && window.pywebview.api && window.pywebview.api.start_codex) {
-            data = await window.pywebview.api.start_codex();
-        } else {
-            data = await api('/api/codex/start', {
-                method: 'POST',
-                body: JSON.stringify({ start_mode: 'preserve_login_proxy' }),
-            });
-        }
+        const data = await startCodexWithProgress({ start_mode: 'preserve_login_proxy' });
         const ok = !data || data.success !== false;
         const message = (data && (data.message || data.error)) || (ok ? t('codexStartRequested') : t('failed'));
         showToast(message, ok ? 'success' : 'error');
@@ -226,6 +218,34 @@ async function startCodexFromQuickAction() {
         showToast(t('failed') + err.message, 'error');
         setStatus(t('failed') + err.message);
     }
+}
+
+async function startCodexWithProgress(payload = {}, options = {}) {
+    const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+    const started = await api('/api/codex/start', {
+        method: 'POST',
+        body: JSON.stringify({ ...payload, async: true }),
+    });
+    let latest = started;
+    if (onProgress) onProgress(latest);
+    if (!started.async || !started.status_url) return started;
+
+    const deadline = Date.now() + (Number(options.timeoutMs || 10 * 60 * 1000));
+    while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, Number(options.intervalMs || 900)));
+        latest = await api(started.status_url);
+        const message = latest.message || started.message || t('codexStartRequested');
+        setStatus(`${message} ${Number(latest.progress || 0)}%`);
+        if (onProgress) onProgress(latest);
+        if (latest.status === 'complete' || latest.status === 'failed') {
+            return latest.result || {
+                success: latest.status === 'complete',
+                message: latest.message,
+                error: latest.error,
+            };
+        }
+    }
+    throw new Error(t('codexStartStillRunning'));
 }
 
 // ─────────────── Toast Notification ───────────────

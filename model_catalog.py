@@ -27,6 +27,7 @@ import re
 from typing import Any, Dict, List, Optional, Set
 
 from capabilities import merge_provider_model_capabilities
+from provider_routing import provider_allows_local_routing
 
 
 class UnifiedModelCatalog:
@@ -69,7 +70,7 @@ class UnifiedModelCatalog:
         seen: Set[str] = set()
 
         for provider in self.providers:
-            if not provider.get("enabled", True):
+            if not provider_allows_local_routing(provider):
                 continue
             visibility = provider.get("catalog_visibility", "focused_only")
             if visibility not in ("hidden", "focused_only", "always_visible", "selected_models"):

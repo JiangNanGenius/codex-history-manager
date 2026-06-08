@@ -43,6 +43,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from model_rotation import AdaptiveModelRotation
 from capabilities import merge_provider_model_capabilities
+from provider_routing import provider_allows_local_routing
 from providers import ProviderRegistry, normalize_capabilities, redact_secrets
 
 # Schema version：当 group/candidate 数据结构发生不兼容变更时递增。
@@ -318,7 +319,11 @@ class AMRRegistry:
 
     # ─────────────── 动态构建与路由 ───────────────
 
-    def build_from_providers(self, provider_registry: ProviderRegistry) -> Dict[str, Any]:
+    def build_from_providers(
+        self,
+        provider_registry: ProviderRegistry,
+        extra_providers: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         从 ProviderRegistry 动态构建候选列表。
 
@@ -337,10 +342,13 @@ class AMRRegistry:
         Returns:
             创建或更新后的 "default" group。
         """
-        providers_data = provider_registry.list_providers(include_secrets=False)
+        providers_data = provider_registry.list_providers(
+            include_secrets=False,
+            extra_providers=extra_providers,
+        )
         candidates: List[Dict[str, Any]] = []
         for p in providers_data.get("providers", []):
-            if not p.get("enabled", True):
+            if not provider_allows_local_routing(p):
                 continue
             for m in p.get("models", []):
                 if not m.get("enabled", True):

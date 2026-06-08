@@ -424,10 +424,14 @@
                 </div>
             </div>
             <!-- Actions -->
-            <div class="flex flex-wrap gap-3">
+            <div class="flex flex-wrap items-center gap-3">
                 <button onclick="syncPreview()" class="btn btn-secondary" data-i18n="previewDryRun">预览</button>
                 <button onclick="syncExecute()" class="btn btn-warning" data-i18n="executeSync">Execute Sync</button>
                 <button onclick="oneClickSyncRestart()" class="btn btn-primary" data-i18n="oneClickSyncRestartBtn">One-Click Sync + Restart</button>
+                <label class="flex items-center gap-2 text-sm cursor-pointer text-dark-300">
+                    <input id="sync-backup-before" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                    <span data-i18n="backupBeforeSync">同步前备份</span>
+                </label>
             </div>
             <!-- Sync Result -->
             <div id="sync-result" class="card hidden">
@@ -441,6 +445,7 @@
             <div class="flex flex-wrap gap-3 items-center">
                 <button onclick="createFullBackup()" class="btn btn-primary" data-i18n="createBackup">Full Backup</button>
                 <button onclick="createIncrementalBackup()" class="btn btn-secondary" data-i18n="incrementalBackup">Incremental Backup</button>
+                <button onclick="pruneBackups()" class="btn btn-warning" data-i18n="cleanOldBackups">Clean Old Backups</button>
                 <button onclick="loadBackups()" class="btn btn-ghost" data-i18n="refresh">Refresh</button>
             </div>
             <div id="backup-info" class="text-sm text-dark-400"></div>
@@ -688,10 +693,15 @@
                         <span data-i18n="useCodexPPSetting">Use Enhanced Launcher</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input id="setting-codex-goals-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <span data-i18n="codexGoalsEnabled">Codex 目标</span>
+                    </label>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-dark-mode" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
                         <span data-i18n="darkMode">Dark Mode</span>
                     </label>
                 </div>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="codexGoalsEnabledDesc">启用 Codex 官方 Goal mode；保存后同步到 config.toml 的 features.goals。</p>
                 <div class="mt-4 flex flex-wrap gap-2">
                     <button onclick="exportTheme()" class="btn btn-secondary text-xs" data-i18n="exportTheme">Export Theme</button>
                     <button onclick="document.getElementById('theme-import-file').click()" class="btn btn-secondary text-xs" data-i18n="importTheme">Import Theme</button>
@@ -720,6 +730,7 @@
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-tokens" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorTokens">Tokens</span></label>
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-progress" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorProgress">Progress</span></label>
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-threshold" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorThreshold">Threshold</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-speed" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorSpeed">速度</span></label>
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-cache" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorCache">复用节省</span></label>
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-context" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorContextWindow">Context Window</span></label>
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-updated" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorUpdatedTime">Updated Time</span></label>
@@ -887,7 +898,7 @@
                         <button onclick="removeStartupSettings()" class="btn btn-danger text-xs" data-i18n="removeStartupEntry">Remove Startup Entry</button>
                     </div>
                 </div>
-                <p class="text-xs text-dark-500 mt-2" data-i18n="pluginUnlockEnabledDesc">使用本地供应商或非官方登录时可开启更多插件类增强；官方登录启动会自动关闭这类能力，只保留安全显示增强。</p>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="pluginUnlockEnabledDesc">控制本地/非官方供应商的插件类增强。官方登录态不会进入本地路由或 AMR，但仍允许安全的界面注入增强。</p>
                 <pre id="startup-preview-result" class="preview-code mt-4" data-i18n="noPreviewYet">No preview yet.</pre>
                 <div class="mt-5 border-t border-dark-800 pt-5">
                     <div class="flex flex-wrap items-center justify-between gap-3">

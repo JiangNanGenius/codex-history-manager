@@ -31,6 +31,7 @@ Windows 平台特殊性：
 from __future__ import annotations
 
 import json
+import hmac
 import os
 import re
 import socket
@@ -78,6 +79,8 @@ from responses_adapter import (
 from request_logs import RequestLogStore, build_proxy_log_entry, extract_usage_from_response, normalize_usage
 from request_capabilities import classify_request_capabilities
 from amr_registry import AMRRegistry, DEFAULT_STORE_PATH as DEFAULT_AMR_STORE_PATH
+from provider_routing import provider_allows_local_routing
+from local_proxy_auth import local_proxy_token_fingerprint
 
 DEFAULT_PROXY_PORT = 8080
 PORT_BACKOFF_SCAN_LIMIT = 50
@@ -105,6 +108,7 @@ _media_approval_reviewer: Optional[Callable[[Dict[str, Any], Dict[str, Any], Dic
 _upstream_timeout_seconds = DEFAULT_UPSTREAM_TIMEOUT
 _upstream_retry_attempts = 0
 _upstream_retry_backoff_ms = 250
+_local_proxy_bearer_token = ""
 
 
 def _set_provider_store_path(path: str) -> None:
@@ -145,6 +149,26 @@ def _set_media_approval_reviewer(
     """Install an injectable media Auto Approval reviewer for tests/future runtime wiring."""
     global _media_approval_reviewer
     _media_approval_reviewer = reviewer
+
+
+def _set_local_proxy_bearer_token(token: str = "") -> None:
+    """Configure the bearer token required for inbound local proxy requests."""
+    global _local_proxy_bearer_token
+    _local_proxy_bearer_token = str(token or "").strip()
+
+
+def _authorization_bearer_value(header_value: Any) -> str:
+    text = str(header_value or "").strip()
+    if text.lower().startswith("bearer "):
+        return text[7:].strip()
+    return text
+
+
+def _inbound_proxy_authorized(headers: Any) -> bool:
+    if not _local_proxy_bearer_token:
+        return True
+    supplied = _authorization_bearer_value(headers.get("Authorization", ""))
+    return bool(supplied) and hmac.compare_digest(supplied, _local_proxy_bearer_token)
 
 
 def _set_upstream_policy(
@@ -252,7 +276,7 @@ def _resolve_provider_for_model(model_id: str) -> Optional[Dict[str, Any]]:
         prefix, _ = model_id.split("/", 1)
         prefix = prefix.lower().strip()
         for p in providers:
-            if not p.get("enabled", True):
+            if not provider_allows_local_routing(p):
                 continue
             if p.get("short_alias", "").lower() == prefix or p.get("id", "").lower() == prefix:
                 return p
@@ -261,7 +285,7 @@ def _resolve_provider_for_model(model_id: str) -> Optional[Dict[str, Any]]:
     # 2. Exact model ID match within enabled providers (model must also be enabled)
     model_id_lower = model_id.lower().strip()
     for p in providers:
-        if not p.get("enabled", True):
+        if not provider_allows_local_routing(p):
             continue
         if _provider_alias_source_matches(p, model_id_lower):
             return p
@@ -276,7 +300,7 @@ def _resolve_provider_for_model(model_id: str) -> Optional[Dict[str, Any]]:
                 return p
 
     for p in providers:
-        if not p.get("enabled", True):
+        if not provider_allows_local_routing(p):
             continue
         if _provider_alias_pattern_matches(p, model_id):
             return p
@@ -388,7 +412,7 @@ def _amr_group_id_from_model_id(model_id: str) -> str:
 
 def _find_enabled_provider_by_id(providers: List[Dict[str, Any]], provider_id: str) -> Optional[Dict[str, Any]]:
     for provider in providers:
-        if provider.get("enabled", True) and str(provider.get("id") or "") == provider_id:
+        if provider_allows_local_routing(provider) and str(provider.get("id") or "") == provider_id:
             return provider
     return None
 
@@ -1044,6 +1068,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
+        if not _inbound_proxy_authorized(self.headers):
+            _send_error(self, 401, "Local proxy bearer token is missing or invalid.", "invalid_proxy_token")
+            return
         path = self.path.split("?", 1)[0]
         if is_models_proxy_path(path):
             self._handle_models()
@@ -1054,6 +1081,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         _send_error(self, 404, "Not found", "not_found")
 
     def do_DELETE(self) -> None:
+        if not _inbound_proxy_authorized(self.headers):
+            _send_error(self, 401, "Local proxy bearer token is missing or invalid.", "invalid_proxy_token")
+            return
         path = self.path.split("?", 1)[0]
         if is_media_proxy_path(path):
             self._handle_media(body=b"", method="DELETE")
@@ -1061,6 +1091,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         _send_error(self, 404, "Not found", "not_found")
 
     def do_POST(self) -> None:
+        if not _inbound_proxy_authorized(self.headers):
+            _send_error(self, 401, "Local proxy bearer token is missing or invalid.", "invalid_proxy_token")
+            return
         path = self.path.split("?", 1)[0]
         try:
             content_length = int(self.headers.get("Content-Length", 0))
@@ -1100,7 +1133,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         providers = _load_providers_with_secrets()
         data: List[Dict[str, Any]] = []
         for p in providers:
-            if not p.get("enabled", True):
+            if not provider_allows_local_routing(p):
                 continue
             alias = p.get("short_alias", p.get("id", "unknown"))
             for m in p.get("models", []):
@@ -1927,6 +1960,7 @@ class LocalProxyServer:
         retry_attempts: int = 0,
         retry_backoff_ms: int = 250,
         media_approval_reviewer: Optional[Callable[[Dict[str, Any], Dict[str, Any], Dict[str, Any]], Any]] = None,
+        local_proxy_bearer_token: str = "",
     ):
         self.port = port
         self.provider_store_path = provider_store_path
@@ -1939,6 +1973,7 @@ class LocalProxyServer:
         self.retry_attempts = retry_attempts
         self.retry_backoff_ms = retry_backoff_ms
         self.media_approval_reviewer = media_approval_reviewer
+        self.local_proxy_bearer_token = str(local_proxy_bearer_token or "")
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._last_requested_port = port
@@ -1956,6 +1991,7 @@ class LocalProxyServer:
     def start(self) -> bool:
         if self._server is not None:
             _set_media_approval_reviewer(self.media_approval_reviewer)
+            _set_local_proxy_bearer_token(self.local_proxy_bearer_token)
             self.port = int(self._server.server_address[1])
             return True
         # 设置全局 provider store 路径，供 ProxyHandler 使用
@@ -1975,6 +2011,7 @@ class LocalProxyServer:
             retry_backoff_ms=self.retry_backoff_ms,
         )
         _set_media_approval_reviewer(self.media_approval_reviewer)
+        _set_local_proxy_bearer_token(self.local_proxy_bearer_token)
 
         if not isinstance(self.port, int) or self.port < 1 or self.port > 65535:
             self._last_requested_port = self.port
@@ -2044,12 +2081,14 @@ class LocalProxyServer:
             self._thread.join(timeout=5)
             self._thread = None
         _set_media_approval_reviewer(None)
+        _set_local_proxy_bearer_token("")
 
     def is_running(self) -> bool:
         return self._server is not None
 
     def status(self) -> Dict[str, Any]:
         bound_port = int(self._server.server_address[1]) if self._server is not None else self.port
+        effective_local_token = _local_proxy_bearer_token if self.is_running() else str(self.local_proxy_bearer_token or "")
         effective_log_path = _request_log_path
         if effective_log_path is None and self.request_log_path:
             effective_log_path = Path(self.request_log_path).expanduser()
@@ -2070,6 +2109,8 @@ class LocalProxyServer:
             "retry_attempts": _upstream_retry_attempts,
             "retry_backoff_ms": _upstream_retry_backoff_ms,
             "media_auto_approval_reviewer_connected": _media_approval_reviewer is not None,
+            "local_proxy_auth_required": bool(effective_local_token),
+            "local_proxy_token_fingerprint": local_proxy_token_fingerprint(effective_local_token),
             "port_backoff": self._last_port_backoff,
             "last_start_error": self._last_start_error,
         }

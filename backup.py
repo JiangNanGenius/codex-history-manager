@@ -208,6 +208,43 @@ class BackupManager:
         backups.sort(key=lambda x: x.get("mtime", ""), reverse=True)
         return backups
 
+    def prune_backups(self, max_backups: Optional[int] = None) -> Dict:
+        """Remove old backup zip files beyond the configured retention count."""
+        try:
+            keep = int(max_backups if max_backups is not None else self.config.get("max_backups", 20))
+        except (TypeError, ValueError):
+            keep = 20
+        keep = max(keep, 0)
+        backup_dir = self.get_backup_dir()
+        all_zips = sorted(
+            list(backup_dir.glob("codex_backup_*.zip")) +
+            list(backup_dir.glob("codex_incremental_*.zip")),
+            key=lambda f: f.stat().st_mtime,
+        )
+        to_remove = all_zips[:-keep] if keep else all_zips
+        removed = []
+        errors = []
+        for target in to_remove:
+            try:
+                size_bytes = target.stat().st_size if target.exists() else 0
+                target.unlink()
+                removed.append({
+                    "name": target.name,
+                    "path": str(target),
+                    "size_mb": round(size_bytes / (1024 * 1024), 2),
+                })
+            except Exception as exc:
+                errors.append({"name": target.name, "path": str(target), "error": str(exc)})
+        remaining = len(all_zips) - len(removed)
+        return {
+            "success": not errors,
+            "kept": keep,
+            "removed_count": len(removed),
+            "removed": removed,
+            "remaining_count": max(remaining, 0),
+            "errors": errors,
+        }
+
     def restore_backup(self, backup_path: str) -> Dict:
         """
         从备份还原数据库。
@@ -345,17 +382,4 @@ class BackupManager:
           - 完整备份和增量备份统一计数：因为增量备份通常很小，
             不单独限制类型比例，保持逻辑简单。
         """
-        max_backups = self.config.get("max_backups", 20)
-        backup_dir = self.get_backup_dir()
-        all_zips = sorted(
-            list(backup_dir.glob("codex_backup_*.zip")) +
-            list(backup_dir.glob("codex_incremental_*.zip")),
-            key=lambda f: f.stat().st_mtime
-        )
-        while len(all_zips) > max_backups:
-            target = all_zips.pop(0)
-            try:
-                target.unlink()
-            except Exception:
-                # 单个文件删除失败（如权限占用）不阻断其余清理
-                pass
+        self.prune_backups()

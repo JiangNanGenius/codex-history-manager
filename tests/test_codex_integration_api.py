@@ -4,6 +4,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from codex_approval_bridge import COMMAND_APPROVAL_METHOD
+from codex_config import CodexConfigManager, load_config_toml, save_auth_json, save_config_toml
+from local_proxy_auth import (
+    REDACTED_LOCAL_PROXY_TOKEN,
+    generate_local_proxy_bearer_token,
+    local_proxy_token_fingerprint,
+)
 
 
 class CodexIntegrationApiTest(unittest.TestCase):
@@ -91,6 +97,65 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertEqual(data["current_provider"], "openai")
         self.assertEqual(data["current_model"], "gpt-5")
 
+    def test_sync_status_implies_openai_for_official_login_without_provider(self):
+        app = self._app()
+        fake_mgr = MagicMock()
+        fake_mgr.read_auth.return_value = {
+            "auth_mode": "chatgpt",
+            "tokens": {"access_token": "eyJhbGciOiJ.demo"},
+        }
+        with (
+            patch("app.resolve_codex_home", return_value=Path("C:/Users/demo/.codex")),
+            patch("app._load_config_toml", return_value={"model": "gpt-5.5"}),
+            patch("app.CodexConfigManager", return_value=fake_mgr),
+            patch("app.is_codex_running", return_value=(False, [])),
+        ):
+            response = app.test_client().get("/api/sync/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["current_provider"], "openai")
+        self.assertEqual(data["current_provider_source"], "official_oauth")
+        self.assertEqual(data["current_model"], "gpt-5.5")
+        self.assertEqual(data["current_model_source"], "config")
+        self.assertEqual(data["auth_mode"], "official_oauth")
+        self.assertTrue(data["official_oauth_implied_provider"])
+
+    def test_settings_redacts_local_proxy_bearer_token(self):
+        app = self._app()
+        token = generate_local_proxy_bearer_token()
+        self.last_config.get_all.return_value = {"local_proxy_bearer_token": token}
+        fake_mgr = MagicMock()
+        fake_mgr.read_config.return_value = {"features": {"goals": True}}
+        fake_mgr.config_path = Path("C:/Users/demo/.codex/config.toml")
+
+        with patch("app.CodexConfigManager", return_value=fake_mgr):
+            response = app.test_client().get("/api/settings")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        data = response.get_json()
+        self.assertNotIn(token, body)
+        self.assertEqual(data["local_proxy_bearer_token"], REDACTED_LOCAL_PROXY_TOKEN)
+        self.assertTrue(data["local_proxy_bearer_token_configured"])
+        self.assertTrue(data["local_proxy_bearer_token_strong"])
+        self.assertEqual(data["local_proxy_bearer_token_fingerprint"], local_proxy_token_fingerprint(token))
+
+    def test_save_settings_preserves_redacted_local_proxy_bearer_token(self):
+        app = self._app()
+        token = generate_local_proxy_bearer_token()
+        self.last_config.get_all.return_value = {"local_proxy_bearer_token": token}
+
+        response = app.test_client().post("/api/settings", json={
+            "local_proxy_bearer_token": REDACTED_LOCAL_PROXY_TOKEN,
+            "dark_mode": False,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        saved = self.last_config.update.call_args.args[0]
+        self.assertEqual(saved["local_proxy_bearer_token"], token)
+        self.assertFalse(saved["dark_mode"])
+
     def test_start_codex_official_mode_skips_provider_sync_and_cpp(self):
         app = self._app()
         with (
@@ -110,13 +175,13 @@ class CodexIntegrationApiTest(unittest.TestCase):
         disable_proxy.assert_called_once()
         start.assert_called_once()
         self.assertFalse(start.call_args.kwargs["use_codex_plus_plus"])
-        self.assertFalse(start.call_args.kwargs["enable_cdp_injection"])
+        self.assertTrue(start.call_args.kwargs["enable_cdp_injection"])
         self.last_config.update.assert_any_call({
             "use_codex_plus_plus": False,
             "plugin_unlock_enabled": False,
         })
 
-    def test_start_codex_official_mode_ignores_requested_injection(self):
+    def test_start_codex_official_mode_allows_safe_injection(self):
         app = self._app()
         with (
             patch("app._run_sync_with_backup") as sync_with_backup,
@@ -132,10 +197,10 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertTrue(data["codex_injection_enabled"])
-        self.assertFalse(data["codex_injection_active"])
+        self.assertTrue(data["codex_injection_active"])
         self.assertEqual(data["codex_cdp_port"], 51240)
         sync_with_backup.assert_not_called()
-        self.assertFalse(start.call_args.kwargs["enable_cdp_injection"])
+        self.assertTrue(start.call_args.kwargs["enable_cdp_injection"])
         self.assertEqual(start.call_args.kwargs["cdp_port"], 51240)
         self.last_config.update.assert_any_call({
             "codex_injection_enabled": True,
@@ -279,6 +344,78 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertIn("openai", saved["providers"])
         self.assertNotIn("codex_enhance_manager", saved["model_providers"])
         self.assertIn("openai", saved["model_providers"])
+
+    def test_reset_for_official_login_requires_risk_confirmation(self):
+        app = self._app()
+
+        response = app.test_client().post("/api/codex-integration/reset-for-official-login", json={
+            "manual_codex_mutation": True,
+            "confirmation": "MODIFY_CODEX_FILES",
+        })
+
+        self.assertEqual(response.status_code, 409)
+        data = response.get_json()
+        self.assertTrue(data["chat_history_risk"])
+        self.assertEqual(data["required_risk_confirmation"], "CHAT_HISTORY_MAY_BE_LOST")
+
+    def test_reset_for_official_login_backs_up_and_removes_config_and_auth(self):
+        app = self._app()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=tmpdir)
+            mgr.backup_dir = Path(tmpdir) / "backups"
+            save_config_toml(str(mgr.config_path), {"model": "gpt-5.5"})
+            save_auth_json(str(mgr.auth_path), {"auth_mode": "chatgpt", "tokens": {"access_token": "secret"}})
+
+            with (
+                patch("app.CodexConfigManager", return_value=mgr),
+                patch("app.kill_codex", return_value=(True, "killed")),
+            ):
+                response = app.test_client().post("/api/codex-integration/reset-for-official-login", json={
+                    "manual_codex_mutation": True,
+                    "confirmation": "MODIFY_CODEX_FILES",
+                    "risk_confirmation": "CHAT_HISTORY_MAY_BE_LOST",
+                })
+
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertTrue(data["success"])
+            self.assertTrue(data["chat_history_risk"])
+            self.assertFalse(mgr.config_path.exists())
+            self.assertFalse(mgr.auth_path.exists())
+            self.assertIn("config_toml", data["backups"])
+            self.assertIn("auth_json", data["backups"])
+
+    def test_repair_config_template_removes_startup_risks_and_preserves_auth(self):
+        app = self._app()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=tmpdir)
+            mgr.backup_dir = Path(tmpdir) / "backups"
+            save_config_toml(str(mgr.config_path), {
+                "model": "gpt-5.5",
+                "model_provider": "bad-provider",
+                "mcp_servers": {"bad": {"command": "/usr/bin/node", "required": True}},
+                "hooks": {"SessionStart": []},
+                "features": {"hooks": False},
+            })
+            save_auth_json(str(mgr.auth_path), {"auth_mode": "chatgpt", "tokens": {"access_token": "secret"}})
+
+            with patch("app.CodexConfigManager", return_value=mgr):
+                response = app.test_client().post("/api/codex-integration/repair-config-template", json={
+                    "manual_codex_mutation": True,
+                    "confirmation": "MODIFY_CODEX_FILES",
+                })
+
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertTrue(data["success"])
+            repaired = load_config_toml(str(mgr.config_path))
+            self.assertEqual(repaired["model"], "gpt-5.5")
+            self.assertTrue(repaired["features"]["goals"])
+            self.assertNotIn("model_provider", repaired)
+            self.assertNotIn("mcp_servers", repaired)
+            self.assertNotIn("hooks", repaired)
+            self.assertTrue(mgr.auth_path.exists())
+            self.assertIn("mcp_servers", data["removed_keys"])
 
 
 if __name__ == "__main__":

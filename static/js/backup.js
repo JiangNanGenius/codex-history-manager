@@ -75,6 +75,22 @@ async function createIncrementalBackup() {
     }
 }
 
+async function pruneBackups() {
+    if (!confirm(t('confirmPruneBackups'))) return;
+    try {
+        setStatus(t('cleaningOldBackups'));
+        const data = await api('/api/backups/prune', { method: 'POST', body: JSON.stringify({}) });
+        if (data.success || data.removed_count >= 0) {
+            showToast(t('oldBackupsCleaned', { count: data.removed_count || 0 }), data.success ? 'success' : 'warning');
+            loadBackups();
+        } else {
+            showToast(t('backupCleanupFailed') + ((data.errors || [])[0]?.error || 'Unknown error'), 'error');
+        }
+    } catch (err) {
+        showToast(t('backupCleanupFailed') + err.message, 'error');
+    }
+}
+
 async function restoreBackup(backupName) {
     if (!confirm(t('confirmRestore') + backupName)) return;
 

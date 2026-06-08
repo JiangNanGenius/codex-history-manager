@@ -535,12 +535,32 @@ function getAmrGroupSummary(group) {
     };
 }
 
+function providerRoutingFlag(value, defaultValue = false) {
+    if (typeof value === 'boolean') return value;
+    if (value === undefined || value === null) return defaultValue;
+    const text = String(value).trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(text)) return true;
+    if (['0', 'false', 'no', 'off'].includes(text)) return false;
+    return defaultValue;
+}
+
+function isAmrRoutingProvider(provider) {
+    if (!provider || typeof provider !== 'object') return false;
+    if (!providerRoutingFlag(provider.enabled, true)) return false;
+    if (providerRoutingFlag(provider.switch_only, false) || providerRoutingFlag(provider.amr_excluded, false)) return false;
+    if (!providerRoutingFlag(provider.local_proxy_routing, true)) return false;
+    return true;
+}
+
 function getAmrProviderIds() {
-    return Array.from(new Set((providerState.providers || []).map(provider => provider.id).filter(Boolean))).sort();
+    return Array.from(new Set((providerState.providers || [])
+        .filter(isAmrRoutingProvider)
+        .map(provider => provider.id)
+        .filter(Boolean))).sort();
 }
 
 function getAmrProviderModelOptions() {
-    const providers = providerState.providers || [];
+    const providers = (providerState.providers || []).filter(isAmrRoutingProvider);
     const entries = [];
     providers.forEach(provider => {
         (provider.models || []).forEach(model => {

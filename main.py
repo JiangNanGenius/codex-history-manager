@@ -34,6 +34,7 @@ import urllib.error
 import urllib.request
 import queue
 import socket
+import time
 import webview
 
 try:
@@ -457,10 +458,25 @@ def _provider_registry_for_desktop():
     return ProviderRegistry(config.get("provider_store_path", ""))
 
 
+def _official_provider_extra_for_desktop() -> list[dict]:
+    try:
+        from codex_config import CodexConfigManager
+        from codex_official_provider import build_official_login_provider
+
+        mgr = CodexConfigManager()
+        provider = build_official_login_provider(mgr.read_config(), mgr.read_auth())
+        return [provider] if provider else []
+    except Exception:
+        return []
+
+
 def _quick_switch_payload() -> dict:
     try:
         registry = _provider_registry_for_desktop()
-        payload = registry.list_providers(include_secrets=False)
+        payload = registry.list_providers(
+            include_secrets=False,
+            extra_providers=_official_provider_extra_for_desktop(),
+        )
         focus_provider_id = str(payload.get("focus_provider_id") or "")
         providers = []
         for provider in payload.get("providers", []):
@@ -481,7 +497,10 @@ def _quick_switch_payload() -> dict:
 def _set_focus_provider(provider_id: str = "") -> dict:
     try:
         registry = _provider_registry_for_desktop()
-        result = registry.set_focus_provider(provider_id)
+        result = registry.set_focus_provider(
+            provider_id,
+            extra_providers=_official_provider_extra_for_desktop(),
+        )
         if tray_icon is not None:
             try:
                 tray_icon.update_menu()
@@ -926,6 +945,7 @@ class NativeTokenMonitor:
         self._labels: dict[str, object] = {}
         self._drag_start = (0, 0)
         self._refresh_in_flight = False
+        self._speed_samples: list[tuple[float, int]] = []
 
     def _start(self):
         if self._thread and self._thread.is_alive():
@@ -1011,6 +1031,8 @@ class NativeTokenMonitor:
         self._labels["value"].pack(anchor="w", pady=(8, 2))
         self._labels["context"] = tk.Label(frame, text="上下文 Context: --", fg="#cbd5e1", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
         self._labels["context"].pack(anchor="w")
+        self._labels["speed"] = tk.Label(frame, text="速度 Speed: --", fg="#bae6fd", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
+        self._labels["speed"].pack(anchor="w", pady=(3, 0))
         self._labels["cache"] = tk.Label(frame, text="缓存复用 Reuse: --", fg="#94a3b8", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
         self._labels["cache"].pack(anchor="w", pady=(3, 0))
         self._labels["updated"] = tk.Label(frame, text="更新时间 Updated: --", fg="#64748b", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
@@ -1039,7 +1061,7 @@ class NativeTokenMonitor:
             self.initial_y = y
             root.geometry(f"+{x}+{y}")
 
-        for widget in (root, frame, header, self._labels["value"], self._labels["context"], self._labels["cache"], self._labels["updated"]):
+        for widget in (root, frame, header, self._labels["value"], self._labels["context"], self._labels["speed"], self._labels["cache"], self._labels["updated"]):
             widget.bind("<ButtonRelease-3>", show_context_menu)
             widget.bind("<ButtonPress-1>", start_drag)
             widget.bind("<B1-Motion>", drag)
@@ -1145,7 +1167,10 @@ class NativeTokenMonitor:
 
     def _fetch_stats_worker(self):
         try:
-            with urllib.request.urlopen(f"{URL}/api/token/current", timeout=12) as response:
+            with urllib.request.urlopen(
+                f"{URL}/api/token/current?rollout_total_source=1&rollout_scan_fallback=1",
+                timeout=12,
+            ) as response:
                 data = json.loads(response.read().decode("utf-8", errors="replace"))
             self._commands.put(("stats", True, data))
         except Exception:
@@ -1156,6 +1181,7 @@ class NativeTokenMonitor:
         context_used = data.get("current_context_used_tokens")
         context_window = data.get("current_context_window")
         cache_total = data.get("cache_total_tokens") or data.get("cache_total") or 0
+        speed = self._remember_speed_sample(total)
         self._labels["value"].configure(text=_format_monitor_number(total, compact=True))
         if context_used and context_window:
             self._labels["context"].configure(
@@ -1163,8 +1189,27 @@ class NativeTokenMonitor:
             )
         else:
             self._labels["context"].configure(text="上下文 Context: --")
+        if speed:
+            self._labels["speed"].configure(text=f"速度 Speed: {_format_monitor_number(speed, compact=True)} tok/min")
+        else:
+            self._labels["speed"].configure(text="速度 Speed: --")
         self._labels["cache"].configure(text=f"缓存复用 Reuse: {_format_monitor_number(cache_total)}")
         self._labels["updated"].configure(text="更新时间 Updated: now")
+
+    def _remember_speed_sample(self, total: int) -> int | None:
+        now = time.time()
+        self._speed_samples.append((now, int(total or 0)))
+        self._speed_samples = [
+            sample for sample in self._speed_samples if now - sample[0] <= 60
+        ][-20:]
+        if len(self._speed_samples) < 2:
+            return None
+        first_ts, first_total = self._speed_samples[0]
+        last_ts, last_total = self._speed_samples[-1]
+        elapsed_minutes = max((last_ts - first_ts) / 60, 0)
+        if elapsed_minutes <= 0:
+            return None
+        return max(int(round((last_total - first_total) / elapsed_minutes)), 0)
 
     def _run_menu_action(self, callback):
         def runner():

@@ -8,7 +8,7 @@ async function loadSyncStatus() {
         const data = await api('/api/sync/status');
 
         // Current config
-        document.getElementById('sync-current-provider').textContent = data.current_provider || '-';
+        document.getElementById('sync-current-provider').textContent = syncProviderDisplay(data);
         document.getElementById('sync-current-model').textContent = data.current_model || '-';
 
         // Provider distribution
@@ -68,6 +68,13 @@ function renderProviderDist(distribution) {
         `;
     }).join('')}
     `;
+}
+
+function syncProviderDisplay(data) {
+    if (data && data.current_provider_source === 'official_oauth') {
+        return t('officialOpenAIProvider');
+    }
+    return (data && data.current_provider) || '-';
 }
 
 function renderCodexStatus(running, pids) {
@@ -130,6 +137,7 @@ async function syncPreview() {
 async function syncExecute() {
     const targetProvider = document.getElementById('sync-target-provider')?.value || '';
     const targetModel = document.getElementById('sync-target-model')?.value || '';
+    const backupBeforeSync = document.getElementById('sync-backup-before')?.checked === true;
 
     if (!confirm(t('confirmExecuteSync'))) return;
 
@@ -137,7 +145,11 @@ async function syncExecute() {
         setStatus(t('executingSyncStatus'));
         const data = await api('/api/sync/execute', {
             method: 'POST',
-            body: JSON.stringify({ target_provider: targetProvider, target_model: targetModel }),
+            body: JSON.stringify({
+                target_provider: targetProvider,
+                target_model: targetModel,
+                backup_before_sync: backupBeforeSync,
+            }),
         });
         showSyncResult(data, false);
         showToast(t('syncCompleted'), 'success');
@@ -157,9 +169,19 @@ async function oneClickSyncRestart() {
         // Wait for process to exit
         await new Promise(r => setTimeout(r, 2000));
 
+        const backupBeforeSync = document.getElementById('sync-backup-before')?.checked === true;
+
         // Step 2: Start endpoint auto-syncs current provider/model before launching.
         setStatus(t('oneClickStepStart'));
-        const startData = await api('/api/codex/start', { method: 'POST' });
+        const startData = await startCodexWithProgress({
+            start_mode: 'preserve_login_proxy',
+            backup_before_sync: backupBeforeSync,
+        }, {
+            onProgress: (job) => {
+                const progress = Math.min(Math.max(Number(job.progress || 0), 0), 100);
+                setStatus(`${job.message || t('codexStartRequested')} (${progress}%)`);
+            },
+        });
         const syncData = startData.sync || {};
 
         showSyncResult(syncData, false);
@@ -196,6 +218,8 @@ function showSyncResult(data, isPreview) {
     }
     if (data.backup_path) {
         output += `\nSafety backup:\n  ${data.backup_path}\n`;
+    } else if (data.skipped_backup) {
+        output += `\nSafety backup:\n  ${t('backupSkipped')}\n`;
     }
     if (data.errors && data.errors.length > 0) {
         output += `\nErrors:\n`;

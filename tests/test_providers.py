@@ -11,6 +11,7 @@ from providers import (
     is_secret_key,
     validate_provider,
 )
+from provider_routing import provider_allows_local_routing
 
 
 class ProviderRegistryTest(unittest.TestCase):
@@ -77,6 +78,43 @@ class ProviderRegistryTest(unittest.TestCase):
             preview = registry.preview_catalog()
             model_ids = [entry["codex_model_id"] for entry in preview["entries"]]
             self.assertEqual(model_ids, [f"{provider['short_alias']}/visible"])
+
+    def test_switch_only_official_provider_is_listed_but_not_catalog_routed(self):
+        official = normalize_provider({
+            "id": "codex_official",
+            "display_name": "OpenAI Official Login",
+            "short_alias": "codex",
+            "enabled": True,
+            "switch_only": True,
+            "amr_excluded": True,
+            "local_proxy_routing": False,
+            "models": [{"id": "gpt-5.5", "enabled": True, "selected": True}],
+        })
+
+        self.assertFalse(provider_allows_local_routing(official))
+        preview = build_catalog_preview_from_providers([official])
+        self.assertEqual(preview["entry_count"], 0)
+
+    def test_registry_extra_official_provider_can_be_focused_without_catalog_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            official = normalize_provider({
+                "id": "codex_official",
+                "display_name": "OpenAI Official Login",
+                "short_alias": "codex",
+                "enabled": True,
+                "switch_only": True,
+                "amr_excluded": True,
+                "local_proxy_routing": False,
+                "models": [{"id": "gpt-5.5", "enabled": True, "selected": True}],
+            })
+
+            listed = registry.list_providers(extra_providers=[official])
+            self.assertIn("codex_official", [p["id"] for p in listed["providers"]])
+            focused = registry.set_focus_provider("codex_official", extra_providers=[official])
+            self.assertEqual(focused["focus_provider_id"], "codex_official")
+            preview = registry.preview_catalog(extra_providers=[official], focus_provider_id="codex_official")
+            self.assertEqual(preview["entry_count"], 0)
 
     def test_update_provider_preserves_model_metadata_from_text_rows(self):
         with tempfile.TemporaryDirectory() as tmpdir:

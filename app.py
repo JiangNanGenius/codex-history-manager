@@ -29,6 +29,8 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -48,11 +50,15 @@ from amr_registry import AMRRegistry
 from codex_config import (
     CodexConfigManager,
     backup_file,
+    codex_goals_enabled_from_config,
+    detect_auth_mode,
     is_official_oauth,
+    merge_codex_goals_feature,
     redact_auth_for_preview,
     save_config_toml,
     load_config_toml as _load_config_toml,
 )
+from codex_official_provider import build_official_login_provider, resolve_effective_codex_settings
 from proxy_server import (
     LocalProxyServer,
     _build_upstream_headers,
@@ -86,6 +92,8 @@ from codex_approval_bridge import CodexApprovalBridgeError, build_codex_approval
 from app_version import APP_REPOSITORY_URL, APP_VERSION
 from updater import UpdateManager
 from codex_injector import DEFAULT_CDP_PORT, backend_url_from_env, inject_codex_enhancements
+from provider_routing import provider_allows_local_routing
+from local_proxy_auth import preserve_redacted_local_proxy_token, redact_local_proxy_token
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -97,6 +105,46 @@ START_MODES = {
     START_MODE_PRESERVE_LOGIN_PROXY,
     START_MODE_OFFICIAL_DIRECT,
 }
+CHAT_HISTORY_RISK_CONFIRMATION = "CHAT_HISTORY_MAY_BE_LOST"
+CONFIG_REPAIR_REMOVED_KEYS = [
+    "model_provider",
+    "provider",
+    "defaults",
+    "model_providers",
+    "mcp_servers",
+    "notify",
+    "hooks",
+    "openai_base_url",
+    "chatgpt_base_url",
+    "model_catalog_json",
+    "model_instructions_file",
+    "experimental_compact_prompt_file",
+    "profile",
+    "profiles",
+    "sandbox_workspace_write",
+    "permissions",
+    "agents",
+    "otel",
+]
+CONFIG_TEMPLATE_SCALAR_KEYS = [
+    "model",
+    "model_reasoning_effort",
+    "model_reasoning_summary",
+    "model_verbosity",
+    "model_supports_reasoning_summaries",
+    "service_tier",
+    "file_opener",
+    "hide_agent_reasoning",
+    "show_raw_agent_reasoning",
+    "check_for_update_on_startup",
+    "project_doc_max_bytes",
+    "project_doc_fallback_filenames",
+    "project_root_markers",
+    "cli_auth_credentials_store",
+    "mcp_oauth_credentials_store",
+]
+VALID_WINDOWS_SANDBOXES = {"elevated", "unelevated"}
+VALID_CLI_AUTH_STORES = {"file", "keyring", "auto"}
 
 
 def _normalize_codex_start_mode(body: Dict[str, Any], login_defaults: Dict[str, Any]) -> str:
@@ -135,7 +183,7 @@ def _resolve_codex_injection_settings(
 ) -> Dict[str, Any]:
     configured_enabled = _coerce_bool(config_obj.get("codex_injection_enabled", True), True)
     requested_enabled = _coerce_bool(body.get("enable_cdp_injection"), configured_enabled)
-    enabled = requested_enabled and not use_codex_plus_plus and not official_mode
+    enabled = requested_enabled and not use_codex_plus_plus
     cdp_port = _coerce_port(body.get("cdp_port"), _coerce_port(config_obj.get("codex_cdp_port", DEFAULT_CDP_PORT)))
     if persist:
         config_obj.update({
@@ -163,7 +211,30 @@ def _official_login_defaults(mgr: CodexConfigManager) -> Dict[str, Any]:
     }
 
 
-def disable_codex_enhance_provider_config(mgr: CodexConfigManager) -> Dict[str, Any]:
+def _official_provider_extra(mgr: CodexConfigManager | None = None) -> list[Dict[str, Any]]:
+    try:
+        manager = mgr or CodexConfigManager()
+        provider = build_official_login_provider(manager.read_config(), manager.read_auth())
+        return [provider] if provider else []
+    except Exception:
+        return []
+
+
+def _effective_codex_settings(config_data: Dict[str, Any], auth_data: Dict[str, Any]) -> Dict[str, Any]:
+    auth_mode = detect_auth_mode(auth_data if isinstance(auth_data, dict) else {})
+    settings = resolve_effective_codex_settings(config_data if isinstance(config_data, dict) else {}, auth_mode)
+    settings["auth_mode"] = auth_mode
+    return settings
+
+
+def _config_goals_enabled(config_obj: Config) -> bool:
+    return _coerce_bool(config_obj.get("codex_goals_enabled", True), True)
+
+
+def disable_codex_enhance_provider_config(
+    mgr: CodexConfigManager,
+    goals_enabled: bool | None = None,
+) -> Dict[str, Any]:
     """Remove local proxy routing from Codex config while preserving official auth."""
     result = {
         "success": True,
@@ -199,6 +270,9 @@ def disable_codex_enhance_provider_config(mgr: CodexConfigManager) -> Dict[str, 
         model_providers = dict(model_providers)
         del model_providers["codex_enhance_manager"]
         next_config["model_providers"] = model_providers
+    if goals_enabled is not None:
+        next_config = merge_codex_goals_feature(next_config, bool(goals_enabled))
+        result["goals_enabled"] = bool(goals_enabled)
 
     changed = next_config != current_config
     result["changed"] = changed
@@ -206,6 +280,677 @@ def disable_codex_enhance_provider_config(mgr: CodexConfigManager) -> Dict[str, 
         save_config_toml(str(mgr.config_path), next_config)
     else:
         result["message"] = "当前已是官方登录优先配置。"
+    return result
+
+
+def _is_safe_toml_scalar(value: Any) -> bool:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return True
+    if isinstance(value, list):
+        return all(_is_safe_toml_scalar(item) and not isinstance(item, list) for item in value)
+    return False
+
+
+def _looks_like_wsl_or_unix_path(value: Any) -> bool:
+    text = str(value or "").strip().replace("\\", "/")
+    lowered = text.lower()
+    return (
+        lowered.startswith("/home/")
+        or lowered.startswith("/mnt/")
+        or lowered.startswith("/usr/")
+        or lowered.startswith("/bin/")
+        or lowered.startswith("~/")
+        or lowered.startswith("wsl ")
+        or lowered == "wsl"
+        or "\\\\wsl$" in str(value or "").lower()
+    )
+
+
+def _windows_path_missing(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if _looks_like_wsl_or_unix_path(text):
+        return False
+    if re.match(r"^[a-zA-Z]:[\\/]", text) or text.startswith("\\\\"):
+        try:
+            return not Path(text).exists()
+        except Exception:
+            return False
+    return False
+
+
+def _first_command_part(command: Any) -> str:
+    if isinstance(command, list) and command:
+        return str(command[0] or "").strip()
+    text = str(command or "").strip()
+    if not text:
+        return ""
+    if text.startswith('"'):
+        match = re.match(r'"([^"]+)"', text)
+        if match:
+            return match.group(1)
+    if text.startswith("'"):
+        match = re.match(r"'([^']+)'", text)
+        if match:
+            return match.group(1)
+    return text.split()[0]
+
+
+def _append_config_issue(
+    issues: list[Dict[str, Any]],
+    severity: str,
+    code: str,
+    message: str,
+    path: str,
+    recommendation: str,
+) -> None:
+    issues.append({
+        "severity": severity,
+        "code": code,
+        "message": message,
+        "path": path,
+        "recommendation": recommendation,
+    })
+
+
+def inspect_codex_config_risks(
+    mgr: CodexConfigManager,
+    config_data: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Inspect startup-sensitive Codex config keys without modifying files."""
+    config_data = config_data if isinstance(config_data, dict) else mgr.read_config()
+    issues: list[Dict[str, Any]] = []
+    strict_toml_ok = True
+    parse_error = ""
+    raw_content = ""
+
+    if mgr.config_path.exists():
+        try:
+            raw_content = mgr.config_path.read_text(encoding="utf-8")
+            import tomllib
+            tomllib.loads(raw_content)
+        except Exception as exc:
+            strict_toml_ok = False
+            parse_error = str(exc)
+            _append_config_issue(
+                issues,
+                "critical",
+                "toml_parse_error",
+                "config.toml 不是严格合法的 TOML，重复表、截断或非法字符串会让 Codex 启动期直接报错或卡住。",
+                "config.toml",
+                "备份后重置为模板配置，再按需重新开启 provider/MCP/hooks。",
+            )
+
+    for legacy_key in ("profile", "profiles"):
+        if legacy_key in config_data:
+            _append_config_issue(
+                issues,
+                "warning",
+                "legacy_profile_config",
+                "检测到旧版 profile 配置；新版 Codex 使用独立的 profile-name.config.toml，旧配置可能造成启动提示或配置不生效。",
+                legacy_key,
+                "迁移到独立 profile 文件，或在模板修复时移除旧键。",
+            )
+
+    model_provider = str(config_data.get("model_provider") or config_data.get("provider") or "").strip()
+    model_providers = config_data.get("model_providers") if isinstance(config_data.get("model_providers"), dict) else {}
+    if model_provider and model_provider not in {"openai", "ollama", "lmstudio", "amazon-bedrock"} and model_provider not in model_providers:
+        _append_config_issue(
+            issues,
+            "critical",
+            "missing_selected_provider",
+            f"当前 model_provider 指向 {model_provider!r}，但 config.toml 中没有对应 provider 定义。",
+            "model_provider",
+            "切回官方默认 provider，或补齐对应 [model_providers.<id>]。",
+        )
+    if "openai" in model_providers or "ollama" in model_providers or "lmstudio" in model_providers:
+        _append_config_issue(
+            issues,
+            "warning",
+            "reserved_provider_override",
+            "自定义 provider 使用了 Codex 内置保留 ID，可能被忽略或导致 provider 选择异常。",
+            "model_providers",
+            "不要自定义 openai/ollama/lmstudio；OpenAI 代理用 openai_base_url 或单独 provider id。",
+        )
+    for provider_id, provider in model_providers.items():
+        if not isinstance(provider, dict):
+            _append_config_issue(
+                issues,
+                "warning",
+                "invalid_provider_shape",
+                f"provider {provider_id!r} 不是表结构。",
+                f"model_providers.{provider_id}",
+                "删除异常 provider 或按官方 TOML 表结构重建。",
+            )
+            continue
+        auth = provider.get("auth")
+        if isinstance(auth, dict):
+            command = _first_command_part(auth.get("command"))
+            if _looks_like_wsl_or_unix_path(command) and os.name == "nt":
+                _append_config_issue(
+                    issues,
+                    "critical",
+                    "provider_auth_wsl_command",
+                    f"provider {provider_id!r} 的认证命令看起来是 WSL/Linux 路径，Windows 原生 Codex 启动时可能执行失败。",
+                    f"model_providers.{provider_id}.auth.command",
+                    "改成 Windows 可执行文件，或切到 WSL 内运行 Codex；模板修复会移除该 provider。",
+                )
+            elif _windows_path_missing(command):
+                _append_config_issue(
+                    issues,
+                    "warning",
+                    "provider_auth_missing_command",
+                    f"provider {provider_id!r} 的认证命令路径不存在。",
+                    f"model_providers.{provider_id}.auth.command",
+                    "修正认证 helper 路径，或移除该 provider。",
+                )
+
+    for base_key in ("openai_base_url", "chatgpt_base_url", "experimental_realtime_ws_base_url"):
+        if config_data.get(base_key):
+            _append_config_issue(
+                issues,
+                "warning",
+                "base_url_override",
+                f"{base_key} 会改写官方 OpenAI/ChatGPT 连接目标，代理或旧地址失效时会造成登录、用量或模型请求异常。",
+                base_key,
+                "官方登录态下建议不要在修复模板中保留该项。",
+            )
+
+    mcp_servers = config_data.get("mcp_servers")
+    if isinstance(mcp_servers, dict):
+        if len(mcp_servers) > 6:
+            _append_config_issue(
+                issues,
+                "warning",
+                "many_mcp_servers",
+                "配置了较多 MCP server；Codex 启动时会初始化 MCP，远端/OAuth server 会明显拖慢启动。",
+                "mcp_servers",
+                "只保留必要 MCP，并给远端 server 设置合理 timeout；模板修复会移除全部用户级 MCP。",
+            )
+        for server_id, server in mcp_servers.items():
+            if not isinstance(server, dict):
+                _append_config_issue(
+                    issues,
+                    "warning",
+                    "invalid_mcp_shape",
+                    f"MCP server {server_id!r} 不是表结构。",
+                    f"mcp_servers.{server_id}",
+                    "删除异常 MCP 配置后重新添加。",
+                )
+                continue
+            enabled = _coerce_bool(server.get("enabled"), True)
+            required = _coerce_bool(server.get("required"), False)
+            if required and enabled:
+                _append_config_issue(
+                    issues,
+                    "critical",
+                    "required_mcp_can_block_startup",
+                    f"MCP server {server_id!r} 标记为 required，初始化失败会导致 Codex 启动失败。",
+                    f"mcp_servers.{server_id}.required",
+                    "除非必须，改为 required=false；模板修复会移除该 MCP。",
+                )
+            command = _first_command_part(server.get("command"))
+            if command:
+                if _looks_like_wsl_or_unix_path(command) and os.name == "nt":
+                    _append_config_issue(
+                        issues,
+                        "critical",
+                        "mcp_wsl_command_on_windows",
+                        f"MCP server {server_id!r} 使用 WSL/Linux 命令路径，Windows 原生 Codex 可能启动失败。",
+                        f"mcp_servers.{server_id}.command",
+                        "改成 Windows 命令，或在 WSL 环境运行 Codex；模板修复会移除该 MCP。",
+                    )
+                elif _windows_path_missing(command):
+                    _append_config_issue(
+                        issues,
+                        "warning",
+                        "mcp_missing_command",
+                        f"MCP server {server_id!r} 的 command 路径不存在。",
+                        f"mcp_servers.{server_id}.command",
+                        "修正 command 路径或删除该 MCP。",
+                    )
+            if server.get("url"):
+                url = str(server.get("url") or "")
+                if not re.match(r"^https?://(127\.0\.0\.1|localhost|::1|\[::1\])", url, re.I):
+                    _append_config_issue(
+                        issues,
+                        "warning",
+                        "remote_http_mcp",
+                        f"MCP server {server_id!r} 是远端 HTTP server；网络/VPN/OAuth 元数据不可达时可能卡启动。",
+                        f"mcp_servers.{server_id}.url",
+                        "必要时降低 startup_timeout_sec，或在模板修复中移除。",
+                    )
+            timeout = server.get("startup_timeout_sec")
+            try:
+                if timeout is not None and float(timeout) > 30:
+                    _append_config_issue(
+                        issues,
+                        "warning",
+                        "long_mcp_startup_timeout",
+                        f"MCP server {server_id!r} 的 startup_timeout_sec 较长，失败时用户会误以为 Codex 卡住。",
+                        f"mcp_servers.{server_id}.startup_timeout_sec",
+                        "把启动超时降到 3-10 秒，或关闭/移除不稳定 MCP。",
+                    )
+            except (TypeError, ValueError):
+                _append_config_issue(
+                    issues,
+                    "warning",
+                    "invalid_mcp_startup_timeout",
+                    f"MCP server {server_id!r} 的 startup_timeout_sec 不是数字。",
+                    f"mcp_servers.{server_id}.startup_timeout_sec",
+                    "改成秒数数字。",
+                )
+    elif mcp_servers is not None:
+        _append_config_issue(
+            issues,
+            "warning",
+            "invalid_mcp_root",
+            "mcp_servers 不是表结构。",
+            "mcp_servers",
+            "删除并通过 codex mcp add 重新创建。",
+        )
+
+    for oauth_key in ("mcp_oauth_callback_port", "mcp_oauth_callback_url"):
+        if oauth_key not in config_data:
+            continue
+        value = config_data.get(oauth_key)
+        if oauth_key.endswith("_port"):
+            try:
+                port = int(value)
+                if port < 1 or port > 65535:
+                    raise ValueError
+            except Exception:
+                _append_config_issue(
+                    issues,
+                    "warning",
+                    "invalid_mcp_oauth_port",
+                    "mcp_oauth_callback_port 不是合法端口。",
+                    oauth_key,
+                    "移除该项或改成 1-65535 之间的端口。",
+                )
+        elif value and "localhost" not in str(value).lower() and "127.0.0.1" not in str(value):
+            _append_config_issue(
+                issues,
+                "warning",
+                "nonlocal_mcp_oauth_callback",
+                "mcp_oauth_callback_url 是非本地 URL；Codex 会绑定 0.0.0.0，网络环境异常时可能影响 OAuth 初始化。",
+                oauth_key,
+                "本地使用时移除该项，或确认远端 callback 可达。",
+            )
+
+    notify = config_data.get("notify")
+    if notify:
+        command = _first_command_part(notify)
+        if _looks_like_wsl_or_unix_path(command) and os.name == "nt":
+            _append_config_issue(
+                issues,
+                "warning",
+                "notify_wsl_command_on_windows",
+                "notify 使用 WSL/Linux 命令，Windows 原生 Codex 回调通知可能失败。",
+                "notify",
+                "改成 Windows 可执行文件，或移除 notify。",
+            )
+        elif _windows_path_missing(command):
+            _append_config_issue(
+                issues,
+                "warning",
+                "notify_missing_command",
+                "notify 指向的可执行文件不存在。",
+                "notify",
+                "修正路径或移除 notify。",
+            )
+
+    if isinstance(config_data.get("hooks"), dict):
+        _append_config_issue(
+            issues,
+            "warning",
+            "inline_hooks_present",
+            "config.toml 内有 inline hooks；hook 命令、信任状态或超时会影响会话启动和回合结束。",
+            "hooks",
+            "异常排查时先移除 inline hooks，或用 /hooks 逐项审查。",
+        )
+    hooks_json = mgr.codex_home / "hooks.json"
+    if hooks_json.exists():
+        _append_config_issue(
+            issues,
+            "warning",
+            "hooks_json_present",
+            "~/.codex/hooks.json 存在；即使 config.toml 重置，用户级 hooks 仍可能被加载。",
+            str(hooks_json),
+            "如果模板修复后仍卡住，再备份并临时移走 hooks.json。",
+        )
+
+    features = config_data.get("features")
+    if isinstance(features, dict) and isinstance(features.get("network_proxy"), dict):
+        _append_config_issue(
+            issues,
+            "info",
+            "network_proxy_feature",
+            "features.network_proxy 会改变 sandboxed networking 行为，错误规则可能造成网络请求异常。",
+            "features.network_proxy",
+            "排查启动/网络问题时先回到模板网络设置。",
+        )
+
+    windows_cfg = config_data.get("windows")
+    if isinstance(windows_cfg, dict):
+        sandbox_value = str(windows_cfg.get("sandbox") or "").strip().lower()
+        if sandbox_value and sandbox_value not in VALID_WINDOWS_SANDBOXES:
+            _append_config_issue(
+                issues,
+                "critical",
+                "invalid_windows_sandbox",
+                "windows.sandbox 不是官方支持的 elevated/unelevated。",
+                "windows.sandbox",
+                "Windows 原生运行建议设为 elevated；模板修复会写回 elevated。",
+            )
+    elif windows_cfg is not None:
+        _append_config_issue(
+            issues,
+            "warning",
+            "invalid_windows_table",
+            "windows 配置不是表结构。",
+            "windows",
+            "删除异常 windows 配置，模板修复会重建。",
+        )
+
+    workspace_cfg = config_data.get("sandbox_workspace_write")
+    if isinstance(workspace_cfg, dict):
+        roots = workspace_cfg.get("writable_roots")
+        if isinstance(roots, list):
+            for idx, root in enumerate(roots):
+                if os.name == "nt" and _looks_like_wsl_or_unix_path(root):
+                    _append_config_issue(
+                        issues,
+                        "warning",
+                        "workspace_root_wsl_on_windows",
+                        "writable_roots 包含 WSL/Linux 路径，Windows sandbox 刷新/权限判断可能失败。",
+                        f"sandbox_workspace_write.writable_roots[{idx}]",
+                        "改成 Windows 绝对路径或移除该 root。",
+                    )
+                elif _windows_path_missing(root):
+                    _append_config_issue(
+                        issues,
+                        "warning",
+                        "workspace_root_missing",
+                        "writable_roots 包含不存在的 Windows 路径。",
+                        f"sandbox_workspace_write.writable_roots[{idx}]",
+                        "移除不存在路径。",
+                    )
+
+    for path_key in ("model_catalog_json", "model_instructions_file", "experimental_compact_prompt_file", "log_dir", "sqlite_home"):
+        if _windows_path_missing(config_data.get(path_key)):
+            _append_config_issue(
+                issues,
+                "warning",
+                "missing_config_path",
+                f"{path_key} 指向的路径不存在，启动期读取可能失败或回退。",
+                path_key,
+                "修正路径，或由模板修复移除该项。",
+            )
+        elif os.name == "nt" and _looks_like_wsl_or_unix_path(config_data.get(path_key)):
+            _append_config_issue(
+                issues,
+                "warning",
+                "wsl_path_on_windows",
+                f"{path_key} 看起来是 WSL/Linux 路径，Windows 原生 Codex 可能无法访问。",
+                path_key,
+                "改成 Windows 路径或切到 WSL Codex。",
+            )
+
+    auth_store = str(config_data.get("cli_auth_credentials_store") or "").strip().lower()
+    if auth_store and auth_store not in VALID_CLI_AUTH_STORES:
+        _append_config_issue(
+            issues,
+            "warning",
+            "invalid_cli_auth_store",
+            "cli_auth_credentials_store 不是 file/keyring/auto。",
+            "cli_auth_credentials_store",
+            "改回 file/keyring/auto；模板修复会保留合法值。",
+        )
+    if config_data.get("forced_login_method") or config_data.get("forced_chatgpt_workspace_id"):
+        _append_config_issue(
+            issues,
+            "warning",
+            "forced_login_can_logout",
+            "forced_login_method/forced_chatgpt_workspace_id 会在凭据不匹配时让 Codex 登出并退出。",
+            "forced_login_method",
+            "个人环境排查时移除强制登录限制。",
+        )
+
+    plugins = config_data.get("plugins")
+    if isinstance(plugins, dict):
+        for plugin_id, plugin_cfg in plugins.items():
+            if isinstance(plugin_cfg, dict) and isinstance(plugin_cfg.get("mcp_servers"), dict):
+                _append_config_issue(
+                    issues,
+                    "warning",
+                    "plugin_mcp_overrides",
+                    f"插件 {plugin_id!r} 有 MCP 覆盖配置；插件自带 MCP 也可能影响启动速度或可用性。",
+                    f"plugins.{plugin_id}.mcp_servers",
+                    "模板修复只保留插件 enabled 状态，不保留 MCP 覆盖。",
+                )
+
+    counts = {"critical": 0, "warning": 0, "info": 0}
+    for issue in issues:
+        severity = issue.get("severity")
+        if severity in counts:
+            counts[severity] += 1
+
+    return {
+        "strict_toml_ok": strict_toml_ok,
+        "parse_error": parse_error,
+        "issue_count": len(issues),
+        "counts": counts,
+        "issues": issues,
+        "repair_template_removes": list(CONFIG_REPAIR_REMOVED_KEYS),
+        "sources": [
+            "OpenAI Codex config/auth/MCP/hooks/Windows docs",
+            "openai/codex GitHub issue reports for duplicate TOML and MCP startup latency",
+        ],
+        "has_raw_config": bool(raw_content),
+    }
+
+
+def _sanitize_codex_projects(projects: Any) -> Dict[str, Any]:
+    if not isinstance(projects, dict):
+        return {}
+    sanitized: Dict[str, Any] = {}
+    for project_path, project_cfg in projects.items():
+        if not isinstance(project_cfg, dict):
+            continue
+        trust_level = str(project_cfg.get("trust_level") or "").strip()
+        if trust_level not in {"trusted", "untrusted"}:
+            continue
+        sanitized[str(project_path)] = {"trust_level": trust_level}
+    return sanitized
+
+
+def _sanitize_codex_plugins(plugins: Any) -> Dict[str, Any]:
+    if not isinstance(plugins, dict):
+        return {}
+    sanitized: Dict[str, Any] = {}
+    for plugin_id, plugin_cfg in plugins.items():
+        if not isinstance(plugin_cfg, dict):
+            continue
+        if "enabled" in plugin_cfg:
+            sanitized[str(plugin_id)] = {"enabled": _coerce_bool(plugin_cfg.get("enabled"), True)}
+    return sanitized
+
+
+def build_codex_config_template_state(
+    config_data: Dict[str, Any],
+    *,
+    goals_enabled: bool = True,
+) -> Dict[str, Any]:
+    """Build a conservative Windows-native Codex template that preserves only low-risk preferences."""
+    current = config_data if isinstance(config_data, dict) else {}
+    template: Dict[str, Any] = {}
+    for key in CONFIG_TEMPLATE_SCALAR_KEYS:
+        value = current.get(key)
+        if value is None or not _is_safe_toml_scalar(value):
+            continue
+        if key == "cli_auth_credentials_store" and str(value).strip().lower() not in VALID_CLI_AUTH_STORES:
+            continue
+        template[key] = value
+
+    if not str(template.get("model") or "").strip():
+        template["model"] = "gpt-5.5"
+
+    features = {"goals": bool(goals_enabled)}
+    template["features"] = features
+
+    if os.name == "nt":
+        current_windows = current.get("windows") if isinstance(current.get("windows"), dict) else {}
+        sandbox = str(current_windows.get("sandbox") or "elevated").strip().lower()
+        if sandbox not in VALID_WINDOWS_SANDBOXES:
+            sandbox = "elevated"
+        windows_template: Dict[str, Any] = {"sandbox": sandbox}
+        if isinstance(current_windows.get("sandbox_private_desktop"), bool):
+            windows_template["sandbox_private_desktop"] = current_windows["sandbox_private_desktop"]
+        template["windows"] = windows_template
+
+    projects = _sanitize_codex_projects(current.get("projects"))
+    if projects:
+        template["projects"] = projects
+    plugins = _sanitize_codex_plugins(current.get("plugins"))
+    if plugins:
+        template["plugins"] = plugins
+    return template
+
+
+def repair_codex_config_template(
+    mgr: CodexConfigManager,
+    *,
+    goals_enabled: bool = True,
+    restart_windows: bool = False,
+) -> Dict[str, Any]:
+    """Back up config.toml and replace it with a conservative template state."""
+    current_config = mgr.read_config()
+    before_risks = inspect_codex_config_risks(mgr, current_config)
+    next_config = build_codex_config_template_state(current_config, goals_enabled=goals_enabled)
+    removed_keys = [key for key in CONFIG_REPAIR_REMOVED_KEYS if key in current_config]
+    backup_path = ""
+    if mgr.config_path.exists():
+        backup_path = backup_file(str(mgr.config_path), mgr.backup_dir)
+
+    save_config_toml(str(mgr.config_path), next_config)
+    after_risks = inspect_codex_config_risks(mgr, next_config)
+    result: Dict[str, Any] = {
+        "success": True,
+        "changed": next_config != current_config,
+        "restart_required": True,
+        "reboot_recommended": bool(restart_windows),
+        "windows_restart_started": False,
+        "config_path": str(mgr.config_path),
+        "backup_path": backup_path,
+        "removed_keys": removed_keys,
+        "preserved_keys": list(next_config.keys()),
+        "template_config": next_config,
+        "before_risks": before_risks,
+        "after_risks": after_risks,
+        "message": "已备份并重置 Codex config.toml 到模板态。auth.json 和会话历史未被修改，请重启 Codex 使配置生效。",
+    }
+
+    if restart_windows:
+        if os.name != "nt":
+            result["success"] = False
+            result["error"] = "Windows restart is only available on Windows."
+            return result
+        try:
+            subprocess.Popen(
+                [
+                    "shutdown",
+                    "/r",
+                    "/t",
+                    "15",
+                    "/c",
+                    "Codex config template repair completed. Restarting to clear stuck agent environment.",
+                ],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                close_fds=True,
+            )
+            result["windows_restart_started"] = True
+        except Exception as exc:
+            result["success"] = False
+            result["error"] = f"Windows restart failed: {exc}"
+    return result
+
+
+def reset_codex_for_official_login(
+    mgr: CodexConfigManager,
+    *,
+    restart_windows: bool = False,
+) -> Dict[str, Any]:
+    """Back up and remove Codex config/auth so Codex can perform first official login."""
+    result: Dict[str, Any] = {
+        "success": False,
+        "changed": False,
+        "restart_windows_requested": bool(restart_windows),
+        "windows_restart_started": False,
+        "reboot_required": True,
+        "chat_history_risk": True,
+        "risk_message": (
+            "清除 Codex config.toml/auth.json 后，聊天记录索引和登录态重建期间可能暂时不可见，"
+            "极端情况下有概率丢失。请确认已经备份重要记录。"
+        ),
+        "backups": {},
+        "removed_files": [],
+        "skipped_files": [],
+        "errors": [],
+    }
+
+    kill_ok, kill_msg = kill_codex()
+    result["kill_codex"] = {"success": kill_ok, "message": kill_msg}
+    if not kill_ok:
+        result["errors"].append(f"关闭 Codex 失败: {kill_msg}")
+        return result
+
+    for key, path in (("config_toml", mgr.config_path), ("auth_json", mgr.auth_path)):
+        try:
+            if not path.exists():
+                result["skipped_files"].append({"id": key, "path": str(path), "reason": "missing"})
+                continue
+            backup_path = backup_file(str(path), mgr.backup_dir)
+            if not backup_path:
+                result["errors"].append(f"{path.name} backup failed")
+                continue
+            path.unlink()
+            result["backups"][key] = backup_path
+            result["removed_files"].append({"id": key, "path": str(path), "backup_path": backup_path})
+            result["changed"] = True
+        except Exception as exc:
+            result["errors"].append(f"{path}: {exc}")
+
+    if result["errors"]:
+        return result
+
+    if restart_windows:
+        if os.name != "nt":
+            result["errors"].append("Windows restart is only available on Windows.")
+            return result
+        try:
+            subprocess.Popen(
+                [
+                    "shutdown",
+                    "/r",
+                    "/t",
+                    "15",
+                    "/c",
+                    "Codex official login reset completed. Restarting to finish login-state cleanup.",
+                ],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                close_fds=True,
+            )
+            result["windows_restart_started"] = True
+        except Exception as exc:
+            result["errors"].append(f"Windows restart failed: {exc}")
+            return result
+
+    result["success"] = True
+    result["message"] = (
+        "已备份并移除 Codex config.toml/auth.json。请重启电脑后打开 Codex，按官方登录流程重新登录。"
+    )
     return result
 
 
@@ -249,6 +994,7 @@ def create_app() -> Flask:
         retry_attempts=config.get("proxy_retry_attempts", 0),
         retry_backoff_ms=config.get("proxy_retry_backoff_ms", 250),
         media_approval_reviewer=auto_approval_reviewer.review,
+        local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
     )
     amr_registry = AMRRegistry()
     quota_manager = QuotaManager(lambda: provider_registry.list_providers(include_secrets=True).get("providers", []))
@@ -262,9 +1008,20 @@ def create_app() -> Flask:
         amr_registry=amr_registry,
         quota_manager=quota_manager,
     )
+    codex_start_jobs: Dict[str, Dict[str, Any]] = {}
+    codex_start_jobs_lock = threading.Lock()
 
     def _refresh_provider_registry_path():
         provider_registry.store_path = Path(config.get("provider_store_path", "") or DEFAULT_STORE_PATH).expanduser()
+
+    def _current_official_provider_extra() -> list[Dict[str, Any]]:
+        return _official_provider_extra()
+
+    def _provider_payload(include_secrets: bool = False) -> Dict[str, Any]:
+        return provider_registry.list_providers(
+            include_secrets=include_secrets,
+            extra_providers=_current_official_provider_extra(),
+        )
 
     def _request_log_store() -> RequestLogStore:
         return RequestLogStore(
@@ -292,6 +1049,7 @@ def create_app() -> Flask:
         proxy_server.upstream_timeout_seconds = config.get("proxy_upstream_timeout_seconds", 120)
         proxy_server.retry_attempts = config.get("proxy_retry_attempts", 0)
         proxy_server.retry_backoff_ms = config.get("proxy_retry_backoff_ms", 250)
+        proxy_server.local_proxy_bearer_token = config.get("local_proxy_bearer_token", "")
 
     def _require_codex_mutation_confirmation(body: Dict, action: str):
         """Require a typed confirmation for endpoints that mutate Codex state."""
@@ -317,6 +1075,22 @@ def create_app() -> Flask:
             return str(request.host_url or "").rstrip("/") or backend_url_from_env()
         return backend_url_from_env()
 
+    def _ensure_local_proxy_started() -> Dict[str, Any]:
+        _sync_proxy_request_log_config()
+        status = proxy_server.status()
+        if status.get("running"):
+            return {"success": True, "status": status, "started": False}
+        ok = proxy_server.start()
+        status = proxy_server.status()
+        if ok:
+            config.set("proxy_port", status.get("port", proxy_server.port))
+            return {"success": True, "status": status, "started": True}
+        return {
+            "success": False,
+            "status": status,
+            "error": "未能在配置端口及后续端口中找到可用代理端口",
+        }
+
     def _sync_paths_from_config() -> Dict[str, str]:
         return {
             "db_path": config.get("db_path", ""),
@@ -330,6 +1104,221 @@ def create_app() -> Flask:
             sessions_dir=config.get("sessions_dir", ""),
             archived_dir=config.get("archived_dir", ""),
         )
+
+    def _codex_start_now() -> str:
+        return datetime.now().isoformat(timespec="seconds")
+
+    def _set_codex_start_job(job_id: str, **fields) -> None:
+        if not job_id:
+            return
+        with codex_start_jobs_lock:
+            job = codex_start_jobs.get(job_id)
+            if not job:
+                return
+            job.update(fields)
+            job["updated_at"] = _codex_start_now()
+            job["_updated_ts"] = time.time()
+
+    def _codex_start_job_snapshot(job_id: str) -> Dict[str, Any] | None:
+        with codex_start_jobs_lock:
+            job = codex_start_jobs.get(job_id)
+            if not job:
+                return None
+            return {key: value for key, value in job.items() if not key.startswith("_")}
+
+    def _cleanup_codex_start_jobs() -> None:
+        cutoff = time.time() - 1800
+        with codex_start_jobs_lock:
+            for job_id in [
+                item_id for item_id, job in codex_start_jobs.items()
+                if float(job.get("_updated_ts") or job.get("_created_ts") or 0) < cutoff
+            ]:
+                codex_start_jobs.pop(job_id, None)
+
+    def _set_codex_start_progress(job_id: str, stage: str, progress: int, message: str, **extra) -> None:
+        _set_codex_start_job(
+            job_id,
+            stage=stage,
+            progress=min(max(int(progress), 0), 100),
+            message=message,
+            **extra,
+        )
+
+    def _run_codex_start_flow(body: Dict[str, Any], job_id: str = "") -> Dict[str, Any]:
+        body = dict(body or {})
+        _set_codex_start_progress(job_id, "preparing", 5, "正在读取 Codex 登录态和启动配置...")
+        mgr = CodexConfigManager()
+        login_defaults = _official_login_defaults(mgr)
+        start_mode = _normalize_codex_start_mode(body, login_defaults)
+        official_mode = start_mode == START_MODE_OFFICIAL_DIRECT
+        preserve_official_auth = bool(body.get(
+            "preserve_official_auth",
+            start_mode == START_MODE_PRESERVE_LOGIN_PROXY
+            or login_defaults["default_preserve_official_auth"],
+        ))
+        official_payload = {}
+        if official_mode:
+            _set_codex_start_progress(job_id, "official_config", 25, "正在切回官方登录直连配置...")
+            official_payload = disable_codex_enhance_provider_config(
+                mgr,
+                goals_enabled=_config_goals_enabled(config),
+            )
+            config.update({
+                "use_codex_plus_plus": False,
+                "plugin_unlock_enabled": False,
+            })
+            use_cpp = False
+            sync_payload = {
+                "success": True,
+                "skipped": True,
+                "reason": "official_mode_preserves_login",
+                "message": "官方登录启动已跳过供应商同步，保留 token/上下文等安全增强。",
+            }
+            _set_codex_start_progress(job_id, "sync_skipped", 60, "官方直连不进入本地代理/AMR，已跳过历史同步。", sync=sync_payload)
+        else:
+            use_cpp = body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
+            _set_codex_start_progress(job_id, "proxy_start", 12, "正在启动本地代理并自动退避端口...")
+            proxy_payload = _ensure_local_proxy_started()
+            if not proxy_payload.get("success"):
+                result = {
+                    "success": False,
+                    "error": proxy_payload.get("error") or "本地代理启动失败",
+                    "proxy": proxy_payload,
+                }
+                _set_codex_start_progress(job_id, "proxy_failed", 100, result["error"], result=result)
+                return result
+            proxy_status = proxy_payload.get("status") or {}
+            proxy_base_url = str(body.get("proxy_base_url") or proxy_status.get("base_url") or _current_proxy_base_url())
+            _set_codex_start_progress(job_id, "provider_config", 16, "正在确认 Codex 本地代理配置...")
+            provider_preview = mgr.preview_write_provider(
+                proxy_base_url=proxy_base_url,
+                proxy_model=body.get("proxy_model", "auto"),
+                goals_enabled=_config_goals_enabled(config),
+                local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
+            )
+            provider_write = {
+                "success": True,
+                "changed": False,
+                "skipped": True,
+                "message": "Codex 本地代理配置已是最新。",
+            }
+            if provider_preview.get("will_write_config") or provider_preview.get("will_write_auth"):
+                provider_write = mgr.write_provider_config(
+                    proxy_base_url=proxy_base_url,
+                    proxy_model=body.get("proxy_model", "auto"),
+                    preserve_official_auth=preserve_official_auth,
+                    goals_enabled=_config_goals_enabled(config),
+                    local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
+                )
+                provider_write["changed"] = bool(provider_write.get("success"))
+                if not provider_write.get("success"):
+                    result = {
+                        "success": False,
+                        "error": "Codex 本地代理配置写入失败",
+                        "provider_config": provider_write,
+                        "proxy": proxy_payload,
+                    }
+                    _set_codex_start_progress(job_id, "provider_config_failed", 100, result["error"], result=result)
+                    return result
+            backup_before = _coerce_bool(body.get("backup_before_sync"), False)
+            _set_codex_start_progress(
+                job_id,
+                "history_sync",
+                20,
+                "正在完整同步历史记录；默认不做完整备份，避免启动被备份拖慢...",
+            )
+            sync_payload, sync_status = _run_sync_with_backup(
+                backup_mgr,
+                path_config=_sync_paths_from_config(),
+                backup_before=backup_before,
+            )
+            if sync_status >= 400:
+                result = {"success": False, "error": "同步失败，取消启动", "sync": sync_payload}
+                _set_codex_start_progress(job_id, "sync_failed", 100, "历史同步失败，已取消启动。", result=result, sync=sync_payload)
+                return result
+            _set_codex_start_progress(job_id, "history_synced", 68, "历史同步完成，正在准备启动 Codex...", sync=sync_payload)
+
+        injection_settings = _resolve_codex_injection_settings(
+            config,
+            body,
+            use_codex_plus_plus=bool(use_cpp),
+            official_mode=official_mode,
+            persist=True,
+        )
+        _set_codex_start_progress(job_id, "launching", 82, "正在启动 Codex 并确认进程...")
+        ok, msg = start_codex(
+            use_codex_plus_plus=use_cpp,
+            codex_plus_plus_path=config.get("codex_plus_plus_path", ""),
+            codex_cli_path=config.get("codex_cli_path", ""),
+            enable_cdp_injection=injection_settings["enabled"],
+            cdp_port=injection_settings["cdp_port"],
+            backend_url=body.get("_backend_url") or body.get("backend_url") or _current_backend_url(),
+        )
+        result = {
+            "success": ok,
+            "message": msg,
+            "sync": sync_payload,
+            "start_mode": start_mode,
+            "official_mode": official_mode,
+            "preserve_official_auth": preserve_official_auth,
+            **login_defaults,
+            "official_mode_changes": official_payload,
+            "proxy": proxy_payload if not official_mode else {},
+            "provider_config": provider_write if not official_mode else {},
+            "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
+            "codex_injection_enabled": injection_settings["requested_enabled"],
+            "codex_cdp_port": injection_settings["cdp_port"],
+            "codex_injection_active": injection_settings["enabled"],
+            "codex_goals_enabled": _config_goals_enabled(config),
+        }
+        _set_codex_start_progress(job_id, "done" if ok else "failed", 100, msg, result=result, sync=sync_payload)
+        return result
+
+    def _start_codex_background_job(body: Dict[str, Any]) -> Dict[str, Any]:
+        _cleanup_codex_start_jobs()
+        job_id = uuid.uuid4().hex
+        now = _codex_start_now()
+        with codex_start_jobs_lock:
+            codex_start_jobs[job_id] = {
+                "id": job_id,
+                "status": "running",
+                "stage": "queued",
+                "progress": 0,
+                "message": "启动任务已开始，正在排队...",
+                "created_at": now,
+                "updated_at": now,
+                "_created_ts": time.time(),
+                "_updated_ts": time.time(),
+            }
+
+        def worker():
+            try:
+                result = _run_codex_start_flow(body, job_id)
+                _set_codex_start_job(
+                    job_id,
+                    status="complete" if result.get("success") else "failed",
+                    result=result,
+                    error="" if result.get("success") else (result.get("error") or result.get("message") or "Codex 启动失败"),
+                )
+            except Exception as exc:
+                _set_codex_start_job(
+                    job_id,
+                    status="failed",
+                    stage="failed",
+                    progress=100,
+                    message=str(exc),
+                    error=str(exc),
+                    result={"success": False, "error": str(exc)},
+                )
+
+        threading.Thread(target=worker, name=f"codex-start-{job_id[:8]}", daemon=True).start()
+        return {
+            "success": True,
+            "async": True,
+            "job_id": job_id,
+            "status_url": f"/api/codex/start/status/{job_id}",
+            "message": "启动任务已开始，正在同步历史记录...",
+        }
 
     @app.before_request
     def _block_writes_after_uninstall_cleanup():
@@ -520,8 +1509,18 @@ def create_app() -> Flask:
             start = request.args.get("start", "")
             end = request.args.get("end", "")
             granularity = request.args.get("granularity", "total")
-            rollout_scan_fallback = str(request.args.get("rollout_scan_fallback", "")).lower() in {"1", "true", "yes"}
-            rollout_total_source = str(request.args.get("rollout_total_source", "")).lower() in {"1", "true", "yes"}
+            auth_mode = "unknown"
+            try:
+                auth_mode = CodexConfigManager().get_auth_mode()
+            except Exception:
+                pass
+            official_usage_default = auth_mode == "official_oauth"
+            rollout_scan_fallback = str(
+                request.args.get("rollout_scan_fallback", "1" if official_usage_default else "")
+            ).lower() in {"1", "true", "yes"}
+            rollout_total_source = str(
+                request.args.get("rollout_total_source", "1" if official_usage_default else "")
+            ).lower() in {"1", "true", "yes"}
             default_rollout_limit = 200 if rollout_total_source or rollout_scan_fallback else 25
             rollout_limit = _clamp_int(request.args.get("rollout_limit", default_rollout_limit), default_rollout_limit, 1, 1000)
             default_tail_bytes = 0 if rollout_total_source else 262_144
@@ -543,6 +1542,8 @@ def create_app() -> Flask:
             data["codex_rollout_scan_limit"] = rollout_limit
             data["codex_rollout_tail_bytes"] = rollout_tail_bytes
             data["codex_rollout_total_source_requested"] = rollout_total_source
+            data["auth_mode"] = auth_mode
+            data["official_usage_default"] = official_usage_default
             cc_switch_db_path = config.get("cc_switch_db_path", "")
             data["cc_switch_db_configured"] = bool(cc_switch_db_path)
             data["cc_switch_db_path"] = cc_switch_db_path
@@ -665,6 +1666,7 @@ def create_app() -> Flask:
                 path_config=_sync_paths_from_config(),
                 target_provider=target_provider,
                 target_model=target_model,
+                backup_before=_coerce_bool(body.get("backup_before_sync"), False),
             )
             if status >= 400:
                 return jsonify(payload), status
@@ -687,12 +1689,20 @@ def create_app() -> Flask:
         try:
             codex_home = resolve_codex_home()
             config_data = _load_config_toml(str(codex_home / "config.toml"))
+            auth_data = CodexConfigManager(codex_home=str(codex_home)).read_auth()
+            effective = _effective_codex_settings(config_data, auth_data)
             provider_dist = db.get_provider_distribution()
             running, pids = is_codex_running(timeout=1)
 
             return jsonify({
-                "current_provider": config_data.get("model_provider", ""),
-                "current_model": config_data.get("model", ""),
+                "current_provider": effective.get("model_provider", ""),
+                "current_model": effective.get("model", ""),
+                "current_provider_source": effective.get("model_provider_source", ""),
+                "current_model_source": effective.get("model_source", ""),
+                "raw_current_provider": effective.get("raw_model_provider", ""),
+                "raw_current_model": effective.get("raw_model", ""),
+                "auth_mode": effective.get("auth_mode", ""),
+                "official_oauth_implied_provider": effective.get("official_oauth_implied_provider", False),
                 "provider_distribution": provider_dist,
                 "codex_running": running,
                 "codex_pids": pids,
@@ -725,63 +1735,21 @@ def create_app() -> Flask:
         """启动 Codex/Codex++（启动前自动同步当前 provider/model）。"""
         try:
             body = request.get_json(silent=True) or {}
-            mgr = CodexConfigManager()
-            login_defaults = _official_login_defaults(mgr)
-            start_mode = _normalize_codex_start_mode(body, login_defaults)
-            official_mode = start_mode == START_MODE_OFFICIAL_DIRECT
-            preserve_official_auth = bool(body.get(
-                "preserve_official_auth",
-                start_mode == START_MODE_PRESERVE_LOGIN_PROXY
-                or login_defaults["default_preserve_official_auth"],
-            ))
-            official_payload = {}
-            if official_mode:
-                official_payload = disable_codex_enhance_provider_config(mgr)
-                config.update({
-                    "use_codex_plus_plus": False,
-                    "plugin_unlock_enabled": False,
-                })
-                use_cpp = False
-                sync_payload = {
-                    "success": True,
-                    "skipped": True,
-                    "reason": "official_mode_preserves_login",
-                    "message": "官方登录启动已跳过供应商同步，保留 token/上下文等安全增强。",
-                }
-            else:
-                use_cpp = body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
-                sync_payload, sync_status = _run_sync_with_backup(backup_mgr, path_config=_sync_paths_from_config())
-                if sync_status >= 400:
-                    return jsonify(sync_payload), sync_status
-            injection_settings = _resolve_codex_injection_settings(
-                config,
-                body,
-                use_codex_plus_plus=bool(use_cpp),
-                official_mode=official_mode,
-                persist=True,
-            )
-            ok, msg = start_codex(
-                use_codex_plus_plus=use_cpp,
-                codex_plus_plus_path=config.get("codex_plus_plus_path", ""),
-                codex_cli_path=config.get("codex_cli_path", ""),
-                enable_cdp_injection=injection_settings["enabled"],
-                cdp_port=injection_settings["cdp_port"],
-                backend_url=_current_backend_url(),
-            )
-            return jsonify({
-                "success": ok,
-                "message": msg,
-                "sync": sync_payload,
-                "start_mode": start_mode,
-                "official_mode": official_mode,
-                "preserve_official_auth": preserve_official_auth,
-                **login_defaults,
-                "official_mode_changes": official_payload,
-                "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
-                "codex_injection_enabled": injection_settings["requested_enabled"],
-                "codex_cdp_port": injection_settings["cdp_port"],
-                "codex_injection_active": injection_settings["enabled"],
-            })
+            body["_backend_url"] = _current_backend_url()
+            if _coerce_bool(body.get("async"), False):
+                return jsonify(_start_codex_background_job(body))
+            return jsonify(_run_codex_start_flow(body))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex/start/status/<job_id>")
+    def codex_start_status(job_id):
+        """Return progress for a background Codex start task."""
+        try:
+            job = _codex_start_job_snapshot(job_id)
+            if not job:
+                return jsonify({"error": "Start job not found"}), 404
+            return jsonify(job)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -826,15 +1794,44 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/backups/prune", methods=["POST"])
+    def prune_backups():
+        """清理超出保留数量的旧备份。"""
+        try:
+            body = request.get_json(silent=True) or {}
+            keep = body.get("max_backups")
+            result = backup_mgr.prune_backups(keep if keep is not None else config.get("max_backups", 20))
+            return jsonify(result), 200 if result.get("success") else 207
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     # ─────────────── 设置 API ───────────────
 
     @app.route("/api/settings")
     def get_settings():
         """读取设置"""
         try:
-            settings = redact_currency_settings(config.get_all())
+            settings = redact_local_proxy_token(redact_currency_settings(config.get_all()))
+            try:
+                mgr = CodexConfigManager()
+                config_data = mgr.read_config()
+                current_goals = codex_goals_enabled_from_config(config_data, True)
+                settings["codex_goals_config"] = {
+                    "enabled": current_goals,
+                    "configured": isinstance(config_data.get("features"), dict)
+                    and "goals" in config_data.get("features", {}),
+                    "matches_setting": current_goals == _config_goals_enabled(config),
+                    "config_path": str(mgr.config_path),
+                }
+            except Exception as exc:
+                settings["codex_goals_config"] = {
+                    "enabled": True,
+                    "configured": False,
+                    "matches_setting": False,
+                    "error": str(exc),
+                }
             settings["auto_approval_system_prompt_default"] = DEFAULT_CONFIG["auto_approval_system_prompt"]
-            settings["defaults"] = redact_currency_settings(DEFAULT_CONFIG)
+            settings["defaults"] = redact_local_proxy_token(redact_currency_settings(DEFAULT_CONFIG))
             settings["app_version"] = APP_VERSION
             settings["repository_url"] = APP_REPOSITORY_URL
             return jsonify(settings)
@@ -847,8 +1844,12 @@ def create_app() -> Flask:
         try:
             data = request.get_json(silent=True) or {}
             data = preserve_redacted_currency_secret(data, config.get_all())
+            data = preserve_redacted_local_proxy_token(data, config.get_all())
             config.update(data)
             _sync_proxy_request_log_config()
+            goals_sync = None
+            if "codex_goals_enabled" in data:
+                goals_sync = CodexConfigManager().write_goals_feature(_config_goals_enabled(config))
 
             # 重新连接数据库（路径可能变了）
             if "db_path" in data:
@@ -867,7 +1868,12 @@ def create_app() -> Flask:
                 else:
                     backup_mgr.stop_auto_backup()
 
-            return jsonify({"success": True})
+            payload = {"success": True}
+            if goals_sync is not None:
+                payload["codex_goals_sync"] = goals_sync
+                if not goals_sync.get("success"):
+                    payload["warning"] = "Codex goals setting saved locally, but config.toml sync failed."
+            return jsonify(payload)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -919,7 +1925,7 @@ def create_app() -> Flask:
             return jsonify({
                 "schema": "codex_enhance_manager.settings.v1",
                 "exported_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                "settings": redact_currency_settings(config.get_all()),
+                "settings": redact_local_proxy_token(redact_currency_settings(config.get_all())),
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -933,10 +1939,11 @@ def create_app() -> Flask:
             if not isinstance(imported, dict):
                 return jsonify({"error": "Invalid settings payload"}), 400
             imported = preserve_redacted_currency_secret(imported, config.get_all())
+            imported = preserve_redacted_local_proxy_token(imported, config.get_all())
             config.update(imported)
             ensure_app_dirs()
             _sync_proxy_request_log_config()
-            return jsonify({"success": True, "settings": redact_currency_settings(config.get_all())})
+            return jsonify({"success": True, "settings": redact_local_proxy_token(redact_currency_settings(config.get_all()))})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -1260,7 +2267,7 @@ def create_app() -> Flask:
         """读取本地 provider registry（默认脱敏）。"""
         try:
             _refresh_provider_registry_path()
-            return jsonify(provider_registry.list_providers(include_secrets=False))
+            return jsonify(_provider_payload(include_secrets=False))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -1282,7 +2289,11 @@ def create_app() -> Flask:
         """读取单个 provider（默认脱敏）。"""
         try:
             _refresh_provider_registry_path()
-            provider = provider_registry.get_provider(provider_id, include_secrets=False)
+            provider = provider_registry.get_provider(
+                provider_id,
+                include_secrets=False,
+                extra_providers=_current_official_provider_extra(),
+            )
             if not provider:
                 return jsonify({"error": "Provider not found"}), 404
             return jsonify(provider)
@@ -1442,7 +2453,10 @@ def create_app() -> Flask:
         try:
             _refresh_provider_registry_path()
             focus_provider_id = request.args.get("focus_provider_id", "")
-            return jsonify(provider_registry.preview_catalog(focus_provider_id=focus_provider_id))
+            return jsonify(provider_registry.preview_catalog(
+                focus_provider_id=focus_provider_id,
+                extra_providers=_current_official_provider_extra(),
+            ))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -1452,7 +2466,7 @@ def create_app() -> Flask:
         try:
             _refresh_provider_registry_path()
             if request.method == "GET":
-                payload = provider_registry.list_providers(include_secrets=False)
+                payload = _provider_payload(include_secrets=False)
                 focus_provider_id = str(payload.get("focus_provider_id") or "")
                 providers = [
                     {
@@ -1472,7 +2486,10 @@ def create_app() -> Flask:
                     "providers": providers,
                 })
             body = request.get_json(silent=True) or {}
-            result = provider_registry.set_focus_provider(body.get("provider_id", ""))
+            result = provider_registry.set_focus_provider(
+                body.get("provider_id", ""),
+                extra_providers=_current_official_provider_extra(),
+            )
             if not result.get("success"):
                 return jsonify(result), 404
             return jsonify(result)
@@ -1524,13 +2541,20 @@ def create_app() -> Flask:
             body = request.get_json(silent=True) or {}
             group_id = str(body.get("group_id") or "default").strip() or "default"
 
-            providers_data = provider_registry.list_providers(include_secrets=False)
+            providers_data = _provider_payload(include_secrets=False)
             provider = next(
                 (p for p in providers_data.get("providers", []) if p.get("id") == provider_id),
                 None,
             )
             if not provider:
                 return jsonify({"success": False, "error": "Provider not found"}), 404
+            if not provider_allows_local_routing(provider):
+                return jsonify({
+                    "success": False,
+                    "error": "Official login is switch-only and cannot be added to AMR.",
+                    "group_id": group_id,
+                    "added_count": 0,
+                }), 400
 
             default_priority = 1 if provider.get("catalog_visibility") == "always_visible" else 2
             priority = _clamp_int(body.get("priority", default_priority), default_priority, 1, 100)
@@ -1600,10 +2624,10 @@ def create_app() -> Flask:
             required_context = _clamp_int(body.get("required_context", 0), 0, 0, 10_000_000)
             model_filter = str(body.get("model") or "").strip()
 
-            providers_data = provider_registry.list_providers(include_secrets=False)
+            providers_data = _provider_payload(include_secrets=False)
             candidates = []
             for p in providers_data.get("providers", []):
-                if not p.get("enabled"):
+                if not provider_allows_local_routing(p):
                     continue
                 alias = str(p.get("short_alias") or p.get("id") or "").strip()
                 for m in p.get("models", []):
@@ -1728,7 +2752,10 @@ def create_app() -> Flask:
         """从当前 provider registry 同步生成 AMR 候选。"""
         try:
             _refresh_provider_registry_path()
-            group = amr_registry.build_from_providers(provider_registry)
+            group = amr_registry.build_from_providers(
+                provider_registry,
+                extra_providers=_current_official_provider_extra(),
+            )
             return jsonify({"success": True, "group": group})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1765,12 +2792,20 @@ def create_app() -> Flask:
             mgr = CodexConfigManager()
             config_data = mgr.read_config()
             auth_data = mgr.read_auth()
+            auth_mode = detect_auth_mode(auth_data)
+            effective = resolve_effective_codex_settings(config_data, auth_mode)
             permissions = mgr.inspect_permissions()
             login_defaults = _official_login_defaults(mgr)
             return jsonify({
                 "config": config_data,
                 "auth_redacted": redact_auth_for_preview(auth_data),
-                "auth_mode": mgr.get_auth_mode(),
+                "auth_mode": auth_mode,
+                "effective_config": effective,
+                "effective_model_provider": effective.get("model_provider", ""),
+                "effective_model": effective.get("model", ""),
+                "effective_model_provider_source": effective.get("model_provider_source", ""),
+                "effective_model_source": effective.get("model_source", ""),
+                "official_oauth_implied_provider": effective.get("official_oauth_implied_provider", False),
                 **login_defaults,
                 "codex_home": str(mgr.codex_home),
                 "config_path": str(mgr.config_path),
@@ -1781,6 +2816,9 @@ def create_app() -> Flask:
                 "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
                 "codex_injection_enabled": _coerce_bool(config.get("codex_injection_enabled", True), True),
                 "codex_cdp_port": _coerce_port(config.get("codex_cdp_port", DEFAULT_CDP_PORT)),
+                "codex_goals_enabled": _config_goals_enabled(config),
+                "codex_goals_config_enabled": codex_goals_enabled_from_config(config_data, True),
+                "config_risk_assessment": inspect_codex_config_risks(mgr, config_data),
                 "backend_url": _current_backend_url(),
             })
         except Exception as e:
@@ -1796,6 +2834,8 @@ def create_app() -> Flask:
             preview = mgr.preview_write_provider(
                 proxy_base_url=body.get("proxy_base_url") or _current_proxy_base_url(),
                 proxy_model=body.get("proxy_model", "auto"),
+                goals_enabled=_config_goals_enabled(config),
+                local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
             )
             preview["auth_redacted"] = redact_auth_for_preview(mgr.read_auth())
             preview.update(login_defaults)
@@ -1867,6 +2907,8 @@ def create_app() -> Flask:
                 proxy_base_url=body.get("proxy_base_url") or _current_proxy_base_url(),
                 proxy_model=body.get("proxy_model", "auto"),
                 preserve_official_auth=body.get("preserve_official_auth", login_defaults["default_preserve_official_auth"]),
+                goals_enabled=_config_goals_enabled(config),
+                local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
             )
             result.update(login_defaults)
             result["start_mode"] = START_MODE_PRESERVE_LOGIN_PROXY
@@ -1923,7 +2965,69 @@ def create_app() -> Flask:
             if denied:
                 return denied
             mgr = CodexConfigManager()
-            return jsonify(disable_codex_enhance_provider_config(mgr))
+            return jsonify(disable_codex_enhance_provider_config(
+                mgr,
+                goals_enabled=_config_goals_enabled(config),
+            ))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/reset-for-official-login", methods=["POST"])
+    def codex_integration_reset_for_official_login():
+        """
+        Reset Codex config/auth for users moving from pure proxy mode to first official login.
+
+        This is intentionally high-friction: it backs up and removes config.toml/auth.json,
+        warns about chat-history visibility/loss risk, and can optionally restart Windows.
+        """
+        try:
+            body = request.get_json(silent=True) or {}
+            denied = _require_codex_mutation_confirmation(body, "reset_codex_for_official_login")
+            if denied:
+                return denied
+            if body.get("risk_confirmation") != CHAT_HISTORY_RISK_CONFIRMATION:
+                return jsonify({
+                    "error": "Chat history risk confirmation required.",
+                    "required_risk_confirmation": CHAT_HISTORY_RISK_CONFIRMATION,
+                    "chat_history_risk": True,
+                    "message": (
+                        "This operation removes Codex config.toml/auth.json after backup. "
+                        "Chat history may become temporarily invisible or may be lost. "
+                        f"Send risk_confirmation={CHAT_HISTORY_RISK_CONFIRMATION!r} after human review."
+                    ),
+                }), 409
+            mgr = CodexConfigManager()
+            result = reset_codex_for_official_login(
+                mgr,
+                restart_windows=_coerce_bool(body.get("restart_windows"), False),
+            )
+            status = 200 if result.get("success") else 500
+            return jsonify(result), status
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-integration/repair-config-template", methods=["POST"])
+    def codex_integration_repair_config_template():
+        """
+        Reset config.toml to a conservative template state while preserving auth.json.
+
+        This fixes common startup crashes/stalls caused by stale MCP, hooks, provider
+        commands, WSL paths in native Windows mode, duplicate TOML tables, or legacy
+        profile/provider settings.
+        """
+        try:
+            body = request.get_json(silent=True) or {}
+            denied = _require_codex_mutation_confirmation(body, "repair_codex_config_template")
+            if denied:
+                return denied
+            mgr = CodexConfigManager()
+            result = repair_codex_config_template(
+                mgr,
+                goals_enabled=_config_goals_enabled(config),
+                restart_windows=_coerce_bool(body.get("restart_windows"), False),
+            )
+            status = 200 if result.get("success") else 500
+            return jsonify(result), status
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -2339,7 +3443,7 @@ def create_app() -> Flask:
 
 
 def _selected_provider_models_to_amr_candidates(provider: Dict[str, Any], priority: int) -> list[Dict[str, Any]]:
-    if not provider.get("enabled", True):
+    if not provider_allows_local_routing(provider):
         return []
     provider_id = str(provider.get("id") or "").strip()
     candidates: list[Dict[str, Any]] = []
@@ -2809,6 +3913,7 @@ def _run_sync_with_backup(
     path_config: Dict[str, str] | None = None,
     target_provider: str = "",
     target_model: str = "",
+    backup_before: bool = False,
 ) -> tuple[Dict, int]:
     path_config = path_config or {}
     preview = full_sync(
@@ -2821,11 +3926,14 @@ def _run_sync_with_backup(
         payload = _sync_stats_to_dict(preview)
         payload["backup_path"] = ""
         payload["skipped_backup"] = True
+        payload["backup_before_sync"] = bool(backup_before)
         return payload, 200
 
-    pre_backup = backup_mgr.do_full_backup(label="pre_sync")
-    if not pre_backup.get("success"):
-        return {"error": f"同步前数据库备份失败: {pre_backup.get('error', 'unknown')}"}, 500
+    pre_backup = {}
+    if backup_before:
+        pre_backup = backup_mgr.do_full_backup(label="pre_sync")
+        if not pre_backup.get("success"):
+            return {"error": f"同步前数据库备份失败: {pre_backup.get('error', 'unknown')}"}, 500
 
     stats = full_sync(
         target_provider=target_provider,
@@ -2835,6 +3943,8 @@ def _run_sync_with_backup(
     )
     payload = _sync_stats_to_dict(stats)
     payload["backup_path"] = pre_backup.get("path", "")
+    payload["skipped_backup"] = not bool(backup_before)
+    payload["backup_before_sync"] = bool(backup_before)
     return payload, 200
 
 
@@ -3047,15 +4157,22 @@ def _resolve_current_context_window(config: Config, provider_registry: ProviderR
     try:
         codex_home = resolve_codex_home()
         config_data = _load_config_toml(str(codex_home / "config.toml"))
-        model = str(config_data.get("model") or "")
-        provider = str(config_data.get("model_provider") or "")
+        mgr = CodexConfigManager(codex_home=str(codex_home))
+        auth_data = mgr.read_auth()
+        effective = _effective_codex_settings(config_data, auth_data)
+        model = str(effective.get("model") or "")
+        provider = str(effective.get("model_provider") or "")
         result["current_model"] = model
         result["current_model_provider"] = provider
+        result["current_model_provider_source"] = effective.get("model_provider_source", "")
         if not model:
             return result
 
         provider_registry.store_path = Path(config.get("provider_store_path", "") or DEFAULT_STORE_PATH).expanduser()
-        preview = provider_registry.preview_catalog(focus_provider_id="")
+        preview = provider_registry.preview_catalog(
+            focus_provider_id="",
+            extra_providers=_official_provider_extra(mgr),
+        )
         for entry in preview.get("entries", []):
             if model in {entry.get("codex_model_id"), entry.get("upstream_model_id")}:
                 result["current_context_window"] = int(entry.get("context_window") or 0)
