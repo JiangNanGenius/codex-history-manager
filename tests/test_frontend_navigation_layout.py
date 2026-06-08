@@ -29,19 +29,38 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert html.count("data-settings-step-panel=") == 8
     assert "setting-auto-approval-system-prompt" in html
     assert "settings-wizard-checklist" in html
+    assert "settings-wizard-advisor" in html
+    assert "settings-provider-wizard-summary" in html
+    assert "settings-routing-wizard-summary" in html
+    assert "settings-alerts-wizard-summary" in html
+    assert "settings-finish-wizard-summary" in html
     assert "fillSettingsWizardDefaults" in html
     assert "setting-close-button-action" in html
     assert "setting-desktop-monitor-enabled" in html
+    assert "setting-desktop-monitor-opacity" in html
+    assert "desktop_monitor_opacity" in js
+    assert "syncMonitorOpacityLabel" in js
     assert "setting-update-check-enabled" in html
     assert "setting-update-include-prerelease" in html
+    assert "setting-plugin-unlock-enabled" in html
+    assert 'href="/favicon.ico"' in html
+    assert 'src="/app-icon.png"' in html
+    assert "app-logo-shell" in html
+    assert "startupElevationHelp" in html
     assert "checkForUpdates" in html
     assert "downloadLatestUpdate" in js
     assert "/api/updates/check" in js
     assert "/api/updates/download" in js
+    assert "plugin_unlock_enabled" in js
+    assert "renderStartupPreviewResult" in js
     assert "https://github.com/JiangNanGenius/Codex-Enhance-Manager" in html
     assert "restoreAutoApprovalPromptDefault" in js
+    assert "buildSettingsWizardState" in js
+    assert "renderSettingsWizardAdvisor" in js
+    assert "renderSettingsWizardStepSummaries" in js
     assert "updateSettingsWizardChecklist" in js
     assert "const SETTINGS_WIZARD_STEP_COUNT = 8;" in js
+    assert "wizardAdvisorNextKicker" in (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
 
 
 def test_monitor_context_menu_exposes_desktop_actions():
@@ -91,3 +110,30 @@ def test_media_route_guidance_ui_is_wired():
     assert "mediaTextProviderNeedsFallback" in i18n
     assert "mediaNativeResponsesNeedsMediaProxy" in i18n
     assert "mediaConfigureMediaFallbackAction" in i18n
+
+
+def test_official_login_start_keeps_safe_enhancement_copy_wired():
+    js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+    assert "startOfficialCodex" in js
+    assert "renderCodexEnhancementModeCard" in js
+    assert "/api/codex/start" in js
+    assert "official_mode: true" in js
+    assert "startOfficialCodex" in i18n
+    assert "Token、上下文和会话增强" in i18n
+    assert "Token, context, and session enhancements stay on" in i18n
+    assert "officialEnhancementModeDesc" in i18n
+
+
+def test_readme_omits_external_project_body_references():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_zh = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    for content in (readme, readme_zh):
+        assert "Code++" not in content
+        assert "Codex++" not in content
+        assert "CodexPlusPlus" not in content
+        assert "cc-switch" not in content
+        assert "真实修改测试必须由用户手动执行" not in content
+        assert "Real mutation testing must be performed manually by the user" not in content

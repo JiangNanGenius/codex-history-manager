@@ -61,6 +61,9 @@ class StartupManagerTest(unittest.TestCase):
             preview = manager.preview(settings)
             create_action = next(action for action in preview["actions"] if action["kind"] == "scheduled_task")
 
+            self.assertEqual(preview["elevation_method"], "task_scheduler_highest")
+            self.assertFalse(preview["startup_folder_supports_elevation"])
+            self.assertTrue(any("run level HIGHEST" in item for item in preview["notes"]))
             self.assertEqual(create_action["action"], "create")
             self.assertIn("/SC", create_action["argv"])
             self.assertIn("ONLOGON", create_action["argv"])

@@ -23,6 +23,7 @@ class MainEntrypointTest(unittest.TestCase):
             with patch.object(main, "_monitor_auto_show_enabled", return_value=True):
                 _, monitor = main._create_desktop_windows(main.DesktopApi())
 
+            self.assertIsInstance(monitor, main.NativeTokenMonitor)
             self.assertFalse(monitor.transparent)
             self.assertEqual(monitor.background_color, main.WEBVIEW_MONITOR_BACKGROUND)
             self.assertEqual(main.WEBVIEW_MONITOR_BACKGROUND, "#111827")
@@ -36,6 +37,7 @@ class MainEntrypointTest(unittest.TestCase):
             with patch.object(main, "_monitor_auto_show_enabled", return_value=False):
                 _, monitor = main._create_desktop_windows(main.DesktopApi())
 
+            self.assertIsInstance(monitor, main.NativeTokenMonitor)
             self.assertTrue(monitor.hidden)
         finally:
             webview.windows[:] = original_windows
@@ -46,8 +48,20 @@ class MainEntrypointTest(unittest.TestCase):
             with patch.object(main, "_default_monitor_position", return_value=(1440, 28)):
                 _, monitor = main._create_desktop_windows(main.DesktopApi())
 
+            self.assertIsInstance(monitor, main.NativeTokenMonitor)
             self.assertGreaterEqual(monitor.initial_x, 1440)
             self.assertEqual(monitor.initial_y, 28)
+        finally:
+            webview.windows[:] = original_windows
+
+    def test_desktop_window_creation_uses_single_webview_window(self):
+        original_windows = list(webview.windows)
+        try:
+            main_window, monitor = main._create_desktop_windows(main.DesktopApi())
+
+            self.assertIn(main_window, webview.windows)
+            self.assertIsInstance(monitor, main.NativeTokenMonitor)
+            self.assertEqual(len(webview.windows), len(original_windows) + 1)
         finally:
             webview.windows[:] = original_windows
 
@@ -90,6 +104,24 @@ class MainEntrypointTest(unittest.TestCase):
             self.assertEqual(fake.size, (main.MONITOR_WINDOW_WIDTH, main.MONITOR_WINDOW_EXPANDED_HEIGHT))
         finally:
             main.monitor_window = original
+
+    def test_native_window_handle_reads_winforms_handle(self):
+        class FakeHandle:
+            def ToInt64(self):
+                return 123456
+
+        class FakeNative:
+            Handle = FakeHandle()
+
+        class FakeWindow:
+            native = FakeNative()
+
+        self.assertEqual(main._native_window_handle(FakeWindow()), 123456)
+
+    def test_monitor_number_formatter_compacts_large_totals(self):
+        self.assertEqual(main._format_monitor_number(20_477_763_192, compact=True), "20.48B")
+        self.assertEqual(main._format_monitor_number(477_930_123, compact=True), "477.93M")
+        self.assertEqual(main._format_monitor_number(166_995), "166,995")
 
     def test_show_monitor_recreates_missing_window_when_desktop_api_exists(self):
         class FakeWindow:
@@ -165,7 +197,7 @@ class MainEntrypointTest(unittest.TestCase):
         with patch.object(main, "_configured_close_action", return_value="tray"):
             self.assertEqual(main._ask_close_action(None), "tray")
 
-    def test_webview_started_schedules_default_monitor(self):
+    def test_webview_started_schedules_lazy_default_monitor(self):
         calls = []
 
         class FakeTimer:
@@ -175,15 +207,34 @@ class MainEntrypointTest(unittest.TestCase):
                 self.daemon = False
 
             def start(self):
-                calls.append(("timer", self.delay, self.daemon))
-                self.callback()
+                calls.append(("timer", self.delay, self.callback, self.daemon))
 
         with patch.object(main, "_monitor_auto_show_enabled", return_value=True), \
-                patch.object(main, "_show_monitor", side_effect=lambda: calls.append("show")), \
                 patch.object(main.threading, "Timer", FakeTimer):
             self.assertTrue(main._on_webview_started())
 
-        self.assertEqual(calls, [("timer", 0.45, True), "show"])
+        self.assertEqual(calls, [("timer", 2.5, main._show_monitor, True)])
+
+    def test_start_codex_from_desktop_returns_immediately(self):
+        calls = []
+
+        class FakeThread:
+            def __init__(self, target, name, daemon):
+                self.target = target
+                self.name = name
+                self.daemon = daemon
+
+            def start(self):
+                calls.append((self.name, self.daemon))
+
+        with patch.object(main.threading, "Thread", FakeThread), \
+                patch.object(main, "_local_post_json") as post_json:
+            result = main._start_codex_from_desktop()
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["message"], "正在后台启动 Codex")
+        self.assertEqual(calls, [("codex-start-request", True)])
+        post_json.assert_not_called()
 
     def test_webview_started_respects_disabled_monitor_setting(self):
         with patch.object(main, "_monitor_auto_show_enabled", return_value=False), \

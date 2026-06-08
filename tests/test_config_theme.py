@@ -65,10 +65,25 @@ class ConfigThemeTest(unittest.TestCase):
         cfg._data = {}
         cfg._normalize_storage_defaults()
         self.assertTrue(cfg._data["desktop_monitor_enabled"])
+        self.assertEqual(cfg._data["desktop_monitor_opacity"], 88)
 
         cfg._data["desktop_monitor_enabled"] = "false"
         cfg._normalize_storage_defaults()
         self.assertFalse(cfg._data["desktop_monitor_enabled"])
+
+    def test_desktop_monitor_opacity_accepts_percent_or_fraction(self):
+        cfg = Config.__new__(Config)
+        cfg._data = {"desktop_monitor_opacity": "0.72"}
+        cfg._normalize_storage_defaults()
+        self.assertEqual(cfg._data["desktop_monitor_opacity"], 72)
+
+        cfg._data["desktop_monitor_opacity"] = 120
+        cfg._normalize_storage_defaults()
+        self.assertEqual(cfg._data["desktop_monitor_opacity"], 100)
+
+        cfg._data["desktop_monitor_opacity"] = 10
+        cfg._normalize_storage_defaults()
+        self.assertEqual(cfg._data["desktop_monitor_opacity"], 35)
 
     def test_update_settings_default_and_string_normalization(self):
         cfg = Config.__new__(Config)
@@ -76,12 +91,15 @@ class ConfigThemeTest(unittest.TestCase):
         cfg._normalize_storage_defaults()
         self.assertTrue(cfg._data["update_check_enabled"])
         self.assertFalse(cfg._data["update_include_prerelease"])
+        self.assertFalse(cfg._data["plugin_unlock_enabled"])
 
         cfg._data["update_check_enabled"] = "no"
         cfg._data["update_include_prerelease"] = "yes"
+        cfg._data["plugin_unlock_enabled"] = "yes"
         cfg._normalize_storage_defaults()
         self.assertFalse(cfg._data["update_check_enabled"])
         self.assertTrue(cfg._data["update_include_prerelease"])
+        self.assertTrue(cfg._data["plugin_unlock_enabled"])
 
 
 if __name__ == "__main__":

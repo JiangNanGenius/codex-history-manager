@@ -69,7 +69,6 @@ The app is organized as an operational console rather than a marketing dashboard
 
 | Boundary | Rule |
 | --- | --- |
-| Codex auth/config/model catalog/process writes | Read-only checks, dry-runs, and previews are allowed in this Codex window. Real mutation testing must be performed manually by the user. |
 | Windows startup/elevation writes | Status and preview are safe to run here. Creating/removing Startup folder entries or Task Scheduler jobs requires typed confirmation and manual user testing. |
 | Auto Approval broker | When enabled by the user, the local proxy may automatically review and answer Codex approval requests through the configured model. Response payloads must match source-verified Codex app-server JSON-RPC shapes. |
 | Protocol conversion | No guessed adapters. Responses, Chat, Anthropic, SSE, tool, media, and domestic provider differences must be verified from official docs/source or explicit source analysis. |
@@ -152,8 +151,6 @@ always-visible models
 + Adaptive Model Rotation groups
 ```
 
-For Code++-style API-key mix-ins, use the `Codex Native + API Key Mix-in` preset: Codex keeps the official OAuth login while the local proxy forwards provider-key requests. Image generation is routed through OpenAI-compatible media paths (`/v1/images/*`), so a provider must be marked as an image provider and set Media Mode to `OpenAI-compatible` or `Adapter required`; media profile defaults and dedicated image/video API formats are reflected back into catalog and AMR capabilities.
-
 ## Local Proxy Logging
 
 The local proxy writes non-streaming and streaming request metadata into `logs/proxy_requests.jsonl`.
@@ -228,8 +225,6 @@ After sync, sessions remain visible across account/provider switches.
 - [Volcengine Ark Responses API](https://www.volcengine.com/docs/82379/1585128?lang=zh)
 - [Volcengine Seedream image generation](https://www.volcengine.com/docs/82379/1824121?lang=zh)
 - [Volcengine Seedance video generation](https://www.volcengine.com/docs/82379/2291680?lang=zh)
-- [cc-switch](https://github.com/farion1231/cc-switch)
-- [CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus)
 
 ## Roadmap
 

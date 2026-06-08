@@ -69,6 +69,7 @@ function showPreviousSettingsWizardStep() {
 }
 
 function updateSettingsWizardProgress() {
+    const state = buildSettingsWizardState(readSettingsWizardDraft());
     const progress = document.getElementById('settings-wizard-progress');
     if (progress) {
         progress.textContent = t('settingsWizardProgress', {
@@ -78,8 +79,15 @@ function updateSettingsWizardProgress() {
     }
     document.querySelectorAll('[data-settings-step-button]').forEach(button => {
         const index = Number(button.dataset.settingsStepButton);
+        const step = state.steps[index] || {};
         button.classList.toggle('complete', Number.isFinite(index) && index < settingsWizardStep);
+        button.classList.toggle('ready', step.state === 'ready');
+        button.classList.toggle('warn', step.state === 'warn');
+        button.classList.toggle('idle', step.state === 'idle');
+        button.title = step.detail || '';
     });
+    renderSettingsWizardAdvisor(state);
+    renderSettingsWizardStepSummaries(state);
 }
 
 function readSettingsWizardDraft() {
@@ -92,6 +100,126 @@ function readSettingsWizardDraft() {
         request_log_path: document.getElementById('setting-request-log-path')?.value || latestSettings.request_log_path || '',
         close_button_action: document.getElementById('setting-close-button-action')?.value || latestSettings.close_button_action || 'ask',
         desktop_monitor_enabled: document.getElementById('setting-desktop-monitor-enabled')?.checked ?? latestSettings.desktop_monitor_enabled ?? true,
+        desktop_monitor_opacity: parseInt(document.getElementById('setting-desktop-monitor-opacity')?.value, 10) || latestSettings.desktop_monitor_opacity || 88,
+    };
+}
+
+function syncMonitorOpacityLabel() {
+    const input = document.getElementById('setting-desktop-monitor-opacity');
+    const label = document.getElementById('setting-desktop-monitor-opacity-label');
+    if (!input || !label) return;
+    const value = Math.min(Math.max(parseInt(input.value, 10) || 88, 35), 100);
+    input.value = value;
+    label.textContent = `${value}%`;
+}
+
+function settingsWizardProviderMetrics() {
+    const providers = (typeof providerState !== 'undefined' && Array.isArray(providerState.providers))
+        ? providerState.providers
+        : [];
+    const enabledProviders = providers.filter(provider => provider && provider.enabled !== false);
+    const selectedModels = providers.reduce((sum, provider) => (
+        sum + (provider.models || []).filter(model => model && model.selected && model.enabled !== false).length
+    ), 0);
+    const mediaFallbacks = providers.filter(provider => {
+        const profile = provider.media_profile || {};
+        return profile.default_image_provider || profile.default_video_provider;
+    }).length;
+    const nativeApprovalModels = providers.reduce((sum, provider) => (
+        sum + (provider.models || []).filter(model => model && model.native_approval === true).length
+    ), 0);
+    const focusProviderId = (typeof providerState !== 'undefined' && providerState.focus_provider_id)
+        ? String(providerState.focus_provider_id || '')
+        : '';
+    const focusedProvider = providers.find(provider => provider.id === focusProviderId) || null;
+    return {
+        providers,
+        enabledProviders,
+        selectedModels,
+        mediaFallbacks,
+        nativeApprovalModels,
+        focusProviderId,
+        focusedProvider,
+    };
+}
+
+function buildSettingsWizardState(draft = readSettingsWizardDraft()) {
+    const metrics = settingsWizardProviderMetrics();
+    const pathReady = Boolean(draft.db_path && draft.sessions_dir);
+    const providerReady = metrics.enabledProviders.length > 0 && metrics.selectedModels > 0;
+    const storageReady = Boolean(draft.backup_dir && draft.provider_store_path && draft.request_log_path);
+    const routeReady = providerReady && (metrics.focusProviderId || metrics.enabledProviders.length === 1);
+    const alertsReady = Boolean(draft.request_log_path);
+    const startupReady = Boolean(draft.close_button_action || 'ask');
+    const cleanupReady = Boolean(draft.exports_dir || draft.backup_dir);
+    const mustHaveReady = pathReady && providerReady && storageReady;
+    const steps = [
+        {
+            index: 0,
+            state: pathReady ? 'ready' : 'warn',
+            label: t('settingsWizardDetect'),
+            detail: pathReady ? t('wizardStepDetectReady') : t('wizardStepDetectMissing'),
+        },
+        {
+            index: 1,
+            state: storageReady ? 'ready' : 'warn',
+            label: t('settingsWizardBasics'),
+            detail: storageReady ? t('wizardStepBasicsReady') : t('wizardStepBasicsMissing'),
+        },
+        {
+            index: 2,
+            state: providerReady ? 'ready' : 'warn',
+            label: t('settingsWizardProviders'),
+            detail: providerReady
+                ? t('wizardStepProvidersReady', { providers: metrics.enabledProviders.length, models: metrics.selectedModels })
+                : t('wizardStepProvidersMissing'),
+        },
+        {
+            index: 3,
+            state: routeReady ? 'ready' : providerReady ? 'idle' : 'warn',
+            label: t('settingsWizardRouting'),
+            detail: routeReady
+                ? t('wizardStepRoutingReady')
+                : providerReady ? t('wizardStepRoutingOptional') : t('wizardStepRoutingMissing'),
+        },
+        {
+            index: 4,
+            state: alertsReady ? 'ready' : 'idle',
+            label: t('settingsWizardCost'),
+            detail: alertsReady ? t('wizardStepAlertsReady') : t('wizardStepAlertsOptional'),
+        },
+        {
+            index: 5,
+            state: startupReady ? 'ready' : 'idle',
+            label: t('settingsWizardStartup'),
+            detail: t('wizardStepStartupReady'),
+        },
+        {
+            index: 6,
+            state: cleanupReady ? 'ready' : 'idle',
+            label: t('settingsWizardCleanup'),
+            detail: t('wizardStepCleanupReady'),
+        },
+        {
+            index: 7,
+            state: mustHaveReady ? 'ready' : 'warn',
+            label: t('settingsWizardFinishStep'),
+            detail: mustHaveReady ? t('wizardStepFinishReady') : t('wizardStepFinishMissing'),
+        },
+    ];
+    const recommended = steps.find(step => step.state === 'warn') || steps[settingsWizardStep] || steps[0];
+    return {
+        metrics,
+        steps,
+        recommended,
+        pathReady,
+        providerReady,
+        storageReady,
+        routeReady,
+        alertsReady,
+        startupReady,
+        cleanupReady,
+        mustHaveReady,
     };
 }
 
@@ -116,44 +244,32 @@ function wizardCheckItem(state, label, detail) {
 function updateSettingsWizardChecklist(draft = readSettingsWizardDraft()) {
     const root = document.getElementById('settings-wizard-checklist');
     if (!root) return;
-    const providers = (typeof providerState !== 'undefined' && Array.isArray(providerState.providers))
-        ? providerState.providers
-        : [];
-    const enabledProviders = providers.filter(provider => provider && provider.enabled !== false);
-    const selectedModels = providers.reduce((sum, provider) => (
-        sum + (provider.models || []).filter(model => model && model.selected && model.enabled !== false).length
-    ), 0);
-    const mediaFallbacks = providers.filter(provider => {
-        const profile = provider.media_profile || {};
-        return profile.default_image_provider || profile.default_video_provider;
-    }).length;
-    const pathReady = Boolean(draft.db_path && draft.sessions_dir);
-    const providerReady = enabledProviders.length > 0 && selectedModels > 0;
-    const storageReady = Boolean(draft.backup_dir && draft.provider_store_path && draft.request_log_path);
+    const state = buildSettingsWizardState(draft);
+    const metrics = state.metrics;
     const closeAction = draft.close_button_action || 'ask';
 
     root.innerHTML = [
         wizardCheckItem(
-            pathReady ? 'ready' : 'warn',
+            state.pathReady ? 'ready' : 'warn',
             t('wizardCheckPaths'),
-            pathReady ? t('wizardCheckPathsReady') : t('wizardCheckPathsMissing')
+            state.pathReady ? t('wizardCheckPathsReady') : t('wizardCheckPathsMissing')
         ),
         wizardCheckItem(
-            providerReady ? 'ready' : 'warn',
+            state.providerReady ? 'ready' : 'warn',
             t('wizardCheckProviders'),
-            providerReady
-                ? t('wizardCheckProvidersReady', { providers: enabledProviders.length, models: selectedModels })
+            state.providerReady
+                ? t('wizardCheckProvidersReady', { providers: metrics.enabledProviders.length, models: metrics.selectedModels })
                 : t('wizardCheckProvidersMissing')
         ),
         wizardCheckItem(
-            mediaFallbacks > 0 ? 'ready' : 'idle',
+            metrics.mediaFallbacks > 0 ? 'ready' : 'idle',
             t('wizardCheckMedia'),
-            mediaFallbacks > 0 ? t('wizardCheckMediaReady', { count: mediaFallbacks }) : t('wizardCheckMediaOptional')
+            metrics.mediaFallbacks > 0 ? t('wizardCheckMediaReady', { count: metrics.mediaFallbacks }) : t('wizardCheckMediaOptional')
         ),
         wizardCheckItem(
-            storageReady ? 'ready' : 'warn',
+            state.storageReady ? 'ready' : 'warn',
             t('wizardCheckDefaults'),
-            storageReady ? t('wizardCheckDefaultsReady') : t('wizardCheckDefaultsMissing')
+            state.storageReady ? t('wizardCheckDefaultsReady') : t('wizardCheckDefaultsMissing')
         ),
         wizardCheckItem(
             'ready',
@@ -161,6 +277,108 @@ function updateSettingsWizardChecklist(draft = readSettingsWizardDraft()) {
             t('closeButtonActionCurrent', { action: t(`closeAction_${closeAction}`) })
         ),
     ].join('');
+    renderSettingsWizardAdvisor(state);
+    renderSettingsWizardStepSummaries(state);
+    updateSettingsWizardProgress();
+}
+
+function renderSettingsWizardAdvisor(state = buildSettingsWizardState(readSettingsWizardDraft())) {
+    const root = document.getElementById('settings-wizard-advisor');
+    if (!root) return;
+    const target = state.recommended || state.steps[0];
+    const allReady = state.mustHaveReady;
+    root.innerHTML = `
+        <div class="wizard-advisor ${allReady ? 'ready' : 'warn'}">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-[0.16em]">${escapeHtml(allReady ? t('wizardAdvisorReadyKicker') : t('wizardAdvisorNextKicker'))}</p>
+                <h3 class="mt-1 text-lg font-bold">${escapeHtml(allReady ? t('wizardAdvisorReadyTitle') : target.label)}</h3>
+                <p class="mt-1 text-sm opacity-80">${escapeHtml(allReady ? t('wizardAdvisorReadyDesc') : target.detail)}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button type="button" onclick="showSettingsWizardStep(${target.index})" class="btn btn-secondary text-xs">${escapeHtml(allReady ? t('wizardReviewStep') : t('wizardGoToStep'))}</button>
+                <button type="button" onclick="fillSettingsWizardDefaults()" class="btn btn-primary text-xs">${escapeHtml(t('wizardFillDefaults'))}</button>
+            </div>
+        </div>
+    `;
+}
+
+function wizardSummaryCard(title, value, detail, tone = 'idle') {
+    return `
+        <div class="wizard-summary-card ${tone}">
+            <div class="text-xs uppercase tracking-[0.14em] opacity-70">${escapeHtml(title)}</div>
+            <div class="mt-2 text-2xl font-bold">${escapeHtml(String(value))}</div>
+            <div class="mt-1 text-xs opacity-75">${escapeHtml(detail)}</div>
+        </div>
+    `;
+}
+
+function wizardGuideCard(title, detail, actionLabel = '', action = '') {
+    return `
+        <div class="wizard-guide-card">
+            <div class="font-semibold text-dark-100">${escapeHtml(title)}</div>
+            <p class="mt-1 text-sm text-dark-400">${escapeHtml(detail)}</p>
+            ${actionLabel && action ? `<button type="button" onclick="${escapeHtml(action)}" class="btn btn-secondary text-xs mt-3">${escapeHtml(actionLabel)}</button>` : ''}
+        </div>
+    `;
+}
+
+function renderSettingsWizardStepSummaries(state = buildSettingsWizardState(readSettingsWizardDraft())) {
+    const metrics = state.metrics;
+    const providerRoot = document.getElementById('settings-provider-wizard-summary');
+    if (providerRoot) {
+        providerRoot.innerHTML = `
+            <div class="wizard-summary-grid">
+                ${wizardSummaryCard(t('wizardMetricProviders'), metrics.enabledProviders.length, t('wizardMetricProvidersDesc'), metrics.enabledProviders.length ? 'ready' : 'warn')}
+                ${wizardSummaryCard(t('wizardMetricModels'), metrics.selectedModels, t('wizardMetricModelsDesc'), metrics.selectedModels ? 'ready' : 'warn')}
+                ${wizardSummaryCard(t('wizardMetricNativeApproval'), metrics.nativeApprovalModels, t('wizardMetricNativeApprovalDesc'), metrics.nativeApprovalModels ? 'ready' : 'idle')}
+            </div>
+            <div class="wizard-guide-grid mt-4">
+                ${wizardGuideCard(t('wizardProviderActionPreset'), t('wizardProviderActionPresetDesc'), t('wizardProviderGuidePrimary'), "navigateTo('quick-setup')")}
+                ${wizardGuideCard(t('wizardProviderActionEdit'), t('wizardProviderActionEditDesc'), t('wizardProviderGuideSecondary'), "navigateTo('providers')")}
+            </div>
+        `;
+    }
+
+    const routingRoot = document.getElementById('settings-routing-wizard-summary');
+    if (routingRoot) {
+        const focusName = metrics.focusedProvider
+            ? (metrics.focusedProvider.display_name || metrics.focusedProvider.id)
+            : (metrics.enabledProviders.length === 1 ? (metrics.enabledProviders[0].display_name || metrics.enabledProviders[0].id) : t('notSelected'));
+        routingRoot.innerHTML = `
+            <div class="wizard-summary-grid">
+                ${wizardSummaryCard(t('wizardMetricFocusedProvider'), focusName, t('wizardMetricFocusedProviderDesc'), state.routeReady ? 'ready' : 'idle')}
+                ${wizardSummaryCard(t('wizardMetricMediaFallback'), metrics.mediaFallbacks, t('wizardMetricMediaFallbackDesc'), metrics.mediaFallbacks ? 'ready' : 'idle')}
+                ${wizardSummaryCard(t('wizardMetricRouteReady'), state.routeReady ? t('yes') : t('no'), state.routeReady ? t('wizardRouteReadyDesc') : t('wizardRouteNeedsProviderDesc'), state.routeReady ? 'ready' : 'warn')}
+            </div>
+            <div class="wizard-guide-grid mt-4">
+                ${wizardGuideCard(t('wizardRoutingActionFocus'), t('wizardRoutingActionFocusDesc'), t('wizardProviderGuideSecondary'), "navigateTo('providers')")}
+                ${wizardGuideCard(t('wizardRoutingActionMedia'), t('wizardRoutingActionMediaDesc'), t('wizardProviderGuideSecondary'), "navigateTo('providers')")}
+            </div>
+        `;
+    }
+
+    const alertsRoot = document.getElementById('settings-alerts-wizard-summary');
+    if (alertsRoot) {
+        alertsRoot.innerHTML = `
+            <div class="wizard-summary-grid">
+                ${wizardSummaryCard(t('wizardMetricTokenUsage'), state.alertsReady ? t('enabled') : t('wizardOptional'), t('wizardMetricTokenUsageDesc'), state.alertsReady ? 'ready' : 'idle')}
+                ${wizardSummaryCard(t('wizardMetricQuotaAlert'), t('wizardOptional'), t('wizardMetricQuotaAlertDesc'), 'idle')}
+                ${wizardSummaryCard(t('wizardMetricBalanceAlert'), t('wizardOptional'), t('wizardMetricBalanceAlertDesc'), 'idle')}
+            </div>
+        `;
+    }
+
+    const finishRoot = document.getElementById('settings-finish-wizard-summary');
+    if (finishRoot) {
+        const readyCount = state.steps.filter(step => step.state === 'ready').length;
+        finishRoot.innerHTML = `
+            <div class="wizard-summary-grid">
+                ${wizardSummaryCard(t('wizardMetricReadySteps'), `${readyCount}/${SETTINGS_WIZARD_STEP_COUNT}`, t('wizardMetricReadyStepsDesc'), state.mustHaveReady ? 'ready' : 'warn')}
+                ${wizardSummaryCard(t('wizardMetricRequired'), state.mustHaveReady ? t('wizardReady') : t('wizardNeedsInput'), state.mustHaveReady ? t('wizardRequiredReadyDesc') : t('wizardRequiredMissingDesc'), state.mustHaveReady ? 'ready' : 'warn')}
+                ${wizardSummaryCard(t('wizardMetricLaterEdits'), t('enabled'), t('wizardMetricLaterEditsDesc'), 'ready')}
+            </div>
+        `;
+    }
 }
 
 function fillSettingsWizardDefaults() {
@@ -239,6 +457,7 @@ function populateSettingsForm(data) {
         'setting-request-log-retention-days': 'request_log_retention_days',
         'setting-request-log-max-mb': 'request_log_max_mb',
         'setting-close-button-action': 'close_button_action',
+        'setting-desktop-monitor-opacity': 'desktop_monitor_opacity',
         'setting-proxy-upstream-timeout': 'proxy_upstream_timeout_seconds',
         'setting-proxy-retry-attempts': 'proxy_retry_attempts',
         'setting-proxy-retry-backoff-ms': 'proxy_retry_backoff_ms',
@@ -259,6 +478,7 @@ function populateSettingsForm(data) {
         const el = document.getElementById(elId);
         if (el && data[key] !== undefined) el.value = data[key];
     }
+    syncMonitorOpacityLabel();
 
     defaultAutoApprovalSystemPrompt = data.auto_approval_system_prompt_default || data.auto_approval_system_prompt || '';
     const approvalPrompt = document.getElementById('setting-auto-approval-system-prompt');
@@ -275,6 +495,7 @@ function populateSettingsForm(data) {
         'setting-desktop-monitor-enabled': 'desktop_monitor_enabled',
         'setting-update-check-enabled': 'update_check_enabled',
         'setting-update-include-prerelease': 'update_include_prerelease',
+        'setting-plugin-unlock-enabled': 'plugin_unlock_enabled',
     };
     for (const [elId, key] of Object.entries(checkboxFields)) {
         const el = document.getElementById(elId);
@@ -437,7 +658,7 @@ async function previewStartupSettings() {
             method: 'POST',
             body: JSON.stringify(readStartupSettingsFromForm()),
         });
-        resultEl.textContent = JSON.stringify(data, null, 2);
+        renderStartupPreviewResult(data);
         renderStartupStatus({
             supported: data.supported,
             configured: {
@@ -618,6 +839,10 @@ function renderStartupStatus(data) {
 function renderStartupMutationResult(result) {
     const resultEl = document.getElementById('startup-preview-result');
     if (!resultEl) return;
+    if (result && result.preview) {
+        renderStartupPreviewResult(result.preview, result);
+        return;
+    }
     resultEl.textContent = JSON.stringify(result, null, 2);
 }
 
@@ -632,6 +857,44 @@ function formatStartupTargetSummary(diagnostics = {}, active = false) {
         return t('targetExeNeedsReview', { name, exists });
     }
     return t('targetNotPackagedExe', { name, exists });
+}
+
+function describeStartupAction(action = {}) {
+    const kind = action.kind || '';
+    const operation = action.action || '';
+    if (kind === 'startup_entry' && operation === 'write_cmd') return t('startupActionWriteFile');
+    if (kind === 'startup_entry' && operation === 'remove') return t('startupActionRemoveFile');
+    if (kind === 'scheduled_task' && operation === 'create') return t('startupActionCreateTask');
+    if (kind === 'scheduled_task' && operation === 'delete') return t('startupActionDeleteTask');
+    return t('startupActionReview');
+}
+
+function renderStartupPreviewResult(data, mutation = null) {
+    const resultEl = document.getElementById('startup-preview-result');
+    if (!resultEl) return;
+    const mode = data.mode || 'disabled';
+    const target = data.target || t('targetNotUsed');
+    const privilege = data.elevation_method === 'task_scheduler_highest'
+        ? t('startupPrivilegeTask')
+        : t('startupPrivilegeNormal');
+    const actions = (data.actions || []).map(describeStartupAction);
+    const notes = data.elevation_method === 'task_scheduler_highest'
+        ? [t('startupNoteTaskScheduler'), t('startupNoteAdminConfirm')]
+        : mode === 'startup_folder' ? [t('startupNoteFolderNoAdmin')] : [];
+    const successLine = mutation && mutation.success !== undefined
+        ? `<div class="${mutation.success ? 'text-emerald-300' : 'text-red-300'}">${escapeHtml(mutation.success ? t('startupMutationSuccess') : t('startupMutationFailed'))}</div>`
+        : '';
+
+    resultEl.innerHTML = `
+        <div class="space-y-2 text-sm whitespace-normal">
+            ${successLine}
+            <div><span class="text-dark-500">${escapeHtml(t('startupPreviewMode'))}</span> ${escapeHtml(t(`startupMode_${mode}`) || mode)}</div>
+            <div><span class="text-dark-500">${escapeHtml(t('startupPreviewPrivilege'))}</span> ${escapeHtml(privilege)}</div>
+            <div><span class="text-dark-500">${escapeHtml(t('startupPreviewTarget'))}</span> <span class="font-mono">${escapeHtml(target)}</span></div>
+            <div><span class="text-dark-500">${escapeHtml(t('startupPreviewActions'))}</span> ${escapeHtml(actions.length ? actions.join(' · ') : t('noChanges'))}</div>
+            ${notes.length ? `<div class="pt-2 border-t border-dark-800 text-xs text-dark-400">${notes.map(note => escapeHtml(note)).join('<br>')}</div>` : ''}
+        </div>
+    `;
 }
 
 function resolveTheme(data) {
@@ -701,8 +964,10 @@ async function saveSettings() {
         request_log_max_mb: parseFloat(document.getElementById('setting-request-log-max-mb')?.value) || 50,
         close_button_action: document.getElementById('setting-close-button-action')?.value || 'ask',
         desktop_monitor_enabled: document.getElementById('setting-desktop-monitor-enabled')?.checked ?? true,
+        desktop_monitor_opacity: parseInt(document.getElementById('setting-desktop-monitor-opacity')?.value, 10) || 88,
         update_check_enabled: document.getElementById('setting-update-check-enabled')?.checked ?? true,
         update_include_prerelease: document.getElementById('setting-update-include-prerelease')?.checked ?? false,
+        plugin_unlock_enabled: document.getElementById('setting-plugin-unlock-enabled')?.checked || false,
         proxy_upstream_timeout_seconds: parseInt(document.getElementById('setting-proxy-upstream-timeout')?.value, 10) || 120,
         proxy_retry_attempts: parseInt(document.getElementById('setting-proxy-retry-attempts')?.value, 10) || 0,
         proxy_retry_backoff_ms: parseInt(document.getElementById('setting-proxy-retry-backoff-ms')?.value, 10) || 250,

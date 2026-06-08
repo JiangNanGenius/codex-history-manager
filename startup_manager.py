@@ -161,9 +161,10 @@ class StartupManager:
             "Apply/remove requires typed confirmation and should be manually tested outside this Codex session.",
         ]
         if mode == "scheduled_task_highest":
-            notes.append("Scheduled-task mode uses ONLOGON with run level HIGHEST.")
+            notes.append("Administrator startup uses Windows Task Scheduler with run level HIGHEST.")
+            notes.append("Windows may require an administrator confirmation when creating or changing this task.")
         elif mode == "startup_folder":
-            notes.append("Startup-folder mode runs for the current user at logon without elevation.")
+            notes.append("Startup-folder mode runs for the current user at logon and cannot request administrator privileges.")
         if mode != "disabled":
             notes.extend(target_diagnostics.get("warnings", []))
 
@@ -172,6 +173,8 @@ class StartupManager:
             "mode": mode,
             "enabled": mode != "disabled",
             "auto_elevate": normalized["startup_auto_elevate"],
+            "elevation_method": "task_scheduler_highest" if mode == "scheduled_task_highest" else "none",
+            "startup_folder_supports_elevation": False,
             "target": target,
             "arguments": arguments,
             "target_diagnostics": target_diagnostics,

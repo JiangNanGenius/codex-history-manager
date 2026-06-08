@@ -40,6 +40,7 @@ CODEX_PLUS_PLUS_PATH = os.path.expandvars(
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 DETACHED_PROCESS = 0x00000008 if os.name == "nt" else 0
+CREATE_NEW_PROCESS_GROUP = 0x00000200 if os.name == "nt" else 0
 
 
 @dataclass
@@ -225,32 +226,136 @@ def is_codex_running(timeout: int = 3) -> Tuple[bool, List[int]]:
     return len(unique_pids) > 0, unique_pids
 
 
-def kill_codex() -> Tuple[bool, str]:
+def kill_codex(timeout: int = 4) -> Tuple[bool, str]:
     """
     终止 Codex 进程
     返回 (是否成功, 消息)
     """
-    running, pids = is_codex_running(timeout=10)
+    safe_timeout = max(int(timeout or 4), 2)
+    running, pids = is_codex_running(timeout=1)
     if not running:
         return True, "Codex 未在运行"
 
     try:
         import subprocess
+        args = ["taskkill"]
         for pid in pids:
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/F"],
-                capture_output=True,
-                timeout=10,
-                creationflags=CREATE_NO_WINDOW,
-            )
-        time.sleep(1)
+            args.extend(["/PID", str(pid)])
+        args.extend(["/T", "/F"])
+        subprocess.run(
+            args,
+            capture_output=True,
+            timeout=safe_timeout,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        time.sleep(0.4)
         # 验证是否已关闭
-        still_running, _ = is_codex_running(timeout=10)
+        still_running, still_pids = is_codex_running(timeout=1)
         if still_running:
-            return False, f"未能关闭 Codex (PID: {pids})"
+            return False, f"已请求关闭 Codex，但仍检测到进程 (PID: {still_pids})"
         return True, f"已关闭 Codex (PID: {pids})"
     except Exception as e:
         return False, f"关闭 Codex 失败: {e}"
+
+
+def _dedupe_existing_paths(paths: List[str]) -> List[str]:
+    result = []
+    seen = set()
+    for raw in paths:
+        if not raw:
+            continue
+        path = os.path.expandvars(str(raw).strip().strip('"'))
+        key = path.lower()
+        if key in seen or not os.path.exists(path):
+            continue
+        result.append(path)
+        seen.add(key)
+    return result
+
+
+def _windowsapps_codex_gui_candidates() -> List[str]:
+    if os.name != "nt":
+        return []
+    roots = [
+        os.environ.get("ProgramFiles", r"C:\Program Files"),
+        os.environ.get("ProgramW6432", r"C:\Program Files"),
+    ]
+    candidates = []
+    for root in dict.fromkeys(filter(None, roots)):
+        windowsapps = Path(root) / "WindowsApps"
+        try:
+            matches = sorted(
+                windowsapps.glob("OpenAI.Codex_*_x64__*/app/Codex.exe"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+        except Exception:
+            matches = []
+        candidates.extend(str(path) for path in matches)
+    return candidates
+
+
+def _looks_like_codex_gui_launcher(path: str) -> bool:
+    return Path(path).name == "Codex.exe"
+
+
+def codex_launch_candidates(
+    use_codex_plus_plus: bool = False,
+    codex_plus_plus_path: str = "",
+    codex_cli_path: str = "",
+) -> List[str]:
+    """Return visible GUI launchers first, then CLI shims as fallback."""
+    cpp_paths: List[str] = []
+    gui_paths: List[str] = []
+    cli_paths: List[str] = []
+
+    if use_codex_plus_plus:
+        cpp_paths.extend([codex_plus_plus_path, CODEX_PLUS_PLUS_PATH])
+
+    if codex_cli_path:
+        if _looks_like_codex_gui_launcher(codex_cli_path):
+            gui_paths.append(codex_cli_path)
+        else:
+            cli_paths.append(codex_cli_path)
+
+    appdata = os.environ.get("LOCALAPPDATA", "")
+    if appdata:
+        codex_app = os.path.join(appdata, "OpenAI", "Codex")
+        gui_paths.append(os.path.join(codex_app, "Codex.exe"))
+        bin_dir = os.path.join(codex_app, "bin")
+        if os.path.exists(bin_dir):
+            try:
+                for d in sorted(os.listdir(bin_dir), reverse=True):
+                    cli_paths.append(os.path.join(bin_dir, d, "codex.exe"))
+            except Exception:
+                pass
+
+    gui_paths.extend(_windowsapps_codex_gui_candidates())
+
+    env_cli = os.environ.get("CODEX_CLI_PATH", "")
+    if env_cli:
+        cli_paths.append(env_cli)
+
+    which = shutil.which("codex")
+    if which:
+        cli_paths.append(which)
+
+    return _dedupe_existing_paths(cpp_paths + gui_paths + cli_paths)
+
+
+def _launch_codex_path(path: str) -> None:
+    import subprocess
+
+    flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+    suffix = Path(path).suffix.lower()
+    if os.name == "nt" and suffix in {".bat", ".cmd"}:
+        subprocess.Popen(
+            ["cmd.exe", "/c", "start", "", path],
+            creationflags=flags,
+            close_fds=True,
+        )
+        return
+    subprocess.Popen([path], creationflags=flags, close_fds=True)
 
 
 def start_codex(
@@ -265,47 +370,21 @@ def start_codex(
     返回 (是否成功, 消息)
     """
     try:
-        import subprocess
+        running, pids = is_codex_running(timeout=1)
+        if running:
+            return True, f"Codex 已在运行 (PID: {pids})"
 
-        codex_paths = []
-
-        # Codex++ 优先级最高（用独立启动器）
-        if use_codex_plus_plus:
-            for candidate in (codex_plus_plus_path, CODEX_PLUS_PLUS_PATH):
-                if candidate and os.path.exists(candidate):
-                    codex_paths.append(candidate)
-
-        # 1. 从用户设置或 CODEX_CLI_PATH 环境变量（config.toml 中 MCP 配置）
-        if codex_cli_path and os.path.exists(codex_cli_path):
-            codex_paths.append(codex_cli_path)
-        env_cli = os.environ.get("CODEX_CLI_PATH", "")
-        if env_cli and os.path.exists(env_cli):
-            codex_paths.append(env_cli)
-        # 2. 从 AppData 目录搜索
-        appdata = os.environ.get("LOCALAPPDATA", "")
-        if appdata:
-            codex_app = os.path.join(appdata, "OpenAI", "Codex")
-            if os.path.exists(codex_app):
-                codex_paths.append(os.path.join(codex_app, "Codex.exe"))
-                # 搜索 bin 子目录
-                bin_dir = os.path.join(codex_app, "bin")
-                if os.path.exists(bin_dir):
-                    for d in os.listdir(bin_dir):
-                        exe = os.path.join(bin_dir, d, "codex.exe")
-                        if os.path.exists(exe):
-                            codex_paths.append(exe)
-        # 3. 系统 PATH
-        which = shutil.which("codex")
-        if which:
-            codex_paths.append(which)
-
-        for path in dict.fromkeys(codex_paths):
-            if os.path.exists(path):
-                subprocess.Popen([path], creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW)
+        errors = []
+        for path in codex_launch_candidates(use_codex_plus_plus, codex_plus_plus_path, codex_cli_path):
+            try:
+                _launch_codex_path(path)
                 label = "Codex++" if "codex-plus-plus" in path.lower() else "Codex"
                 return True, f"已启动 {label}: {path}"
+            except Exception as exc:
+                errors.append(f"{path}: {exc}")
 
-        return False, "未找到 Codex 可执行文件，请手动启动"
+        detail = "；".join(errors[:2])
+        return False, "未找到可启动的 Codex，请在设置中填写 Codex 路径" + (f"（{detail}）" if detail else "")
     except Exception as e:
         return False, f"启动 Codex 失败: {e}"
 
@@ -367,32 +446,45 @@ def sync_rollout_file(
     dry_run: bool = False,
 ) -> bool:
     """
-    同步单个 jsonl 文件的 session_meta 头部
+    同步单个 jsonl 文件中的所有 session_meta 记录
     返回是否修改了文件
     """
-    # 流式读取第一行获取 session_meta
-    first_line = None
+    output_lines = []
+    changed = False
+    saw_session_meta = False
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    first_line = line
-                    break
+            for raw_line in f:
+                line_body = raw_line.rstrip("\r\n")
+                newline = raw_line[len(line_body):]
+                if not line_body.strip():
+                    output_lines.append(raw_line)
+                    continue
+                try:
+                    record = json.loads(line_body)
+                except json.JSONDecodeError:
+                    output_lines.append(raw_line)
+                    continue
+                if not isinstance(record, dict) or record.get("type") != "session_meta":
+                    output_lines.append(raw_line)
+                    continue
+
+                saw_session_meta = True
+                if _apply_model_fields_to_session_meta(record, target_provider, target_model):
+                    changed = True
+                    output_lines.append(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + (newline or "\n"))
+                else:
+                    output_lines.append(raw_line)
     except Exception:
         return False
 
-    if not first_line:
-        return False
+    if changed and not dry_run:
+        _atomic_write_text(file_path, "".join(output_lines))
 
-    try:
-        record = json.loads(first_line)
-    except json.JSONDecodeError:
-        return False
+    return bool(saw_session_meta and changed)
 
-    if not isinstance(record, dict) or record.get("type") != "session_meta":
-        return False
 
+def _apply_model_fields_to_session_meta(record: Dict, target_provider: str, target_model: str) -> bool:
     # 找到 payload 或 record 本身
     payload = record.get("payload")
     target = payload if isinstance(payload, dict) else record
@@ -419,10 +511,6 @@ def sync_rollout_file(
     if not any(k in target for k in ("model", "model_name", "modelName")):
         target["model"] = target_model
         changed = True
-
-    if changed and not dry_run:
-        # 原子写入：只替换第一行
-        _atomic_update_first_line(file_path, json.dumps(record, ensure_ascii=False, separators=(",", ":")))
 
     return changed
 

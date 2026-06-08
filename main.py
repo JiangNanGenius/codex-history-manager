@@ -32,6 +32,7 @@ import threading
 import traceback
 import urllib.error
 import urllib.request
+import queue
 import webview
 
 try:
@@ -50,10 +51,28 @@ APP_TITLE = "Codex 历史记录管理器"
 SMOKE_TEST_ARG = "--smoke-test"
 SMOKE_TEST_ENV = "CODEX_ENHANCE_MANAGER_SMOKE_TEST"
 WEBVIEW_MONITOR_BACKGROUND = "#111827"
-MONITOR_WINDOW_WIDTH = 300
+MONITOR_WINDOW_WIDTH = 360
 MONITOR_WINDOW_EXPANDED_HEIGHT = 226
 MONITOR_WINDOW_COMPACT_HEIGHT = 92
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+GWL_EXSTYLE = -20
+SW_HIDE = 0
+SW_SHOWNOACTIVATE = 4
+HWND_TOPMOST = -1
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_APPWINDOW = 0x00040000
+WS_EX_NOACTIVATE = 0x08000000
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
+SWP_SHOWWINDOW = 0x0040
+WM_SETICON = 0x0080
+ICON_SMALL = 0
+ICON_BIG = 1
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x00000010
+LR_DEFAULTSIZE = 0x00000040
 IDYES = 6
 IDNO = 7
 LOCAL_API_TIMEOUT = 10
@@ -74,6 +93,23 @@ allow_exit = False
 main_window = None
 monitor_window = None
 desktop_api = None
+single_instance_lock = None
+loaded_icon_handles: list[int] = []
+
+
+def _resource_path(name: str) -> str:
+    """Resolve bundled data files both in source and PyInstaller onefile mode."""
+    candidates = []
+    bundle_dir = getattr(sys, "_MEIPASS", "")
+    if bundle_dir:
+        candidates.append(os.path.join(bundle_dir, name))
+    candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), name))
+    if getattr(sys, "frozen", False):
+        candidates.append(os.path.join(os.path.dirname(sys.executable), name))
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return candidates[0] if candidates else name
 
 
 def _start_pyinstaller_parent_watchdog() -> bool:
@@ -119,6 +155,38 @@ def _start_pyinstaller_parent_watchdog() -> bool:
     watcher = threading.Thread(target=watch_parent, name="pyinstaller-parent-watchdog", daemon=True)
     watcher.start()
     return True
+
+
+def _existing_instance_responds() -> bool:
+    try:
+        with urllib.request.urlopen(f"{URL}/api/settings", timeout=0.8) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+def _acquire_single_instance_lock() -> bool:
+    """Prevent duplicate desktop instances from creating extra WebView/tray processes."""
+    global single_instance_lock
+    if single_instance_lock is not None:
+        return True
+    try:
+        import msvcrt
+        from app_paths import app_data_path, ensure_app_dirs
+
+        ensure_app_dirs()
+        lock_path = app_data_path("manager.lock")
+        lock_file = open(lock_path, "a+b")
+        try:
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            lock_file.close()
+            return False
+        single_instance_lock = lock_file
+        return True
+    except Exception:
+        # If locking is unavailable, the HTTP preflight still prevents most duplicates.
+        return True
 
 
 class DesktopApi:
@@ -172,14 +240,14 @@ def start_flask():
     """
     from app import create_app
     app = create_app()
-    app.run(host="127.0.0.1", port=PORT, debug=False, use_reloader=False)
+    app.run(host="127.0.0.1", port=PORT, debug=False, use_reloader=False, threaded=True)
 
 
 def _load_tray_image():
     """加载托盘图标，缺失时生成一个简单 fallback。"""
     if Image is None:
         return None
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+    icon_path = _resource_path("icon.ico")
     if os.path.exists(icon_path):
         return Image.open(icon_path)
 
@@ -195,6 +263,10 @@ def _show_window(window):
     try:
         window.show()
         window.restore()
+        try:
+            window.focus()
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -244,6 +316,33 @@ def _monitor_auto_show_enabled() -> bool:
         return bool(Config().get("desktop_monitor_enabled", True))
     except Exception:
         return True
+
+
+def _monitor_opacity() -> float:
+    try:
+        from config import Config
+        value = float(Config().get("desktop_monitor_opacity", 88))
+        if value > 1:
+            value = value / 100
+        return min(max(value, 0.35), 1.0)
+    except Exception:
+        return 0.88
+
+
+def _format_monitor_number(value, *, compact: bool = False) -> str:
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError):
+        number = 0
+    if not compact:
+        return f"{number:,}"
+    abs_number = abs(number)
+    for suffix, divisor in (("T", 1_000_000_000_000), ("B", 1_000_000_000), ("M", 1_000_000), ("K", 1_000)):
+        if abs_number >= divisor:
+            scaled = number / divisor
+            text = f"{scaled:.2f}".rstrip("0").rstrip(".")
+            return f"{text}{suffix}"
+    return f"{number:,}"
 
 
 def _local_post_json(path: str, payload: dict | None = None) -> dict:
@@ -313,16 +412,23 @@ def _set_focus_provider(provider_id: str = "") -> dict:
 
 
 def _start_codex_from_desktop() -> dict:
-    result = _local_post_json("/api/codex/start", {})
+    def worker():
+        result = _local_post_json("/api/codex/start", {})
+        try:
+            if tray_icon is not None:
+                if result.get("success"):
+                    tray_icon.notify(result.get("message") or "Codex 已启动", APP_TITLE)
+                else:
+                    tray_icon.notify(result.get("error") or result.get("message") or "Codex 启动失败", APP_TITLE)
+        except Exception:
+            pass
+
     try:
-        if tray_icon is not None:
-            if result.get("success"):
-                tray_icon.notify(result.get("message") or "Codex 已启动", APP_TITLE)
-            else:
-                tray_icon.notify(result.get("error") or result.get("message") or "Codex 启动失败", APP_TITLE)
-    except Exception:
-        pass
-    return result
+        thread = threading.Thread(target=worker, name="codex-start-request", daemon=True)
+        thread.start()
+        return {"success": True, "message": "正在后台启动 Codex"}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
 
 
 def _place_monitor_window():
@@ -333,6 +439,269 @@ def _place_monitor_window():
         monitor_window.move(x, y)
     except Exception:
         pass
+
+
+def _native_window_handle(window) -> int:
+    handle_provider = getattr(window, "window_handle", None)
+    if callable(handle_provider):
+        try:
+            handle = int(handle_provider() or 0)
+            if handle:
+                return handle
+        except Exception:
+            pass
+    direct_handle = getattr(window, "hwnd", None)
+    if direct_handle:
+        try:
+            return int(direct_handle)
+        except Exception:
+            pass
+    native = getattr(window, "native", None)
+    handle = getattr(native, "Handle", None)
+    if handle is None:
+        return 0
+    try:
+        return int(handle.ToInt64())
+    except Exception:
+        try:
+            return int(handle.ToInt32())
+        except Exception:
+            try:
+                return int(handle)
+            except Exception:
+                return 0
+
+
+def _owned_window_handles_by_title(title: str) -> list[int]:
+    if os.name != "nt":
+        return []
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        user32 = ctypes.windll.user32
+        current_pid = os.getpid()
+        handles: list[int] = []
+
+        enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+
+        def callback(hwnd, lparam):
+            pid = ctypes.wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if int(pid.value) == current_pid:
+                buffer = ctypes.create_unicode_buffer(256)
+                user32.GetWindowTextW(hwnd, buffer, len(buffer))
+                if buffer.value == title:
+                    handles.append(int(hwnd))
+            return True
+
+        user32.EnumWindows(enum_proc(callback), 0)
+        return handles
+    except Exception:
+        return []
+
+
+def _apply_monitor_style_to_hwnd(hwnd: int) -> bool:
+    if os.name != "nt" or not hwnd:
+        return False
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        user32 = ctypes.windll.user32
+        get_long = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
+        set_long = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+        get_long.argtypes = [ctypes.wintypes.HWND, ctypes.c_int]
+        get_long.restype = ctypes.c_ssize_t
+        set_long.argtypes = [ctypes.wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        set_long.restype = ctypes.c_ssize_t
+        user32.SetWindowPos.argtypes = [
+            ctypes.wintypes.HWND,
+            ctypes.wintypes.HWND,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        ]
+        style = int(get_long(hwnd, GWL_EXSTYLE))
+        style |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+        style &= ~WS_EX_APPWINDOW
+        set_long(hwnd, GWL_EXSTYLE, style)
+        user32.SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _set_window_icon_for_hwnd(hwnd: int) -> bool:
+    if os.name != "nt" or not hwnd:
+        return False
+    icon_path = _resource_path("icon.ico")
+    if not os.path.exists(icon_path):
+        return False
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        user32 = ctypes.windll.user32
+        user32.LoadImageW.argtypes = [
+            ctypes.wintypes.HINSTANCE,
+            ctypes.wintypes.LPCWSTR,
+            ctypes.c_uint,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        ]
+        user32.LoadImageW.restype = ctypes.wintypes.HANDLE
+        user32.SendMessageW.argtypes = [
+            ctypes.wintypes.HWND,
+            ctypes.c_uint,
+            ctypes.wintypes.WPARAM,
+            ctypes.wintypes.LPARAM,
+        ]
+        user32.SendMessageW.restype = ctypes.wintypes.LPARAM
+
+        large_icon = user32.LoadImageW(
+            None,
+            icon_path,
+            IMAGE_ICON,
+            0,
+            0,
+            LR_LOADFROMFILE | LR_DEFAULTSIZE,
+        )
+        small_icon = user32.LoadImageW(
+            None,
+            icon_path,
+            IMAGE_ICON,
+            16,
+            16,
+            LR_LOADFROMFILE,
+        )
+        applied = False
+        if large_icon:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, int(large_icon))
+            loaded_icon_handles.append(int(large_icon))
+            applied = True
+        if small_icon:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, int(small_icon))
+            loaded_icon_handles.append(int(small_icon))
+            applied = True
+        return applied
+    except Exception:
+        return False
+
+
+def _apply_main_window_icon(window=None) -> bool:
+    """Apply the bundled icon to the visible WebView window after native creation."""
+    if os.name != "nt":
+        return False
+    target = window or main_window
+    handles = []
+    native_hwnd = _native_window_handle(target)
+    if native_hwnd:
+        handles.append(native_hwnd)
+    handles.extend(hwnd for hwnd in _owned_window_handles_by_title(APP_TITLE) if hwnd not in handles)
+    return any(_set_window_icon_for_hwnd(hwnd) for hwnd in handles)
+
+
+def _apply_rounded_region_to_hwnd(hwnd: int, width: int, height: int, radius: int = 28) -> bool:
+    if os.name != "nt" or not hwnd:
+        return False
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        gdi32 = ctypes.windll.gdi32
+        user32 = ctypes.windll.user32
+        gdi32.CreateRoundRectRgn.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+        gdi32.CreateRoundRectRgn.restype = ctypes.wintypes.HRGN
+        user32.SetWindowRgn.argtypes = [ctypes.wintypes.HWND, ctypes.wintypes.HRGN, ctypes.c_bool]
+        user32.SetWindowRgn.restype = ctypes.c_int
+        region = gdi32.CreateRoundRectRgn(0, 0, int(width) + 1, int(height) + 1, int(radius), int(radius))
+        if not region:
+            return False
+        # After SetWindowRgn succeeds, Windows owns the region handle.
+        return bool(user32.SetWindowRgn(hwnd, region, True))
+    except Exception:
+        return False
+
+
+def _apply_monitor_native_style(window=None) -> bool:
+    """Make the monitor a real Windows tool window: no taskbar button, topmost."""
+    if os.name != "nt":
+        return False
+    target = window or monitor_window
+    handles = []
+    native_hwnd = _native_window_handle(target)
+    if native_hwnd:
+        handles.append(native_hwnd)
+    handles.extend(hwnd for hwnd in _owned_window_handles_by_title("Token Monitor") if hwnd not in handles)
+    applied = any(_apply_monitor_style_to_hwnd(hwnd) for hwnd in handles)
+    try:
+        native = getattr(target, "native", None)
+        if native is not None:
+            try:
+                native.ShowInTaskbar = False
+                native.TopMost = True
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return applied
+
+
+def _set_monitor_native_position(window=None) -> bool:
+    if os.name != "nt":
+        return False
+    target = window or monitor_window
+    hwnd = _native_window_handle(target)
+    if not hwnd:
+        return False
+    try:
+        import ctypes
+
+        x, y = _default_monitor_position()
+        user32 = ctypes.windll.user32
+        user32.SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            int(x),
+            int(y),
+            MONITOR_WINDOW_WIDTH,
+            MONITOR_WINDOW_EXPANDED_HEIGHT,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _prepare_monitor_before_show(window=None):
+    target = window or monitor_window
+    native = getattr(target, "native", None)
+    if native is not None:
+        try:
+            native.ShowInTaskbar = False
+            native.TopMost = True
+        except Exception:
+            pass
+    _apply_monitor_native_style(target)
 
 
 def _ensure_monitor_window():
@@ -357,15 +726,21 @@ def _show_monitor(api=None):
                 "success": False,
                 "error": "Monitor window is not ready. Please restart the desktop app.",
             }
-        _place_monitor_window()
+        _prepare_monitor_before_show(window)
         try:
             window.on_top = True
         except Exception:
             pass
-        window.show()
-        window.restore()
-        _place_monitor_window()
+        try:
+            window.show()
+            window.restore()
+        except Exception:
+            pass
+        _prepare_monitor_before_show(window)
+        if not _set_monitor_native_position(window):
+            _place_monitor_window()
         _resize_monitor(MONITOR_WINDOW_WIDTH, MONITOR_WINDOW_EXPANDED_HEIGHT)
+        _prepare_monitor_before_show(window)
         return {"success": True, "message": "Monitor window requested."}
     except Exception as exc:
         traceback.print_exc()
@@ -375,6 +750,18 @@ def _show_monitor(api=None):
 def _hide_monitor():
     try:
         if monitor_window is not None:
+            if monitor_window.__class__.__name__ == "NativeTokenMonitor":
+                monitor_window.hide()
+                return {"success": True}
+            hwnd = _native_window_handle(monitor_window)
+            if os.name == "nt" and hwnd:
+                try:
+                    import ctypes
+
+                    ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
+                    return {"success": True}
+                except Exception:
+                    pass
             monitor_window.hide()
         return {"success": True}
     except Exception as exc:
@@ -425,6 +812,281 @@ def _default_monitor_position() -> tuple[int, int]:
     return fallback
 
 
+class NativeTokenMonitor:
+    """A lightweight native floating monitor that avoids a second WebView2."""
+
+    def __init__(self, api, hidden: bool = False):
+        self.api = api
+        self.hidden = bool(hidden)
+        self.transparent = False
+        self.background_color = WEBVIEW_MONITOR_BACKGROUND
+        self.initial_x, self.initial_y = _default_monitor_position()
+        self.width = MONITOR_WINDOW_WIDTH
+        self.height = MONITOR_WINDOW_EXPANDED_HEIGHT
+        self.on_top = True
+        self._commands: queue.Queue[tuple] = queue.Queue()
+        self._thread: threading.Thread | None = None
+        self._root = None
+        self._labels: dict[str, object] = {}
+        self._drag_start = (0, 0)
+        self._refresh_in_flight = False
+
+    def _start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._run, name="native-token-monitor", daemon=True)
+        self._thread.start()
+
+    def show(self):
+        self._start()
+        self._commands.put(("show",))
+
+    def restore(self):
+        self.show()
+
+    def hide(self):
+        self._commands.put(("hide",))
+
+    def destroy(self):
+        self._commands.put(("destroy",))
+
+    def move(self, x, y):
+        self.initial_x = int(x)
+        self.initial_y = int(y)
+        self._commands.put(("move", self.initial_x, self.initial_y))
+
+    def resize(self, width, height):
+        self.width = int(width)
+        self.height = int(height)
+        self._commands.put(("resize", self.width, self.height))
+
+    def set_window_size(self, width, height):
+        self.resize(width, height)
+
+    def window_handle(self) -> int:
+        try:
+            if self._root is not None:
+                return int(self._root.winfo_id())
+        except Exception:
+            pass
+        return 0
+
+    def _run(self):
+        try:
+            import tkinter as tk
+            from tkinter import font as tkfont
+        except Exception:
+            return
+
+        root = tk.Tk()
+        self._root = root
+        root.title("Token Monitor")
+        root.configure(bg=WEBVIEW_MONITOR_BACKGROUND)
+        root.geometry(f"{self.width}x{self.height}+{self.initial_x}+{self.initial_y}")
+        root.resizable(False, False)
+        root.overrideredirect(True)
+        icon_path = _resource_path("icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                root.iconbitmap(icon_path)
+            except Exception:
+                pass
+        try:
+            root.attributes("-topmost", True)
+            root.attributes("-alpha", _monitor_opacity())
+            root.wm_attributes("-toolwindow", True)
+        except Exception:
+            pass
+
+        title_font = tkfont.Font(family="Segoe UI", size=9, weight="bold")
+        value_font = tkfont.Font(family="Consolas", size=24, weight="bold")
+        small_font = tkfont.Font(family="Segoe UI", size=8)
+        frame = tk.Frame(root, bg=WEBVIEW_MONITOR_BACKGROUND, padx=14, pady=12)
+        frame.pack(fill="both", expand=True)
+
+        header = tk.Frame(frame, bg=WEBVIEW_MONITOR_BACKGROUND)
+        header.pack(fill="x")
+        tk.Label(header, text="Token Monitor", fg="#93c5fd", bg=WEBVIEW_MONITOR_BACKGROUND, font=title_font).pack(side="left")
+        close_btn = tk.Label(header, text="×", fg="#94a3b8", bg=WEBVIEW_MONITOR_BACKGROUND, font=("Segoe UI", 12, "bold"), cursor="hand2")
+        close_btn.pack(side="right")
+        close_btn.bind("<Button-1>", lambda event: self.hide())
+
+        self._labels["value"] = tk.Label(frame, text="--", fg="#f8fafc", bg=WEBVIEW_MONITOR_BACKGROUND, font=value_font)
+        self._labels["value"].pack(anchor="w", pady=(8, 2))
+        self._labels["context"] = tk.Label(frame, text="上下文 Context: --", fg="#cbd5e1", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
+        self._labels["context"].pack(anchor="w")
+        self._labels["cache"] = tk.Label(frame, text="缓存复用 Reuse: --", fg="#94a3b8", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
+        self._labels["cache"].pack(anchor="w", pady=(3, 0))
+        self._labels["updated"] = tk.Label(frame, text="更新时间 Updated: --", fg="#64748b", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
+        self._labels["updated"].pack(anchor="w", pady=(3, 0))
+
+        menu = tk.Menu(root, tearoff=0)
+
+        def show_context_menu(event):
+            self._rebuild_menu(menu)
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                try:
+                    menu.grab_release()
+                except Exception:
+                    pass
+            return "break"
+
+        def start_drag(event):
+            self._drag_start = (event.x_root - root.winfo_x(), event.y_root - root.winfo_y())
+
+        def drag(event):
+            x = event.x_root - self._drag_start[0]
+            y = event.y_root - self._drag_start[1]
+            self.initial_x = x
+            self.initial_y = y
+            root.geometry(f"+{x}+{y}")
+
+        for widget in (root, frame, header, self._labels["value"], self._labels["context"], self._labels["cache"], self._labels["updated"]):
+            widget.bind("<ButtonRelease-3>", show_context_menu)
+            widget.bind("<ButtonPress-1>", start_drag)
+            widget.bind("<B1-Motion>", drag)
+
+        self._apply_native_treatment()
+        if self.hidden:
+            root.withdraw()
+        else:
+            self._show_root()
+        root.after(100, self._process_commands)
+        root.after(300, self._refresh_stats)
+        root.mainloop()
+
+    def _show_root(self):
+        root = self._root
+        if root is None:
+            return
+        try:
+            root.deiconify()
+            root.lift()
+            root.attributes("-topmost", True)
+            root.geometry(f"{self.width}x{self.height}+{self.initial_x}+{self.initial_y}")
+            self._apply_native_treatment()
+        except Exception:
+            pass
+
+    def _apply_native_treatment(self):
+        root = self._root
+        if root is None:
+            return
+        try:
+            root.update_idletasks()
+            root.attributes("-topmost", True)
+            root.attributes("-alpha", _monitor_opacity())
+        except Exception:
+            pass
+        try:
+            _apply_monitor_native_style(self)
+            _apply_rounded_region_to_hwnd(self.window_handle(), self.width, self.height)
+        except Exception:
+            pass
+
+    def _process_commands(self):
+        root = self._root
+        if root is None:
+            return
+        while True:
+            try:
+                command = self._commands.get_nowait()
+            except queue.Empty:
+                break
+            action = command[0]
+            if action == "show":
+                self.hidden = False
+                self._show_root()
+                self._refresh_stats()
+            elif action == "hide":
+                self.hidden = True
+                root.withdraw()
+            elif action == "move":
+                root.geometry(f"+{command[1]}+{command[2]}")
+            elif action == "resize":
+                root.geometry(f"{command[1]}x{command[2]}+{self.initial_x}+{self.initial_y}")
+                self._apply_native_treatment()
+            elif action == "stats":
+                self._refresh_in_flight = False
+                ok = bool(command[1])
+                payload = command[2] if len(command) > 2 else {}
+                if ok:
+                    self._apply_stats(payload)
+                    root.after(10000, self._refresh_stats)
+                else:
+                    self._labels["updated"].configure(text="更新时间 Updated: reconnecting")
+                    root.after(2000, self._refresh_stats)
+            elif action == "destroy":
+                root.destroy()
+                return
+        root.after(100, self._process_commands)
+
+    def _refresh_stats(self):
+        root = self._root
+        if root is None:
+            return
+        if self._refresh_in_flight:
+            return
+        self._refresh_in_flight = True
+        thread = threading.Thread(target=self._fetch_stats_worker, name="native-monitor-token-refresh", daemon=True)
+        thread.start()
+
+    def _fetch_stats_worker(self):
+        try:
+            with urllib.request.urlopen(f"{URL}/api/token/current", timeout=12) as response:
+                data = json.loads(response.read().decode("utf-8", errors="replace"))
+            self._commands.put(("stats", True, data))
+        except Exception:
+            self._commands.put(("stats", False, {}))
+
+    def _apply_stats(self, data: dict):
+        total = int(data.get("total_tokens") or data.get("current_total_tokens") or 0)
+        context_used = data.get("current_context_used_tokens")
+        context_window = data.get("current_context_window")
+        cache_total = data.get("cache_total_tokens") or data.get("cache_total") or 0
+        self._labels["value"].configure(text=_format_monitor_number(total, compact=True))
+        if context_used and context_window:
+            self._labels["context"].configure(
+                text=f"上下文 Context: {_format_monitor_number(context_used)} / {_format_monitor_number(context_window)}"
+            )
+        else:
+            self._labels["context"].configure(text="上下文 Context: --")
+        self._labels["cache"].configure(text=f"缓存复用 Reuse: {_format_monitor_number(cache_total)}")
+        self._labels["updated"].configure(text="更新时间 Updated: now")
+
+    def _run_menu_action(self, callback):
+        def runner():
+            try:
+                callback()
+            except Exception:
+                pass
+        threading.Thread(target=runner, name="native-monitor-menu-action", daemon=True).start()
+
+    def _rebuild_menu(self, menu):
+        menu.delete(0, "end")
+        menu.add_command(label=TRAY_MENU_TEXT["start_codex"], command=lambda: self._run_menu_action(_start_codex_from_desktop))
+        menu.add_command(label=TRAY_MENU_TEXT["show_main"], command=lambda: self._run_menu_action(lambda: _show_window(main_window) if main_window else None))
+        menu.add_command(label=TRAY_MENU_TEXT["show_settings"], command=lambda: self._run_menu_action(lambda: _show_main_page("settings")))
+        providers = _quick_switch_payload().get("providers") or []
+        if providers:
+            provider_menu = menu.__class__(menu, tearoff=0)
+            provider_menu.add_command(label=TRAY_MENU_TEXT["auto_provider"], command=lambda: self._run_menu_action(lambda: _set_focus_provider("")))
+            provider_menu.add_separator()
+            for provider in providers:
+                provider_id = str(provider.get("id") or "")
+                label = provider.get("display_name") or provider_id
+                alias = provider.get("short_alias")
+                if alias:
+                    label = f"{label} ({alias})"
+                provider_menu.add_command(label=label, command=lambda pid=provider_id: self._run_menu_action(lambda: _set_focus_provider(pid)))
+            menu.add_cascade(label=TRAY_MENU_TEXT["quick_switch_provider"], menu=provider_menu)
+        menu.add_separator()
+        menu.add_command(label=TRAY_MENU_TEXT["hide_monitor"], command=self.hide)
+        menu.add_command(label=TRAY_MENU_TEXT["exit"], command=lambda: self._run_menu_action(lambda: _exit_app(main_window)))
+
+
 def _exit_app(window):
     """
     退出应用程序。
@@ -449,7 +1111,7 @@ def _exit_app(window):
     # Some tray/WebView callbacks can block during shutdown on Windows. Arm a
     # short hard-exit fallback before best-effort cleanup so Exit always exits.
     try:
-        killer = threading.Timer(1.2, lambda: os._exit(0))
+        killer = threading.Timer(0.25, lambda: os._exit(0))
         killer.daemon = True
         killer.start()
     except Exception:
@@ -467,11 +1129,9 @@ def _exit_app(window):
             pass
     # 先尝试正常退出，让 Python 执行 atexit、刷新缓冲区等清理
     try:
-        import sys
-        sys.exit(0)
-    except SystemExit:
+        os._exit(0)
+    except Exception:
         pass
-    # 兜底：若 daemon 线程未结束导致 sys.exit 阻塞，强制终止进程
     os._exit(0)
 
 
@@ -540,10 +1200,17 @@ def _setup_tray(window):
         if not providers:
             yield pystray.MenuItem(TRAY_MENU_TEXT["no_providers"], None, enabled=False)
             return
+
+        def clear_focus(icon, item):
+            _set_focus_provider("")
+
+        def auto_is_checked(item):
+            return not _quick_switch_payload().get("focus_provider_id")
+
         yield pystray.MenuItem(
             TRAY_MENU_TEXT["auto_provider"],
-            lambda icon=None, item=None: _set_focus_provider(""),
-            checked=lambda item: not _quick_switch_payload().get("focus_provider_id"),
+            clear_focus,
+            checked=auto_is_checked,
             radio=True,
             enabled=bool(focus_provider_id),
         )
@@ -555,10 +1222,21 @@ def _setup_tray(window):
             if alias:
                 label = f"{label} ({alias})"
             focused = bool(provider.get("focused"))
+
+            def make_select_provider(pid):
+                def select_provider(icon, item):
+                    _set_focus_provider(pid)
+                return select_provider
+
+            def make_provider_checked(pid):
+                def provider_is_checked(item):
+                    return _quick_switch_payload().get("focus_provider_id") == pid
+                return provider_is_checked
+
             yield pystray.MenuItem(
                 label,
-                lambda icon=None, item=None, pid=provider_id: _set_focus_provider(pid),
-                checked=lambda item, pid=provider_id: _quick_switch_payload().get("focus_provider_id") == pid,
+                make_select_provider(provider_id),
+                checked=make_provider_checked(provider_id),
                 radio=True,
                 enabled=not focused,
             )
@@ -647,30 +1325,16 @@ def _create_main_window(api):
         confirm_close=False,
         text_select=True,
     )
+    try:
+        window.events.shown += lambda window=window: _apply_main_window_icon(window)
+    except Exception:
+        pass
     return window
 
 
-def _create_monitor_window(api):
-    monitor_x, monitor_y = _default_monitor_position()
-    monitor = webview.create_window(
-        title="Token Monitor",
-        url=f"{URL}/monitor",
-        js_api=api,
-        width=MONITOR_WINDOW_WIDTH,
-        height=MONITOR_WINDOW_EXPANDED_HEIGHT,
-        x=monitor_x,
-        y=monitor_y,
-        resizable=False,
-        frameless=True,
-        easy_drag=True,
-        on_top=True,
-        transparent=False,
-        background_color=WEBVIEW_MONITOR_BACKGROUND,
-        hidden=not _monitor_auto_show_enabled(),
-        focus=False,
-        text_select=False,
-    )
-    return monitor
+def _create_monitor_window(api, hidden: bool | None = None):
+    should_hide = not _monitor_auto_show_enabled() if hidden is None else bool(hidden)
+    return NativeTokenMonitor(api, hidden=should_hide)
 
 
 def _create_desktop_windows(api):
@@ -681,18 +1345,13 @@ def _on_webview_started():
     """Show the monitor after WebView is ready so default-on is reliable."""
     if not _monitor_auto_show_enabled():
         return False
-
-    def show_later():
-        _show_monitor()
-
     try:
-        timer = threading.Timer(0.45, show_later)
+        timer = threading.Timer(2.5, _show_monitor)
         timer.daemon = True
         timer.start()
         return True
     except Exception:
-        show_later()
-        return True
+        return False
 
 
 def _smoke_test_webview_window_creation() -> bool:
@@ -774,6 +1433,12 @@ def main():
         避免用户看到空白窗口。
     """
     global main_window, monitor_window, desktop_api
+    if _existing_instance_responds():
+        print("Codex Enhance Manager is already running.")
+        return
+    if not _acquire_single_instance_lock():
+        print("Codex Enhance Manager is already running or still shutting down.")
+        return
     _start_pyinstaller_parent_watchdog()
     # 启动 Flask 后台线程
     flask_thread = threading.Thread(target=start_flask, daemon=True)
@@ -787,7 +1452,6 @@ def main():
     # 创建 PyWebView 窗口（内嵌 Edge WebView2）
     desktop_api = DesktopApi()
     window = _create_main_window(desktop_api)
-    monitor_window = _create_monitor_window(desktop_api)
     main_window = window
     _setup_tray(window)
     try:

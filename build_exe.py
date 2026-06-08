@@ -209,6 +209,13 @@ def build():
 
     icon_path = str(PROJECT_DIR / "icon.ico").replace("\\", "/")
     icon_arg = f'icon="{icon_path}",' if Path(icon_path).exists() else ''
+    data_entries = [f'("{static_dir}", "static"),']
+    for asset_name in ("icon.ico", "icon.png"):
+        asset_path = PROJECT_DIR / asset_name
+        if asset_path.exists():
+            asset_path_str = str(asset_path).replace("\\", "/")
+            data_entries.append(f'("{asset_path_str}", "."),')
+    datas_str = "\n        ".join(data_entries)
 
     spec_content = f'''# -*- mode: python ; coding: utf-8 -*-
 a = Analysis(
@@ -216,7 +223,7 @@ a = Analysis(
     pathex=["{project_dir}"],
     binaries=[],
     datas=[
-        ("{static_dir}", "static"),
+        {datas_str}
     ],
     hiddenimports=[
         {hiddenimports_str}

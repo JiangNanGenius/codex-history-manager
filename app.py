@@ -27,6 +27,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -86,6 +87,47 @@ from updater import UpdateManager
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
+
+
+def disable_codex_enhance_provider_config(mgr: CodexConfigManager) -> Dict[str, Any]:
+    """Remove local proxy routing from Codex config while preserving official auth."""
+    result = {
+        "success": True,
+        "restart_required": True,
+        "changed": False,
+        "backups": {},
+        "message": "本地代理 provider 已禁用。需要重启 Codex 使变更生效。",
+    }
+    if mgr.config_path.exists():
+        backup_path = backup_file(str(mgr.config_path), mgr.backup_dir)
+        if backup_path:
+            result["backups"]["config_toml"] = backup_path
+
+    current_config = mgr.read_config()
+    next_config = dict(current_config)
+    if next_config.get("model_provider") == "codex_enhance_manager":
+        next_config["model_provider"] = ""
+    if next_config.get("provider") == "codex_enhance_manager":
+        next_config["provider"] = ""
+    defaults = next_config.get("defaults")
+    if isinstance(defaults, dict):
+        defaults = dict(defaults)
+        if defaults.get("model_provider") == "codex_enhance_manager":
+            defaults["model_provider"] = ""
+        next_config["defaults"] = defaults
+    providers = next_config.get("providers")
+    if isinstance(providers, dict) and "codex_enhance_manager" in providers:
+        providers = dict(providers)
+        del providers["codex_enhance_manager"]
+        next_config["providers"] = providers
+
+    changed = next_config != current_config
+    result["changed"] = changed
+    if changed:
+        save_config_toml(str(mgr.config_path), next_config)
+    else:
+        result["message"] = "当前已是官方登录优先配置。"
+    return result
 
 
 def create_app() -> Flask:
@@ -222,6 +264,18 @@ def create_app() -> Flask:
     def index():
         """返回 SPA 主页面"""
         return send_from_directory("static", "index.html")
+
+    @app.route("/app-icon.png")
+    def app_icon_png():
+        """返回应用内品牌图标。"""
+        asset_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        return send_from_directory(asset_dir, "icon.png")
+
+    @app.route("/favicon.ico")
+    def favicon():
+        """返回窗口和浏览器使用的图标。"""
+        asset_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        return send_from_directory(asset_dir, "icon.ico")
 
     @app.route("/monitor")
     def monitor():
@@ -557,16 +611,40 @@ def create_app() -> Flask:
         """启动 Codex/Codex++（启动前自动同步当前 provider/model）。"""
         try:
             body = request.get_json(silent=True) or {}
-            use_cpp = body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
-            sync_payload, sync_status = _run_sync_with_backup(backup_mgr)
-            if sync_status >= 400:
-                return jsonify(sync_payload), sync_status
+            official_mode = bool(body.get("official_mode"))
+            official_payload = {}
+            if official_mode:
+                mgr = CodexConfigManager()
+                official_payload = disable_codex_enhance_provider_config(mgr)
+                config.update({
+                    "use_codex_plus_plus": False,
+                    "plugin_unlock_enabled": False,
+                })
+                use_cpp = False
+                sync_payload = {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "official_mode_preserves_login",
+                    "message": "官方登录启动已跳过供应商同步，保留 token/上下文等安全增强。",
+                }
+            else:
+                use_cpp = body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
+                sync_payload, sync_status = _run_sync_with_backup(backup_mgr)
+                if sync_status >= 400:
+                    return jsonify(sync_payload), sync_status
             ok, msg = start_codex(
                 use_codex_plus_plus=use_cpp,
                 codex_plus_plus_path=config.get("codex_plus_plus_path", ""),
                 codex_cli_path=config.get("codex_cli_path", ""),
             )
-            return jsonify({"success": ok, "message": msg, "sync": sync_payload})
+            return jsonify({
+                "success": ok,
+                "message": msg,
+                "sync": sync_payload,
+                "official_mode": official_mode,
+                "official_mode_changes": official_payload,
+                "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
+            })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -1561,6 +1639,7 @@ def create_app() -> Flask:
                 "permissions": permissions,
                 "proxy_status": proxy_server.status(),
                 "default_proxy_base_url": _current_proxy_base_url(),
+                "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1696,24 +1775,7 @@ def create_app() -> Flask:
             if denied:
                 return denied
             mgr = CodexConfigManager()
-
-            # 备份当前配置
-            if mgr.config_path.exists():
-                backup_file(str(mgr.config_path), mgr.backup_dir)
-
-            current_config = mgr.read_config()
-            # 移除 codex_enhance_manager 相关配置
-            if current_config.get("model_provider") == "codex_enhance_manager":
-                current_config["model_provider"] = ""
-            if "codex_enhance_manager" in current_config.get("providers", {}):
-                del current_config["providers"]["codex_enhance_manager"]
-
-            save_config_toml(str(mgr.config_path), current_config)
-            return jsonify({
-                "success": True,
-                "restart_required": True,
-                "message": "本地代理 provider 已禁用。需要重启 Codex 使变更生效。",
-            })
+            return jsonify(disable_codex_enhance_provider_config(mgr))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

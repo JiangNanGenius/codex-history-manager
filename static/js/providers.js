@@ -46,6 +46,7 @@ let providerState = {
     quotaPreview: null,
     healthPreview: null,
     requestPreview: null,
+    focus_provider_id: '',
 };
 
 const QUICK_SETUP_STEP_COUNT = 5;
@@ -108,6 +109,7 @@ async function ensureProviderData() {
             api('/api/provider-presets'),
         ]);
         providerState.providers = providersData.providers || [];
+        providerState.focus_provider_id = providersData.focus_provider_id || '';
         providerState.presets = presetsData.presets || [];
     } catch (err) {
         providerState.draftError = err.message;
@@ -2753,6 +2755,22 @@ async function applyCodexIntegration() {
     }
 }
 
+async function startOfficialCodex() {
+    if (!confirm(t('confirmStartOfficialCodex'))) return;
+    try {
+        setStatus(t('codexOfficialStartRequested'));
+        const result = await api('/api/codex/start', {
+            method: 'POST',
+            body: JSON.stringify({ official_mode: true }),
+        });
+        showToast(result.message || t('codexOfficialStartRequested'), result.success ? 'success' : 'error');
+        await refreshCodexIntegrationStatus();
+        renderCodexIntegrationPage();
+    } catch (err) {
+        showToast(t('codexOfficialStartFailed') + err.message, 'error');
+    }
+}
+
 async function restoreCodexConfig() {
     const manual = requestCodexMutationConfirmation(t('restoreCodexConfigAction'));
     if (!manual) return;
@@ -2806,6 +2824,28 @@ function requestCodexMutationConfirmation(actionLabel) {
     };
 }
 
+function renderCodexEnhancementModeCard(status = {}) {
+    const official = status.auth_mode === 'official_oauth';
+    const pluginUnlock = Boolean(status.plugin_unlock_enabled);
+    const tone = official ? 'emerald' : pluginUnlock ? 'accent' : 'amber';
+    const badge = official
+        ? t('officialEnhancementBadge')
+        : pluginUnlock ? t('pluginUnlockOnBadge') : t('pluginUnlockOffBadge');
+    const desc = official
+        ? t('officialEnhancementModeDesc')
+        : pluginUnlock ? t('nonOfficialPluginUnlockOnDesc') : t('nonOfficialPluginUnlockOffDesc');
+    return `
+        <div class="card">
+            <div class="flex items-center justify-between gap-3">
+                <h3 class="card-title">${escapeHtml(t('enhancementModeTitle'))}</h3>
+                ${renderStatusPill('enhancement-mode', badge, tone)}
+            </div>
+            <p class="text-sm text-dark-400 mt-2">${escapeHtml(desc)}</p>
+            <button onclick="navigateTo('settings'); showSettingsWizardStep(5);" class="btn btn-secondary text-xs mt-4">${escapeHtml(t('openStartupApprovalStep'))}</button>
+        </div>
+    `;
+}
+
 /**
  * 渲染 Codex Integration 页面（状态查看 / Diff 预览 / 回滚）。
  * 该页卡片为静态 HTML 结构（无 .stagger-item），因此依赖 app.js 中
@@ -2850,6 +2890,8 @@ function renderCodexIntegrationPage() {
                     </div>
                 </div>
 
+                ${renderCodexEnhancementModeCard(status)}
+
                 <div class="card">
                     <h3 class="card-title">${escapeHtml(t('localProxySettings'))}</h3>
                     <div class="grid grid-cols-1 gap-4 mt-3">
@@ -2864,7 +2906,9 @@ function renderCodexIntegrationPage() {
                     <div class="flex flex-wrap gap-2 mt-4">
                         <button onclick="previewCodexIntegration()" class="btn btn-secondary">${escapeHtml(t('previewDiff'))}</button>
                         <button onclick="applyCodexIntegration()" class="btn btn-warning">${escapeHtml(t('manualApplyCodexConfig'))}</button>
+                        <button onclick="startOfficialCodex()" class="btn btn-secondary">${escapeHtml(t('startOfficialCodex'))}</button>
                     </div>
+                    <p class="text-xs text-dark-500 mt-3">${escapeHtml(t('officialCodexStartDesc'))}</p>
                 </div>
 
                 ${renderPermissionsAudit(status.permissions || {}, codexIntegrationState.permissionsPreview)}

@@ -50,8 +50,10 @@ DEFAULT_CONFIG = {
     "request_log_max_mb": 50,
     "close_button_action": "ask",
     "desktop_monitor_enabled": True,
+    "desktop_monitor_opacity": 88,
     "update_check_enabled": True,
     "update_include_prerelease": False,
+    "plugin_unlock_enabled": False,
     "proxy_upstream_timeout_seconds": 120,
     "proxy_retry_attempts": 0,
     "proxy_retry_backoff_ms": 250,
@@ -225,7 +227,14 @@ class Config:
             self._data["desktop_monitor_enabled"] = monitor_enabled.strip().lower() not in {"0", "false", "no", "off"}
         elif not isinstance(monitor_enabled, bool):
             self._data["desktop_monitor_enabled"] = DEFAULT_CONFIG["desktop_monitor_enabled"]
-        for key in ("update_check_enabled", "update_include_prerelease"):
+        try:
+            monitor_opacity = float(self._data.get("desktop_monitor_opacity", DEFAULT_CONFIG["desktop_monitor_opacity"]))
+            if 0 < monitor_opacity <= 1:
+                monitor_opacity *= 100
+            self._data["desktop_monitor_opacity"] = min(max(int(round(monitor_opacity)), 35), 100)
+        except (TypeError, ValueError):
+            self._data["desktop_monitor_opacity"] = DEFAULT_CONFIG["desktop_monitor_opacity"]
+        for key in ("update_check_enabled", "update_include_prerelease", "plugin_unlock_enabled"):
             value = self._data.get(key)
             if isinstance(value, str):
                 self._data[key] = value.strip().lower() not in {"0", "false", "no", "off"}

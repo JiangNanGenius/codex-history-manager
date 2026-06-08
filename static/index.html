@@ -6,6 +6,8 @@
     <title data-i18n="appTitle">Codex 历史记录管理器</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="/app-icon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
@@ -30,7 +32,9 @@
         <!-- Logo -->
         <div class="px-5 py-5 border-b border-dark-700/60">
             <h1 class="text-lg font-bold text-white flex items-center gap-2">
-                <svg class="w-6 h-6 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
+                <span class="app-logo-shell" aria-hidden="true">
+                    <img class="app-logo-img" src="/app-icon.png" alt="">
+                </span>
                 Codex Manager
             </h1>
             <p class="text-xs text-dark-400 mt-1" data-i18n="appSubtitle">History &middot; Sync &middot; Backup</p>
@@ -518,6 +522,7 @@
                     </div>
                     <button type="button" onclick="fillSettingsWizardDefaults()" class="btn btn-secondary text-xs" data-i18n="wizardFillDefaults">填入推荐默认值</button>
                 </div>
+                <div id="settings-wizard-advisor" class="mt-4"></div>
                 <div id="settings-wizard-checklist" class="settings-wizard-checklist mt-4"></div>
             </div>
 
@@ -552,7 +557,7 @@
                         <input id="setting-codex-cli" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="codexPPPath">Codex++ Path</label>
+                        <label class="text-xs text-dark-400" data-i18n="codexPPPath">Enhanced Launcher Path</label>
                         <input id="setting-codex-pp" type="text" class="input mt-1">
                     </div>
                     <div>
@@ -680,7 +685,7 @@
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-use-codex-pp" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="useCodexPPSetting">Use Codex++</span>
+                        <span data-i18n="useCodexPPSetting">Use Enhanced Launcher</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-dark-mode" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
@@ -698,6 +703,14 @@
                         <span data-i18n="desktopMonitorEnabled">启动时显示桌面悬浮窗</span>
                     </label>
                     <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorEnabledDesc">桌面版启动后自动显示 Token 悬浮窗；仍可通过托盘或右键菜单隐藏。</p>
+                    <div class="mt-3 max-w-md">
+                        <div class="flex items-center justify-between gap-3">
+                            <label for="setting-desktop-monitor-opacity" class="text-xs text-dark-400" data-i18n="desktopMonitorOpacity">悬浮窗不透明度</label>
+                            <span id="setting-desktop-monitor-opacity-label" class="text-xs font-semibold text-accent-200">88%</span>
+                        </div>
+                        <input id="setting-desktop-monitor-opacity" type="range" min="35" max="100" step="1" value="88" oninput="syncMonitorOpacityLabel()" class="w-full mt-2 accent-blue-500">
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorOpacityDesc">数值越低越透明；保存后悬浮窗会自动应用。</p>
+                    </div>
                     <div class="flex flex-wrap gap-2 mt-3">
                         <button onclick="showDesktopTokenMonitor()" class="btn btn-primary text-xs" data-i18n="showFloatingMonitorNow">立即显示悬浮窗</button>
                         <button onclick="startCodexFromQuickAction()" class="btn btn-secondary text-xs" data-i18n="startCodex">启动 Codex</button>
@@ -724,6 +737,7 @@
                         <button onclick="navigateTo('providers')" class="btn btn-secondary text-xs" data-i18n="wizardProviderGuideSecondary">管理供应商</button>
                     </div>
                 </div>
+                <div id="settings-provider-wizard-summary" class="mt-5"></div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
                     <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointDefaults">缺少端口、访问标识、超时等信息时，会优先使用安全默认值。</div>
                     <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointModels">每个模型都可以单独标记文本、视觉、工具、图片、视频和长上下文能力。</div>
@@ -741,6 +755,7 @@
                         <button onclick="navigateTo('diagnostics')" class="btn btn-secondary text-xs" data-i18n="navDiagnostics">检查与恢复</button>
                     </div>
                 </div>
+                <div id="settings-routing-wizard-summary" class="mt-5"></div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
                     <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointOrder">模型轮换按当前顺序选择，健康状态异常时会优先避开。</div>
                     <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointMedia">纯文本代理不会被标成“全部不支持”，而是提示配置媒体供应商。</div>
@@ -764,6 +779,7 @@
                         <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointBalance">余额优先用官方扣费；没有价格时不估算费用。</div>
                     </div>
                 </div>
+                <div id="settings-alerts-wizard-summary" class="mt-4"></div>
                 <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 mt-4">
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="displayCurrency">Display Currency</label>
@@ -810,6 +826,7 @@
                     <div>
                         <h3 class="card-title" data-i18n="startupElevation">Startup & Elevation</h3>
                         <p class="text-xs text-dark-500 mt-1" data-i18n="startupElevationDesc">Windows startup changes require explicit confirmation; preview and status are read-only.</p>
+                        <p class="text-xs text-amber-300 mt-2" data-i18n="startupElevationHelp">普通开机启动不会提权；需要管理员权限时会使用 Windows 任务计划。</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button onclick="loadStartupStatus()" class="btn btn-secondary text-xs" data-i18n="refreshStatus">Refresh Status</button>
@@ -861,11 +878,16 @@
                         <input id="setting-startup-auto-elevate" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
                         <span data-i18n="requestHighestPrivileges">Request Highest Privileges</span>
                     </label>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input id="setting-plugin-unlock-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <span data-i18n="pluginUnlockEnabled">非官方模式插件增强</span>
+                    </label>
                     <div class="flex flex-wrap gap-2">
                         <button onclick="applyStartupSettings()" class="btn btn-warning text-xs" data-i18n="applyStartupChange">Apply Startup Change</button>
                         <button onclick="removeStartupSettings()" class="btn btn-danger text-xs" data-i18n="removeStartupEntry">Remove Startup Entry</button>
                     </div>
                 </div>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="pluginUnlockEnabledDesc">使用本地供应商或非官方登录时可开启更多插件类增强；官方登录启动会自动关闭这类能力，只保留安全显示增强。</p>
                 <pre id="startup-preview-result" class="preview-code mt-4" data-i18n="noPreviewYet">No preview yet.</pre>
                 <div class="mt-5 border-t border-dark-800 pt-5">
                     <div class="flex flex-wrap items-center justify-between gap-3">
@@ -955,6 +977,7 @@
                     </div>
                     <button onclick="saveSettings()" class="btn btn-primary text-xs" data-i18n="saveSettings">保存设置</button>
                 </div>
+                <div id="settings-finish-wizard-summary" class="mt-5"></div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
                     <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSave">保存只写入本应用配置，影响 Codex 的操作会单独确认。</div>
                     <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSource">项目来源和更新入口在整理与来源步骤中。</div>
