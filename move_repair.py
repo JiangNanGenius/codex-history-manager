@@ -52,8 +52,55 @@ from app_paths import app_data_path
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
+def _state_db_number(path: Path) -> int:
+    try:
+        return int(path.stem.replace("state_", ""))
+    except ValueError:
+        return 0
+
+
+def _jsonl_matches_thread(path: Path, thread_id: str, max_records: int = 40) -> bool:
+    """Best-effort metadata scan for JSONL files whose filename omits thread_id."""
+    if not thread_id:
+        return False
+    try:
+        seen = 0
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                seen += 1
+                if seen > max_records:
+                    return False
+                try:
+                    record = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if _record_mentions_thread(record, thread_id):
+                    return True
+    except Exception:
+        return False
+    return False
+
+
+def _record_mentions_thread(record: Any, thread_id: str) -> bool:
+    if not isinstance(record, dict):
+        return False
+    keys = ("id", "thread_id", "threadId", "session_id", "sessionId", "conversation_id", "conversationId")
+    for key in keys:
+        if str(record.get(key) or "") == thread_id:
+            return True
+    payload = record.get("payload")
+    if isinstance(payload, dict):
+        for key in keys:
+            if str(payload.get(key) or "") == thread_id:
+                return True
+    return False
+
+
 class MoveRepairManager:
-    def __init__(self, codex_home: str = "", db_path: str = "", sessions_dir: str = ""):
+    def __init__(self, codex_home: str = "", db_path: str = "", sessions_dir: str = "", archived_dir: str = ""):
         """
         初始化 MoveRepairManager。
 
@@ -61,6 +108,7 @@ class MoveRepairManager:
             codex_home: Codex 主目录，默认 ~/.codex。
             db_path: 显式指定 SQLite 路径；为空时从 codex_home 推导。
             sessions_dir: 显式指定 JSONL 会话目录；为空时从 codex_home 推导。
+            archived_dir: 显式指定归档 JSONL 会话目录；为空时从 codex_home 推导。
         """
         if codex_home:
             self.codex_home = Path(os.path.expandvars(codex_home)).expanduser()
@@ -76,16 +124,27 @@ class MoveRepairManager:
         else:
             # 优先 threads.db（任务描述），回退 state_5.sqlite（实际 Codex CLI）
             candidate = self.codex_home / "threads.db"
-            self.db_path = candidate if candidate.exists() else self.codex_home / "state_5.sqlite"
+            self.db_path = candidate if candidate.exists() else self._latest_state_db()
 
         if sessions_dir:
             self.sessions_dir = Path(os.path.expandvars(sessions_dir)).expanduser()
         else:
             self.sessions_dir = self.codex_home / "sessions"
 
-        self.archived_dir = self.codex_home / "archived_sessions"
+        if archived_dir:
+            self.archived_dir = Path(os.path.expandvars(archived_dir)).expanduser()
+        else:
+            self.archived_dir = self.codex_home / "archived_sessions"
         self.index_path = self.codex_home / "session_index.jsonl"
         self._backup_dir = app_data_path("move_repair_backups")
+
+    def _latest_state_db(self) -> Path:
+        state_files = sorted(
+            self.codex_home.glob("state_*.sqlite"),
+            key=lambda path: _state_db_number(path),
+            reverse=True,
+        )
+        return state_files[0] if state_files else self.codex_home / "state_5.sqlite"
 
     # ─────────────── 读取元数据 ───────────────
 
@@ -119,8 +178,27 @@ class MoveRepairManager:
         try:
             conn = sqlite3.connect(str(self.db_path), timeout=10.0)
             conn.row_factory = sqlite3.Row
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(threads)").fetchall()}
+            if "id" not in columns:
+                conn.close()
+                return {}
+            select_cols = [
+                col for col in (
+                    "id",
+                    "cwd",
+                    "title",
+                    "created_at",
+                    "updated_at",
+                    "model",
+                    "model_provider",
+                    "provider",
+                    "archived",
+                    "rollout_path",
+                )
+                if col in columns
+            ]
             cur = conn.execute(
-                "SELECT id, cwd, title, created_at, model, provider, archived FROM threads WHERE id=?",
+                f"SELECT {', '.join(select_cols)} FROM threads WHERE id=?",
                 (thread_id,),
             )
             row = cur.fetchone()
@@ -138,10 +216,14 @@ class MoveRepairManager:
         result["_file_path"] = str(path)
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
+                seen = 0
                 for line in f:
                     line = line.strip()
                     if not line:
                         continue
+                    seen += 1
+                    if seen > 40:
+                        break
                     try:
                         record = json.loads(line)
                     except json.JSONDecodeError:
@@ -152,15 +234,22 @@ class MoveRepairManager:
                         result["cwd"] = target.get("cwd", "")
                         result["title"] = target.get("title", "")
                         result["model"] = target.get("model", "")
-                        result["provider"] = target.get("provider", "")
+                        result["provider"] = target.get("provider", target.get("model_provider", ""))
                         break
-                    break  # 只读第一行有效 JSON
         except Exception:
             pass
         return result
 
+    def find_jsonl_for_thread(self, thread_id: str) -> Optional[Path]:
+        return self._find_jsonl_for_thread(thread_id)
+
     def _find_jsonl_for_thread(self, thread_id: str) -> Optional[Path]:
         """在 sessions_dir 和 archived_dir 中搜索 thread_id 对应的 jsonl 文件。"""
+        db_meta = self._read_db_meta(thread_id)
+        rollout_path = Path(str(db_meta.get("rollout_path") or "")).expanduser()
+        if rollout_path.exists() and rollout_path.is_file():
+            return rollout_path
+
         for base in (self.sessions_dir, self.archived_dir):
             if not base.exists():
                 continue
@@ -170,6 +259,9 @@ class MoveRepairManager:
             # 模糊匹配（应对 Codex 在文件名前加时间戳等前缀的情况）
             for p in base.rglob(f"*{thread_id}*.jsonl"):
                 return p
+            for p in base.rglob("*.jsonl"):
+                if _jsonl_matches_thread(p, thread_id):
+                    return p
         return None
 
     # ─────────────── Dry Run ───────────────
@@ -400,11 +492,21 @@ class MoveRepairManager:
             if not lines:
                 return False
 
-            first = lines[0].strip()
-            if not first:
-                return False
-            record = json.loads(first)
-            if not (isinstance(record, dict) and record.get("type") == "session_meta"):
+            meta_index = -1
+            record: Dict[str, Any] = {}
+            for idx, line in enumerate(lines):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    parsed = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict) and parsed.get("type") == "session_meta":
+                    meta_index = idx
+                    record = parsed
+                    break
+            if meta_index < 0:
                 return False
 
             payload = record.get("payload")
@@ -423,9 +525,8 @@ class MoveRepairManager:
             fd, tmp = tempfile.mkstemp(prefix=".move_repair_", dir=str(jsonl_path.parent))
             try:
                 with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as tmp_f:
-                    tmp_f.write(new_first)
-                    for line in lines[1:]:
-                        tmp_f.write(line)
+                    for idx, line in enumerate(lines):
+                        tmp_f.write(new_first if idx == meta_index else line)
                 if jsonl_path.exists():
                     shutil.copystat(jsonl_path, tmp, follow_symlinks=False)
                 os.replace(tmp, jsonl_path)

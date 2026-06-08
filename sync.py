@@ -71,6 +71,31 @@ def resolve_codex_home(codex_home: str = "") -> Path:
     return Path.home() / ".codex"
 
 
+def resolve_codex_db_path(codex_home: str = "", db_path: str = "") -> Path:
+    """Resolve the Codex SQLite path, preferring explicit config and newest state_N."""
+    if db_path:
+        return Path(os.path.expandvars(db_path)).expanduser()
+    home = resolve_codex_home(codex_home)
+    threads_db = home / "threads.db"
+    if threads_db.exists():
+        return threads_db
+    state_files = sorted(
+        home.glob("state_*.sqlite"),
+        key=lambda path: _state_db_number(path),
+        reverse=True,
+    )
+    if state_files:
+        return state_files[0]
+    return home / "state_5.sqlite"
+
+
+def _state_db_number(path: Path) -> int:
+    try:
+        return int(path.stem.replace("state_", ""))
+    except ValueError:
+        return 0
+
+
 def load_config_toml(config_path: str) -> Dict[str, str]:
     """
     读取 config.toml 获取当前 model_provider 和 model。
@@ -343,25 +368,29 @@ def codex_launch_candidates(
     return _dedupe_existing_paths(cpp_paths + gui_paths + cli_paths)
 
 
-def _launch_codex_path(path: str) -> None:
+def _launch_codex_path(path: str, extra_args: Optional[List[str]] = None) -> None:
     import subprocess
 
+    extra_args = extra_args or []
     flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
     suffix = Path(path).suffix.lower()
     if os.name == "nt" and suffix in {".bat", ".cmd"}:
         subprocess.Popen(
-            ["cmd.exe", "/c", "start", "", path],
+            ["cmd.exe", "/c", "start", "", path, *extra_args],
             creationflags=flags,
             close_fds=True,
         )
         return
-    subprocess.Popen([path], creationflags=flags, close_fds=True)
+    subprocess.Popen([path, *extra_args], creationflags=flags, close_fds=True)
 
 
 def start_codex(
     use_codex_plus_plus: bool = False,
     codex_plus_plus_path: str = "",
     codex_cli_path: str = "",
+    enable_cdp_injection: bool = False,
+    cdp_port: int = 51236,
+    backend_url: str = "",
 ) -> Tuple[bool, str]:
     """
     启动 Codex（或 Codex++）
@@ -375,11 +404,30 @@ def start_codex(
             return True, f"Codex 已在运行 (PID: {pids})"
 
         errors = []
+        extra_args = []
+        if enable_cdp_injection and not use_codex_plus_plus:
+            extra_args = [f"--remote-debugging-port={int(cdp_port)}"]
+
         for path in codex_launch_candidates(use_codex_plus_plus, codex_plus_plus_path, codex_cli_path):
             try:
-                _launch_codex_path(path)
+                _launch_codex_path(path, extra_args=extra_args)
                 label = "Codex++" if "codex-plus-plus" in path.lower() else "Codex"
-                return True, f"已启动 {label}: {path}"
+                message = f"已启动 {label}: {path}"
+                if enable_cdp_injection and not use_codex_plus_plus:
+                    try:
+                        from codex_injector import inject_codex_enhancements
+                        injection = inject_codex_enhancements(
+                            port=int(cdp_port),
+                            backend_url=backend_url,
+                            timeout_seconds=8,
+                        )
+                        if injection.get("success"):
+                            message += f"；增强注入成功 ({injection.get('targets_injected')} 个窗口)"
+                        else:
+                            message += f"；增强注入未完成: {injection.get('error')}"
+                    except Exception as inject_exc:
+                        message += f"；增强注入失败: {inject_exc}"
+                return True, message
             except Exception as exc:
                 errors.append(f"{path}: {exc}")
 
@@ -409,28 +457,38 @@ def sync_state_database(
         conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA journal_mode=WAL")
 
-        # 检查表结构
         cur = conn.execute("PRAGMA table_info(threads)")
         columns = {row[1] for row in cur.fetchall()}
-        if not {"id", "model_provider", "model"}.issubset(columns):
+        if "id" not in columns:
+            return 0, 0
+        provider_cols = [c for c in ("model_provider", "modelProvider", "provider") if c in columns]
+        model_cols = [c for c in ("model", "model_name", "modelName") if c in columns]
+        update_cols = provider_cols + model_cols
+        if not update_cols:
             return 0, 0
 
-        # 查询需要更新的行
-        cur = conn.execute("SELECT id, model_provider, model FROM threads")
+        select_cols = ["id"] + update_cols
+        cur = conn.execute(f"SELECT {', '.join(select_cols)} FROM threads")
         rows = cur.fetchall()
         seen = len(rows)
 
-        to_update = [
-            row_id for row_id, provider, model in rows
-            if provider != target_provider or model != target_model
-        ]
+        to_update = []
+        for row in rows:
+            row_id = row[0]
+            values = dict(zip(select_cols, row))
+            provider_changed = any(values.get(col) != target_provider for col in provider_cols)
+            model_changed = any(values.get(col) != target_model for col in model_cols)
+            if provider_changed or model_changed:
+                to_update.append(row_id)
         updated = len(to_update)
 
         if to_update and not dry_run:
             conn.execute("BEGIN IMMEDIATE")
+            assignments = ", ".join(f"{col} = ?" for col in update_cols)
+            values = [target_provider] * len(provider_cols) + [target_model] * len(model_cols)
             conn.executemany(
-                "UPDATE threads SET model_provider = ?, model = ? WHERE id = ?",
-                ((target_provider, target_model, row_id) for row_id in to_update)
+                f"UPDATE threads SET {assignments} WHERE id = ?",
+                ((*values, row_id) for row_id in to_update),
             )
             conn.commit()
 
@@ -736,6 +794,10 @@ def _atomic_write_text(path: str, content: str):
 
 def full_sync(
     codex_home: str = "",
+    db_path: str = "",
+    sessions_dir: str = "",
+    archived_dir: str = "",
+    index_path: str = "",
     target_provider: str = "",
     target_model: str = "",
     dry_run: bool = False,
@@ -752,10 +814,12 @@ def full_sync(
 
     home = resolve_codex_home(codex_home)
     config_path = home / "config.toml"
-    db_path = home / "state_5.sqlite"
-    sessions_dir = home / "sessions"
-    archived_dir = home / "archived_sessions"
-    index_path = home / "session_index.jsonl"
+    db_file = resolve_codex_db_path(str(home), db_path)
+    if not config_path.exists() and db_file.parent.joinpath("config.toml").exists():
+        config_path = db_file.parent / "config.toml"
+    sessions_root = Path(os.path.expandvars(sessions_dir)).expanduser() if sessions_dir else home / "sessions"
+    archived_root = Path(os.path.expandvars(archived_dir)).expanduser() if archived_dir else home / "archived_sessions"
+    index_file = Path(os.path.expandvars(index_path)).expanduser() if index_path else home / "session_index.jsonl"
 
     # 1. 获取目标设置
     if not target_provider or not target_model:
@@ -764,13 +828,13 @@ def full_sync(
         target_model = target_model or config.get("model", DEFAULT_MODEL)
 
     # 2. 同步 DB
-    seen, updated = sync_state_database(str(db_path), target_provider, target_model, dry_run)
+    seen, updated = sync_state_database(str(db_file), target_provider, target_model, dry_run)
     stats.db_threads_seen = seen
     stats.db_threads_updated = updated
 
     # 3. 同步 jsonl 文件
     seen, updated = sync_rollout_files(
-        str(sessions_dir), str(archived_dir),
+        str(sessions_root), str(archived_root),
         target_provider, target_model, dry_run
     )
     stats.rollout_files_seen = seen
@@ -778,7 +842,7 @@ def full_sync(
 
     # 4. 重建 session_index.jsonl
     seen, updated, malformed = sync_session_index(
-        str(index_path), str(db_path),
+        str(index_file), str(db_file),
         target_provider, target_model, dry_run
     )
     stats.index_rows_seen = seen

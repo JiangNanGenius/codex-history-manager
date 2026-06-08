@@ -39,6 +39,7 @@ from codex_permissions import inspect_codex_permissions, preview_codex_permissio
 
 CODEX_CONFIG_BACKUP_DIR = app_data_path("codex_backups")
 REDACTED = "********"
+LOCAL_PROXY_BEARER_TOKEN = "codex-enhance-manager-local"
 
 
 def resolve_codex_home(codex_home: str = "") -> Path:
@@ -83,7 +84,9 @@ def load_config_toml(config_path: str) -> Dict[str, Any]:
         import tomllib
         return tomllib.loads(content)
     except Exception:
-        # Fallback: simple line parser returns flat dict only
+        # Fallback: simple line parser. It intentionally supports dotted
+        # section names such as [model_providers.local] so a malformed config
+        # can still expose the keys needed for diagnostics and rollback.
         result: Dict[str, Any] = {}
         current_section = result
         for line in content.splitlines():
@@ -92,8 +95,7 @@ def load_config_toml(config_path: str) -> Dict[str, Any]:
                 continue
             if stripped.startswith("[") and stripped.endswith("]"):
                 section_name = stripped[1:-1].strip()
-                current_section = {}
-                result[section_name] = current_section
+                current_section = _ensure_section(result, section_name)
                 continue
             if "=" in stripped:
                 key, value = stripped.split("=", 1)
@@ -128,15 +130,7 @@ def save_config_toml(config_path: str, data: Dict[str, Any]) -> None:
     path = Path(config_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    lines: List[str] = []
-    for key, value in data.items():
-        if isinstance(value, dict):
-            lines.append(f"[{key}]")
-            for sub_key, sub_value in value.items():
-                lines.append(_toml_line(sub_key, sub_value))
-            lines.append("")
-        else:
-            lines.append(_toml_line(key, value))
+    lines = _toml_lines(data)
 
     content = "\n".join(lines) + "\n"
     tmp_path = path.with_suffix(".tmp")
@@ -147,15 +141,65 @@ def save_config_toml(config_path: str, data: Dict[str, Any]) -> None:
     tmp_path.replace(path)
 
 
+def _ensure_section(root: Dict[str, Any], section_name: str) -> Dict[str, Any]:
+    current = root
+    for raw_part in section_name.split("."):
+        part = raw_part.strip().strip('"\'')
+        if not part:
+            continue
+        child = current.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            current[part] = child
+        current = child
+    return current
+
+
+def _toml_lines(data: Dict[str, Any], prefix: Optional[List[str]] = None) -> List[str]:
+    prefix = prefix or []
+    lines: List[str] = []
+    scalar_items: List[Tuple[str, Any]] = []
+    table_items: List[Tuple[str, Dict[str, Any]]] = []
+
+    for key, value in data.items():
+        if isinstance(value, dict):
+            table_items.append((key, value))
+        else:
+            scalar_items.append((key, value))
+
+    if prefix:
+        lines.append("[" + ".".join(_toml_key_repr(part) for part in prefix) + "]")
+    for key, value in scalar_items:
+        lines.append(_toml_line(key, value))
+    if prefix and (scalar_items or not table_items):
+        lines.append("")
+
+    for key, value in table_items:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.extend(_toml_lines(value, prefix + [key]))
+
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _toml_key_repr(key: str) -> str:
+    text = str(key)
+    if text and all(ch.isalnum() or ch in "_-" for ch in text):
+        return text
+    return _toml_value_repr(text)
+
+
 def _toml_line(key: str, value: Any) -> str:
     if isinstance(value, bool):
-        return f'{key} = {"true" if value else "false"}'
+        return f'{_toml_key_repr(key)} = {"true" if value else "false"}'
     if isinstance(value, (int, float)):
-        return f"{key} = {value}"
+        return f"{_toml_key_repr(key)} = {value}"
     if isinstance(value, list):
         items = ", ".join(_toml_value_repr(v) for v in value)
-        return f"{key} = [{items}]"
-    return f'{key} = {_toml_value_repr(value)}'
+        return f"{_toml_key_repr(key)} = [{items}]"
+    return f'{_toml_key_repr(key)} = {_toml_value_repr(value)}'
 
 
 def _toml_value_repr(value: Any) -> str:
@@ -163,6 +207,13 @@ def _toml_value_repr(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return str(value)
+    if isinstance(value, dict):
+        items = ", ".join(
+            f"{_toml_key_repr(k)} = {_toml_value_repr(v)}"
+            for k, v in value.items()
+            if not isinstance(v, dict)
+        )
+        return "{ " + items + " }"
     text = str(value)
     # Proper TOML string escaping for double-quoted strings
     text = text.replace("\\", "\\\\")
@@ -321,6 +372,7 @@ def build_codex_enhance_provider_config(
     proxy_model: str = "auto",
 ) -> Dict[str, Any]:
     """Build a config.toml fragment for the local proxy provider."""
+    base_url = str(proxy_base_url or "http://localhost:8080/v1").strip().rstrip("/")
     return {
         "model_provider": "codex_enhance_manager",
         "model": proxy_model,
@@ -328,6 +380,15 @@ def build_codex_enhance_provider_config(
         "defaults": {
             "model_provider": "codex_enhance_manager",
             "model": proxy_model,
+        },
+        "model_providers": {
+            "codex_enhance_manager": {
+                "name": "Codex Enhance Manager",
+                "base_url": base_url,
+                "wire_api": "responses",
+                "requires_openai_auth": True,
+                "experimental_bearer_token": LOCAL_PROXY_BEARER_TOKEN,
+            },
         },
     }
 

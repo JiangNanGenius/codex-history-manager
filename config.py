@@ -54,6 +54,8 @@ DEFAULT_CONFIG = {
     "update_check_enabled": True,
     "update_include_prerelease": False,
     "plugin_unlock_enabled": False,
+    "codex_cdp_port": 51236,
+    "codex_injection_enabled": True,
     "proxy_upstream_timeout_seconds": 120,
     "proxy_retry_attempts": 0,
     "proxy_retry_backoff_ms": 250,
@@ -234,12 +236,16 @@ class Config:
             self._data["desktop_monitor_opacity"] = min(max(int(round(monitor_opacity)), 35), 100)
         except (TypeError, ValueError):
             self._data["desktop_monitor_opacity"] = DEFAULT_CONFIG["desktop_monitor_opacity"]
-        for key in ("update_check_enabled", "update_include_prerelease", "plugin_unlock_enabled"):
+        for key in ("update_check_enabled", "update_include_prerelease", "plugin_unlock_enabled", "codex_injection_enabled"):
             value = self._data.get(key)
             if isinstance(value, str):
                 self._data[key] = value.strip().lower() not in {"0", "false", "no", "off"}
             elif not isinstance(value, bool):
                 self._data[key] = DEFAULT_CONFIG[key]
+        try:
+            self._data["codex_cdp_port"] = min(max(int(self._data.get("codex_cdp_port", 51236)), 1), 65535)
+        except (TypeError, ValueError):
+            self._data["codex_cdp_port"] = DEFAULT_CONFIG["codex_cdp_port"]
         for key in (
             "startup_enabled",
             "startup_mode",

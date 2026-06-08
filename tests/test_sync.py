@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -41,6 +42,73 @@ class SyncHelpersTest(unittest.TestCase):
             self.assertTrue(changed)
             self.assertEqual(path.read_text(encoding="utf-8"), original)
 
+    def test_sync_state_database_accepts_provider_and_model_name_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state_9.sqlite"
+            conn = sqlite3.connect(str(db_path))
+            conn.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, provider TEXT, model_name TEXT)")
+            conn.execute("INSERT INTO threads (id, provider, model_name) VALUES (?, ?, ?)", ("t1", "old", "old-model"))
+            conn.commit()
+            conn.close()
+
+            seen, updated = sync.sync_state_database(str(db_path), "openai", "gpt-5")
+
+            self.assertEqual((seen, updated), (1, 1))
+            conn = sqlite3.connect(str(db_path))
+            row = conn.execute("SELECT provider, model_name FROM threads WHERE id='t1'").fetchone()
+            conn.close()
+            self.assertEqual(row, ("openai", "gpt-5"))
+
+    def test_full_sync_uses_configured_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            codex_home = root / "codex_home"
+            codex_home.mkdir()
+            db_path = root / "custom_state.sqlite"
+            sessions_dir = root / "custom_sessions"
+            archived_dir = root / "custom_archived"
+            sessions_dir.mkdir()
+            archived_dir.mkdir()
+            index_path = root / "custom_index.jsonl"
+
+            conn = sqlite3.connect(str(db_path))
+            conn.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, model_provider TEXT, model TEXT, archived INTEGER)")
+            conn.execute(
+                "INSERT INTO threads (id, cwd, model_provider, model, archived) VALUES (?, ?, ?, ?, ?)",
+                ("thread-a", str(root), "old", "old-model", 0),
+            )
+            conn.commit()
+            conn.close()
+
+            rollout = sessions_dir / "thread-a.jsonl"
+            rollout.write_text(
+                json.dumps({"type": "session_meta", "payload": {"model_provider": "old", "model": "old-model"}}, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            index_path.write_text(
+                json.dumps({"id": "thread-a", "model_provider": "old", "model": "old-model"}, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+            stats = sync.full_sync(
+                codex_home=str(codex_home),
+                db_path=str(db_path),
+                sessions_dir=str(sessions_dir),
+                archived_dir=str(archived_dir),
+                index_path=str(index_path),
+                target_provider="openai",
+                target_model="gpt-5",
+            )
+
+            self.assertEqual(stats.db_threads_updated, 1)
+            self.assertEqual(stats.rollout_files_updated, 1)
+            self.assertGreaterEqual(stats.index_rows_updated, 1)
+            conn = sqlite3.connect(str(db_path))
+            row = conn.execute("SELECT model_provider, model FROM threads WHERE id='thread-a'").fetchone()
+            conn.close()
+            self.assertEqual(row, ("openai", "gpt-5"))
+            self.assertEqual(json.loads(rollout.read_text(encoding="utf-8"))["payload"]["model"], "gpt-5")
+
     def test_kill_codex_uses_one_taskkill_for_process_tree(self):
         with patch.object(sync, "is_codex_running", side_effect=[(True, [123, 456]), (False, [])]), \
                 patch("subprocess.run") as run, \
@@ -75,6 +143,13 @@ class SyncHelpersTest(unittest.TestCase):
         self.assertLess(candidates.index(windowsapps_gui), candidates.index(configured_cli))
         self.assertIn(bin_cli, candidates)
         self.assertEqual(candidates[-1], path_cli)
+
+    def test_launch_codex_path_passes_extra_args(self):
+        with patch("subprocess.Popen") as popen, patch.object(sync.os, "name", "posix"):
+            sync._launch_codex_path("/opt/codex/Codex", extra_args=["--remote-debugging-port=51236"])
+
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0], ["/opt/codex/Codex", "--remote-debugging-port=51236"])
 
 
 if __name__ == "__main__":

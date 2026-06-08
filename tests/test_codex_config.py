@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from codex_config import (
     CodexConfigManager,
+    LOCAL_PROXY_BEARER_TOKEN,
     load_config_toml,
     save_config_toml,
     load_auth_json,
@@ -47,6 +48,30 @@ class ConfigTOMLTest(unittest.TestCase):
         self.assertEqual(merged["keep_this"], "yes")
         self.assertEqual(merged["defaults"]["model"], "gpt-5")
         self.assertEqual(merged["defaults"]["extra"], 123)
+
+    def test_roundtrip_nested_model_provider_table(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.toml"
+            original = {
+                "model_provider": "codex_enhance_manager",
+                "model_providers": {
+                    "codex_enhance_manager": {
+                        "name": "Codex Enhance Manager",
+                        "base_url": "http://127.0.0.1:51234/v1",
+                        "wire_api": "responses",
+                        "requires_openai_auth": True,
+                        "experimental_bearer_token": LOCAL_PROXY_BEARER_TOKEN,
+                    }
+                },
+            }
+
+            save_config_toml(str(path), original)
+            loaded = load_config_toml(str(path))
+
+            provider = loaded["model_providers"]["codex_enhance_manager"]
+            self.assertEqual(provider["wire_api"], "responses")
+            self.assertTrue(provider["requires_openai_auth"])
+            self.assertEqual(provider["experimental_bearer_token"], LOCAL_PROXY_BEARER_TOKEN)
 
 
 class AuthJsonTest(unittest.TestCase):
@@ -133,6 +158,11 @@ class CodexConfigManagerTest(unittest.TestCase):
             self.assertTrue(mgr.config_path.exists())
             config = load_config_toml(str(mgr.config_path))
             self.assertEqual(config.get("model_provider"), "codex_enhance_manager")
+            provider = config.get("model_providers", {}).get("codex_enhance_manager", {})
+            self.assertEqual(provider.get("base_url"), "http://localhost:8080/v1")
+            self.assertEqual(provider.get("wire_api"), "responses")
+            self.assertTrue(provider.get("requires_openai_auth"))
+            self.assertEqual(provider.get("experimental_bearer_token"), LOCAL_PROXY_BEARER_TOKEN)
 
     def test_preserve_official_oauth_does_not_touch_auth(self):
         with tempfile.TemporaryDirectory() as tmpdir:

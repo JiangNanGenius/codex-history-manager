@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app import _attach_usage_source_summary, _merge_cache_usage_sources
+from app import _attach_usage_source_summary, _merge_cache_usage_sources, _merge_local_proxy_request_log_usage
 from codex_rollout_usage import (
     discover_rollout_paths,
     get_codex_rollout_cache_stats,
@@ -376,6 +376,56 @@ class CodexRolloutUsageTest(unittest.TestCase):
         self.assertFalse(data["cache_overlap_risk"])
         self.assertEqual(data["cache_merge_strategy"], "cc_switch_db")
 
+    def test_merge_local_proxy_request_log_usage_fills_empty_totals(self):
+        data = {"total_tokens": 0, "cache_supported": False, "cache_sources": []}
+
+        _merge_local_proxy_request_log_usage(data, {
+            "exists": True,
+            "count": 2,
+            "success_count": 1,
+            "error_count": 1,
+            "latest_timestamp": "2026-06-07T12:00:00Z",
+            "tokens": {
+                "input_tokens": 30,
+                "output_tokens": 7,
+                "total_tokens": 37,
+                "reasoning_tokens": 3,
+                "cache_read_tokens": 5,
+                "cache_creation_tokens": 2,
+            },
+        })
+
+        self.assertEqual(data["data_source"], "local_proxy_request_log")
+        self.assertEqual(data["total_tokens"], 37)
+        self.assertEqual(data["input_tokens"], 30)
+        self.assertEqual(data["output_tokens"], 7)
+        self.assertEqual(data["reasoning_tokens"], 3)
+        self.assertEqual(data["cache_read_tokens"], 5)
+        self.assertEqual(data["cache_creation_tokens"], 2)
+        self.assertEqual(data["cache_total_tokens"], 7)
+        self.assertEqual(data["cache_merge_strategy"], "local_proxy_request_log")
+        self.assertEqual(data["cache_sources"], ["local_proxy_request_log"])
+
+    def test_merge_local_proxy_request_log_usage_does_not_override_existing_total(self):
+        data = {"total_tokens": 99, "data_source": "codex_db", "cache_supported": True, "cache_sources": ["codex_rollout"]}
+
+        _merge_local_proxy_request_log_usage(data, {
+            "exists": True,
+            "count": 1,
+            "success_count": 1,
+            "tokens": {
+                "input_tokens": 30,
+                "output_tokens": 7,
+                "total_tokens": 37,
+                "cache_read_tokens": 5,
+            },
+        })
+
+        self.assertEqual(data["data_source"], "codex_db")
+        self.assertEqual(data["total_tokens"], 99)
+        self.assertEqual(data["cache_sources"], ["codex_rollout", "local_proxy_request_log"])
+        self.assertTrue(data["cache_overlap_risk"])
+
     def test_attach_usage_source_summary_adds_badges_and_tooltips(self):
         data = {
             "cc_switch_db_configured": True,
@@ -396,6 +446,23 @@ class CodexRolloutUsageTest(unittest.TestCase):
         self.assertTrue(badges["codex_rollout"]["active"])
         self.assertEqual(badges["local_proxy"]["status"], "running")
         self.assertEqual(badges["cc_switch_db"]["status"], "configured")
+
+    def test_attach_usage_source_summary_uses_request_log_aggregate(self):
+        data = {"cc_switch_db_configured": False}
+
+        _attach_usage_source_summary(data, {"running": False}, {
+            "exists": True,
+            "count": 3,
+            "success_count": 2,
+            "error_count": 1,
+            "tokens": {"total_tokens": 88},
+        })
+
+        badges = {badge["id"]: badge for badge in data["usage_source_badges"]}
+        self.assertEqual(badges["local_proxy"]["status"], "active")
+        self.assertTrue(badges["local_proxy"]["active"])
+        self.assertIn("3 routed requests", badges["local_proxy"]["tooltip"])
+        self.assertIn("88 tokens", badges["local_proxy"]["tooltip"])
 
 
 if __name__ == "__main__":

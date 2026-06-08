@@ -132,34 +132,7 @@ def _extract_message(payload: Dict, timestamp: str = "") -> Optional[Dict]:
     content = payload.get("content", "")
     ts = payload.get("timestamp", timestamp)
 
-    # content 可能是字符串或列表（Codex 用 input_text / output_text）
-    text = ""
-    if isinstance(content, str):
-        text = content
-    elif isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict):
-                item_type = item.get("type", "")
-                if item_type in ("text", "input_text", "output_text"):
-                    parts.append(item.get("text", ""))
-                elif item_type == "tool_result":
-                    parts.append(f"[工具结果: {str(item.get('content', ''))[:200]}]")
-                elif item_type == "tool_use":
-                    parts.append(f"[调用工具: {item.get('name', '')}]")
-                elif item_type == "input_image":
-                    parts.append("[图片]")
-                elif item_type == "refusal":
-                    parts.append(f"[拒绝: {item.get('refusal', '')}]")
-                else:
-                    # 其他类型尝试提取 text
-                    if "text" in item:
-                        parts.append(item["text"])
-            elif isinstance(item, str):
-                parts.append(item)
-        text = "\n".join(p for p in parts if p)
-    elif isinstance(content, dict):
-        text = str(content)
+    text = _extract_content_text(content)
 
     if not text and role in ("function_call_output",):
         # 工具输出
@@ -179,6 +152,61 @@ def _extract_message(payload: Dict, timestamp: str = "") -> Optional[Dict]:
         "content": text,
         "timestamp": ts,
     }
+
+
+def _extract_content_text(content) -> str:
+    """Extract readable text while preserving user-visible file attachments."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        if "text" in content:
+            return str(content.get("text") or "")
+        file_label = _content_file_label(content)
+        return file_label or str(content)
+    if not isinstance(content, list):
+        return ""
+
+    parts = []
+    for item in content:
+        if isinstance(item, dict):
+            item_type = item.get("type", "")
+            if item_type in ("text", "input_text", "output_text"):
+                parts.append(item.get("text", ""))
+            elif item_type == "tool_result":
+                parts.append(f"[工具结果: {str(item.get('content', ''))[:200]}]")
+            elif item_type == "tool_use":
+                parts.append(f"[调用工具: {item.get('name', '')}]")
+            elif item_type == "input_image":
+                parts.append(_content_file_label(item, default="[图片]"))
+            elif item_type in ("input_file", "file", "file_reference", "attachment"):
+                parts.append(_content_file_label(item, default="[文件]"))
+            elif item_type == "refusal":
+                parts.append(f"[拒绝: {item.get('refusal', '')}]")
+            elif "text" in item:
+                parts.append(item["text"])
+            else:
+                label = _content_file_label(item)
+                if label:
+                    parts.append(label)
+        elif isinstance(item, str):
+            parts.append(item)
+    return "\n".join(str(p) for p in parts if p)
+
+
+def _content_file_label(item: Dict, default: str = "") -> str:
+    name = (
+        item.get("filename")
+        or item.get("file_name")
+        or item.get("name")
+        or item.get("path")
+        or item.get("file_id")
+        or item.get("id")
+    )
+    if not name:
+        return default
+    item_type = str(item.get("type") or "").lower()
+    label = "图片" if "image" in item_type else "文件"
+    return f"[{label}: {name}]"
 
 
 def read_session_meta(path: str) -> Dict:

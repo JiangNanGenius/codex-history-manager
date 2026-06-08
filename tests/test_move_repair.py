@@ -159,6 +159,55 @@ class TestReadMetadata(MoveRepairTestBase):
         self.assertTrue(meta.get("jsonl_found"))
         self.assertIn(self.thread_id, meta.get("jsonl_path", ""))
 
+    def test_read_thread_metadata_finds_jsonl_by_payload_thread_id(self):
+        path = self.sessions_dir / "rollout-without-thread-name.jsonl"
+        path.write_text(
+            json.dumps({"type": "event", "payload": {"message": "hello"}}, ensure_ascii=False) + "\n" +
+            json.dumps({
+                "type": "session_meta",
+                "payload": {
+                    "thread_id": self.thread_id,
+                    "cwd": self.original_cwd,
+                    "title": "Payload Matched",
+                    "model": "gpt-5",
+                    "model_provider": "openai",
+                },
+            }, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        meta = self.mgr.read_thread_metadata(self.thread_id)
+
+        self.assertTrue(meta.get("jsonl_found"))
+        self.assertEqual(meta.get("title"), "Payload Matched")
+        self.assertEqual(Path(meta.get("jsonl_path", "")).name, "rollout-without-thread-name.jsonl")
+
+    def test_read_db_meta_without_provider_column(self):
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute(
+            """
+            CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                cwd TEXT,
+                title TEXT,
+                model TEXT,
+                archived INTEGER
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO threads (id, cwd, title, model, archived) VALUES (?, ?, ?, ?, ?)",
+            (self.thread_id, self.original_cwd, "No Provider Column", "gpt-5", 0),
+        )
+        conn.commit()
+        conn.close()
+
+        meta = self.mgr.read_thread_metadata(self.thread_id)
+
+        self.assertEqual(meta.get("cwd"), self.original_cwd)
+        self.assertEqual(meta.get("title"), "No Provider Column")
+        self.assertNotIn("provider", meta)
+
 
 class TestDryRun(MoveRepairTestBase):
     @patch("move_repair.subprocess.run", side_effect=_git_mock)
@@ -207,6 +256,21 @@ class TestExecuteMove(MoveRepairTestBase):
         self.assertEqual(self._read_db_cwd(self.thread_id), str(self.target_repo))
         self.assertEqual(self._read_jsonl_cwd(self.thread_id), str(self.target_repo))
         self.assertEqual(self._read_index_cwd(self.thread_id), str(self.target_repo))
+
+    def test_update_jsonl_cwd_updates_session_meta_after_first_line(self):
+        path = self.sessions_dir / "delayed-meta.jsonl"
+        path.write_text(
+            json.dumps({"type": "event", "payload": {"message": "first"}}, ensure_ascii=False) + "\n" +
+            json.dumps({"type": "session_meta", "payload": {"cwd": self.original_cwd}}, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        changed = self.mgr._update_jsonl_cwd(path, str(self.target_repo))
+
+        self.assertTrue(changed)
+        lines = path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(json.loads(lines[0])["type"], "event")
+        self.assertEqual(json.loads(lines[1])["payload"]["cwd"], str(self.target_repo))
 
     @patch("move_repair.subprocess.run", side_effect=_git_mock)
     @patch.object(MoveRepairManager, "verify_consistency")

@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, has_request_context, jsonify, request, send_from_directory
 
 from config import Config, CONFIG_FILE, DEFAULT_CONFIG
 from db import CodexDB
@@ -85,6 +85,7 @@ from media_proxy import build_media_route_readiness
 from codex_approval_bridge import CodexApprovalBridgeError, build_codex_approval_bridge_preview
 from app_version import APP_REPOSITORY_URL, APP_VERSION
 from updater import UpdateManager
+from codex_injector import DEFAULT_CDP_PORT, backend_url_from_env, inject_codex_enhancements
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -105,6 +106,47 @@ def _normalize_codex_start_mode(body: Dict[str, Any], login_defaults: Dict[str, 
     if body.get("official_mode") is True:
         return START_MODE_OFFICIAL_DIRECT
     return str(login_defaults.get("default_start_mode") or START_MODE_PROXY_INJECTION)
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _coerce_port(value: Any, default: int = DEFAULT_CDP_PORT) -> int:
+    try:
+        return min(max(int(value), 1), 65535)
+    except (TypeError, ValueError):
+        return default
+
+
+def _resolve_codex_injection_settings(
+    config_obj: Config,
+    body: Dict[str, Any],
+    *,
+    use_codex_plus_plus: bool,
+    official_mode: bool = False,
+    persist: bool = False,
+) -> Dict[str, Any]:
+    configured_enabled = _coerce_bool(config_obj.get("codex_injection_enabled", True), True)
+    requested_enabled = _coerce_bool(body.get("enable_cdp_injection"), configured_enabled)
+    enabled = requested_enabled and not use_codex_plus_plus and not official_mode
+    cdp_port = _coerce_port(body.get("cdp_port"), _coerce_port(config_obj.get("codex_cdp_port", DEFAULT_CDP_PORT)))
+    if persist:
+        config_obj.update({
+            "codex_injection_enabled": requested_enabled,
+            "codex_cdp_port": cdp_port,
+        })
+    return {
+        "enabled": enabled,
+        "requested_enabled": requested_enabled,
+        "cdp_port": cdp_port,
+    }
 
 
 def _official_login_defaults(mgr: CodexConfigManager) -> Dict[str, Any]:
@@ -152,6 +194,11 @@ def disable_codex_enhance_provider_config(mgr: CodexConfigManager) -> Dict[str, 
         providers = dict(providers)
         del providers["codex_enhance_manager"]
         next_config["providers"] = providers
+    model_providers = next_config.get("model_providers")
+    if isinstance(model_providers, dict) and "codex_enhance_manager" in model_providers:
+        model_providers = dict(model_providers)
+        del model_providers["codex_enhance_manager"]
+        next_config["model_providers"] = model_providers
 
     changed = next_config != current_config
     result["changed"] = changed
@@ -265,6 +312,25 @@ def create_app() -> Flask:
             port_int = 8080
         return f"http://127.0.0.1:{port_int}/v1"
 
+    def _current_backend_url() -> str:
+        if has_request_context():
+            return str(request.host_url or "").rstrip("/") or backend_url_from_env()
+        return backend_url_from_env()
+
+    def _sync_paths_from_config() -> Dict[str, str]:
+        return {
+            "db_path": config.get("db_path", ""),
+            "sessions_dir": config.get("sessions_dir", ""),
+            "archived_dir": config.get("archived_dir", ""),
+        }
+
+    def _move_repair_manager() -> MoveRepairManager:
+        return MoveRepairManager(
+            db_path=config.get("db_path", ""),
+            sessions_dir=config.get("sessions_dir", ""),
+            archived_dir=config.get("archived_dir", ""),
+        )
+
     @app.before_request
     def _block_writes_after_uninstall_cleanup():
         """After uninstall cleanup, keep the current process read-only."""
@@ -279,6 +345,14 @@ def create_app() -> Flask:
                 "reason": config.write_lock_reason(),
             }), 423
         return None
+
+    @app.after_request
+    def _allow_injected_codex_menu(response):
+        if request.path.startswith("/api/codex-injection/"):
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
 
     # 启动自动备份
     if config.get("auto_backup") and os.environ.get("CODEX_ENHANCE_MANAGER_SMOKE_TEST") != "1":
@@ -363,11 +437,15 @@ def create_app() -> Flask:
                 max_msgs = config.get("max_lines_large_file", 2000)
                 large_thresh = config.get("large_file_threshold_mb", 500)
                 data = read_messages(rollout_path, max_messages=max_msgs, large_file_limit=large_thresh)
+                thread["rollout_path"] = rollout_path
+                thread["jsonl_path"] = rollout_path
                 thread["messages"] = data.get("messages", [])
                 thread["message_count"] = len(data.get("messages", []))
                 thread["is_large_file"] = data.get("is_large_file", False)
                 thread["truncated"] = data.get("truncated", False)
                 thread["file_size_mb"] = data.get("file_size_mb", 0)
+                thread["file_error"] = data.get("error")
+                thread["file_not_found"] = False
             else:
                 thread["messages"] = []
                 thread["message_count"] = 0
@@ -480,7 +558,9 @@ def create_app() -> Flask:
                     "未配置代理缓存数据库；缓存统计需要请求经过代理数据源，官方 API 和自定义 API 都可被统计。"
                 )
             _merge_cache_usage_sources(data, rollout_cache_data, cc_cache_data, use_rollout_total=rollout_total_source)
-            _attach_usage_source_summary(data, proxy_server.status())
+            request_log_summary = _request_log_store().summary()
+            _merge_local_proxy_request_log_usage(data, request_log_summary)
+            _attach_usage_source_summary(data, proxy_server.status(), request_log_summary)
             data.update(_resolve_current_context_window(config, provider_registry))
             if data.get("codex_rollout_latest_context_window"):
                 data["current_context_window"] = data["codex_rollout_latest_context_window"]
@@ -566,6 +646,7 @@ def create_app() -> Flask:
                 target_provider=target_provider,
                 target_model=target_model,
                 dry_run=True,
+                **_sync_paths_from_config(),
             )
             return jsonify(_sync_stats_to_dict(stats))
         except Exception as e:
@@ -581,6 +662,7 @@ def create_app() -> Flask:
 
             payload, status = _run_sync_with_backup(
                 backup_mgr,
+                path_config=_sync_paths_from_config(),
                 target_provider=target_provider,
                 target_model=target_model,
             )
@@ -668,13 +750,23 @@ def create_app() -> Flask:
                 }
             else:
                 use_cpp = body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
-                sync_payload, sync_status = _run_sync_with_backup(backup_mgr)
+                sync_payload, sync_status = _run_sync_with_backup(backup_mgr, path_config=_sync_paths_from_config())
                 if sync_status >= 400:
                     return jsonify(sync_payload), sync_status
+            injection_settings = _resolve_codex_injection_settings(
+                config,
+                body,
+                use_codex_plus_plus=bool(use_cpp),
+                official_mode=official_mode,
+                persist=True,
+            )
             ok, msg = start_codex(
                 use_codex_plus_plus=use_cpp,
                 codex_plus_plus_path=config.get("codex_plus_plus_path", ""),
                 codex_cli_path=config.get("codex_cli_path", ""),
+                enable_cdp_injection=injection_settings["enabled"],
+                cdp_port=injection_settings["cdp_port"],
+                backend_url=_current_backend_url(),
             )
             return jsonify({
                 "success": ok,
@@ -686,6 +778,9 @@ def create_app() -> Flask:
                 **login_defaults,
                 "official_mode_changes": official_payload,
                 "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
+                "codex_injection_enabled": injection_settings["requested_enabled"],
+                "codex_cdp_port": injection_settings["cdp_port"],
+                "codex_injection_active": injection_settings["enabled"],
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1684,6 +1779,9 @@ def create_app() -> Flask:
                 "proxy_status": proxy_server.status(),
                 "default_proxy_base_url": _current_proxy_base_url(),
                 "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
+                "codex_injection_enabled": _coerce_bool(config.get("codex_injection_enabled", True), True),
+                "codex_cdp_port": _coerce_port(config.get("codex_cdp_port", DEFAULT_CDP_PORT)),
+                "backend_url": _current_backend_url(),
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1843,9 +1941,16 @@ def create_app() -> Flask:
 
             # 可选：先同步配置
             if body.get("sync_before_restart", True):
-                sync_payload, sync_status = _run_sync_with_backup(backup_mgr)
+                sync_payload, sync_status = _run_sync_with_backup(backup_mgr, path_config=_sync_paths_from_config())
                 if sync_status >= 400:
                     return jsonify({"error": "同步失败，取消重启", "sync": sync_payload}), 500
+
+            injection_settings = _resolve_codex_injection_settings(
+                config,
+                body,
+                use_codex_plus_plus=bool(use_cpp),
+                persist=True,
+            )
 
             # Kill Codex
             kill_ok, kill_msg = kill_codex()
@@ -1855,6 +1960,9 @@ def create_app() -> Flask:
                 use_codex_plus_plus=use_cpp,
                 codex_plus_plus_path=config.get("codex_plus_plus_path", ""),
                 codex_cli_path=config.get("codex_cli_path", ""),
+                enable_cdp_injection=injection_settings["enabled"],
+                cdp_port=injection_settings["cdp_port"],
+                backend_url=_current_backend_url(),
             )
 
             return jsonify({
@@ -1862,6 +1970,9 @@ def create_app() -> Flask:
                 "killed": kill_ok,
                 "kill_message": kill_msg,
                 "start_message": start_msg,
+                "codex_injection_enabled": injection_settings["requested_enabled"],
+                "codex_cdp_port": injection_settings["cdp_port"],
+                "codex_injection_active": injection_settings["enabled"],
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1911,6 +2022,46 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/codex-injection/status")
+    def codex_injection_status():
+        """Status endpoint consumed by the injected Codex renderer menu."""
+        return jsonify({
+            "success": True,
+            "enabled": _coerce_bool(config.get("codex_injection_enabled", True), True),
+            "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
+            "cdp_port": _coerce_port(config.get("codex_cdp_port", DEFAULT_CDP_PORT)),
+            "backend_url": _current_backend_url(),
+        })
+
+    @app.route("/api/codex-injection/apply", methods=["POST"])
+    def codex_injection_apply():
+        """Manually retry CDP injection against an already running Codex window."""
+        try:
+            body = request.get_json(silent=True) or {}
+            injection_settings = _resolve_codex_injection_settings(
+                config,
+                body,
+                use_codex_plus_plus=False,
+                persist=True,
+            )
+            if not injection_settings["requested_enabled"]:
+                return jsonify({
+                    "success": False,
+                    "enabled": False,
+                    "error": "Codex enhancement injection is disabled.",
+                    "cdp_port": injection_settings["cdp_port"],
+                }), 409
+            result = inject_codex_enhancements(
+                port=injection_settings["cdp_port"],
+                backend_url=body.get("backend_url") or _current_backend_url(),
+                timeout_seconds=float(body.get("timeout_seconds") or 4),
+            )
+            result["enabled"] = injection_settings["requested_enabled"]
+            result["cdp_port"] = injection_settings["cdp_port"]
+            return jsonify(result), 200 if result.get("success") else 409
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
     @app.route("/api/proxy/test-route", methods=["POST"])
     def proxy_test_route():
         """
@@ -1940,7 +2091,7 @@ def create_app() -> Flask:
     def move_repair_status(thread_id):
         """读取 thread 元数据（SQLite + JSONL 合并视图）。"""
         try:
-            mgr = MoveRepairManager()
+            mgr = _move_repair_manager()
             data = mgr.read_thread_metadata(thread_id)
             return jsonify({"success": True, "metadata": data})
         except Exception as e:
@@ -1955,7 +2106,7 @@ def create_app() -> Flask:
             target_path = body.get("target_path", "")
             if not thread_id or not target_path:
                 return jsonify({"error": "thread_id 和 target_path 必填"}), 400
-            mgr = MoveRepairManager()
+            mgr = _move_repair_manager()
             result = mgr.dry_run_move(thread_id, target_path)
             return jsonify(result)
         except Exception as e:
@@ -1970,7 +2121,7 @@ def create_app() -> Flask:
             target_path = body.get("target_path", "")
             if not thread_id or not target_path:
                 return jsonify({"error": "thread_id 和 target_path 必填"}), 400
-            mgr = MoveRepairManager()
+            mgr = _move_repair_manager()
             result = mgr.execute_move(thread_id, target_path)
             return jsonify(result)
         except Exception as e:
@@ -1980,7 +2131,7 @@ def create_app() -> Flask:
     def move_repair_verify(thread_id):
         """一致性校验：检查三端 cwd 是否对齐且指向有效 Git 仓库。"""
         try:
-            mgr = MoveRepairManager()
+            mgr = _move_repair_manager()
             result = mgr.verify_consistency(thread_id)
             return jsonify(result)
         except Exception as e:
@@ -1990,7 +2141,7 @@ def create_app() -> Flask:
     def move_repair_repair_current():
         """检测当前工作目录与 thread cwd 匹配关系，提供修复建议。"""
         try:
-            mgr = MoveRepairManager()
+            mgr = _move_repair_manager()
             result = mgr.repair_current_thread()
             return jsonify(result)
         except Exception as e:
@@ -2469,14 +2620,82 @@ def _merge_cache_usage_sources(
     data["cache_note"] = " ".join(notes)
 
 
-def _attach_usage_source_summary(data: Dict[str, Any], proxy_status: Dict[str, Any] | None = None) -> None:
+def _merge_local_proxy_request_log_usage(data: Dict[str, Any], request_log_summary: Dict[str, Any] | None) -> None:
+    summary = request_log_summary if isinstance(request_log_summary, dict) else {}
+    tokens = summary.get("tokens") if isinstance(summary.get("tokens"), dict) else {}
+    proxy_total = _safe_int(tokens.get("total_tokens"))
+    proxy_input = _safe_int(tokens.get("input_tokens"))
+    proxy_output = _safe_int(tokens.get("output_tokens"))
+    proxy_reasoning = _safe_int(tokens.get("reasoning_tokens"))
+    proxy_cache_read = _safe_int(tokens.get("cache_read_tokens"))
+    proxy_cache_creation = _safe_int(tokens.get("cache_creation_tokens"))
+    proxy_cache_total = proxy_cache_read + proxy_cache_creation
+
+    data["local_proxy_request_log"] = summary
+    data["local_proxy_request_log_exists"] = bool(summary.get("exists"))
+    data["local_proxy_request_count"] = _safe_int(summary.get("count"))
+    data["local_proxy_success_count"] = _safe_int(summary.get("success_count"))
+    data["local_proxy_error_count"] = _safe_int(summary.get("error_count"))
+    data["local_proxy_latest_timestamp"] = summary.get("latest_timestamp") or ""
+    data["local_proxy_total_tokens"] = proxy_total
+    data["local_proxy_input_tokens"] = proxy_input
+    data["local_proxy_output_tokens"] = proxy_output
+    data["local_proxy_reasoning_tokens"] = proxy_reasoning
+    data["local_proxy_cache_read_tokens"] = proxy_cache_read
+    data["local_proxy_cache_creation_tokens"] = proxy_cache_creation
+    data["local_proxy_cache_total_tokens"] = proxy_cache_total
+    data["local_proxy_cache_supported"] = proxy_cache_total > 0
+
+    if proxy_cache_total > 0:
+        cache_sources = data.setdefault("cache_sources", [])
+        if "local_proxy_request_log" not in cache_sources:
+            cache_sources.append("local_proxy_request_log")
+        if not data.get("cache_supported"):
+            data["cache_supported"] = True
+            data["cache_read_tokens"] = proxy_cache_read
+            data["cache_creation_tokens"] = proxy_cache_creation
+            data["cache_total_tokens"] = proxy_cache_total
+            data["cache_merge_strategy"] = "local_proxy_request_log"
+        else:
+            data["cache_overlap_risk"] = True
+
+    if _safe_int(data.get("total_tokens")) <= 0 and proxy_total > 0:
+        data["input_tokens"] = proxy_input
+        data["output_tokens"] = proxy_output
+        data["reasoning_tokens"] = proxy_reasoning
+        data["total_tokens"] = proxy_total
+        data["data_source"] = "local_proxy_request_log"
+        data["realtime_note"] = "Local proxy request logs are used because Codex DB and rollout usage have no token total."
+
+
+def _attach_usage_source_summary(
+    data: Dict[str, Any],
+    proxy_status: Dict[str, Any] | None = None,
+    request_log_summary: Dict[str, Any] | None = None,
+) -> None:
     proxy_status = proxy_status or {}
+    request_log_summary = request_log_summary if isinstance(request_log_summary, dict) else {}
     rollout_discovered = _safe_int(data.get("codex_rollout_paths_discovered"))
     rollout_scanned = _safe_int(data.get("codex_rollout_files_scanned"))
     cc_configured = bool(data.get("cc_switch_db_configured"))
     cc_supported = bool(data.get("cc_switch_cache_supported"))
     cc_strategy = str(data.get("cc_switch_cache_strategy") or "")
     proxy_running = bool(proxy_status.get("running"))
+    proxy_log_exists = bool(request_log_summary.get("exists"))
+    proxy_log_count = _safe_int(request_log_summary.get("count"))
+    proxy_log_tokens = _safe_int(
+        (request_log_summary.get("tokens") if isinstance(request_log_summary.get("tokens"), dict) else {}).get("total_tokens")
+    )
+    proxy_log_success = _safe_int(request_log_summary.get("success_count"))
+    proxy_log_errors = _safe_int(request_log_summary.get("error_count"))
+    if proxy_log_count:
+        proxy_status_label = "active"
+    elif proxy_running:
+        proxy_status_label = "running"
+    elif proxy_log_exists:
+        proxy_status_label = "empty"
+    else:
+        proxy_status_label = "stopped"
 
     sources = [
         {
@@ -2509,12 +2728,13 @@ def _attach_usage_source_summary(data: Dict[str, Any], proxy_status: Dict[str, A
             "id": "local_proxy",
             "label": "Local proxy",
             "badge": "local proxy",
-            "status": "running" if proxy_running else "stopped",
-            "active": proxy_running,
-            "kind": "proxy_runtime",
+            "status": proxy_status_label,
+            "active": proxy_running or proxy_log_count > 0,
+            "kind": "proxy_request_log",
             "tooltip": (
-                "Local proxy can observe routed requests. Request-log aggregation is a separate TODO; "
-                "CC Switch/proxy DB fields are shown when configured."
+                f"Request log has {proxy_log_count} routed requests "
+                f"({proxy_log_success} success, {proxy_log_errors} errors) and {proxy_log_tokens} tokens. "
+                f"Proxy runtime is {'running' if proxy_running else 'stopped'}."
             ),
         },
         {
@@ -2584,11 +2804,18 @@ def _sync_stats_to_dict(stats) -> Dict:
     }
 
 
-def _run_sync_with_backup(backup_mgr: BackupManager, target_provider: str = "", target_model: str = "") -> tuple[Dict, int]:
+def _run_sync_with_backup(
+    backup_mgr: BackupManager,
+    path_config: Dict[str, str] | None = None,
+    target_provider: str = "",
+    target_model: str = "",
+) -> tuple[Dict, int]:
+    path_config = path_config or {}
     preview = full_sync(
         target_provider=target_provider,
         target_model=target_model,
         dry_run=True,
+        **path_config,
     )
     if not preview.changed:
         payload = _sync_stats_to_dict(preview)
@@ -2604,6 +2831,7 @@ def _run_sync_with_backup(backup_mgr: BackupManager, target_provider: str = "", 
         target_provider=target_provider,
         target_model=target_model,
         dry_run=False,
+        **path_config,
     )
     payload = _sync_stats_to_dict(stats)
     payload["backup_path"] = pre_backup.get("path", "")
@@ -2611,23 +2839,53 @@ def _run_sync_with_backup(backup_mgr: BackupManager, target_provider: str = "", 
 
 
 def _find_file_for_thread(thread: Dict, config: Config) -> str:
-    """根据 thread_id 和 archived 状态推断文件路径"""
+    """根据 thread_id、rollout_path 和 JSONL 元数据推断文件路径。"""
     import glob as glob_module
     tid = thread.get("id", "")
     archived = thread.get("archived", 0)
-    base_dir = config.get("archived_dir") if archived else config.get("sessions_dir")
-
-    if not base_dir:
-        return ""
-
-    patterns = [
-        os.path.join(base_dir, f"*{tid}*.jsonl"),
-        os.path.join(base_dir, "**", f"*{tid}*.jsonl"),
+    configured_dirs = [
+        config.get("archived_dir") if archived else config.get("sessions_dir"),
+        config.get("sessions_dir"),
+        config.get("archived_dir"),
     ]
-    for pat in patterns:
-        files = glob_module.glob(pat, recursive=True)
-        if files:
-            return files[0]
+
+    for key in ("rollout_path", "jsonl_path", "file_path", "path"):
+        candidate = str(thread.get(key) or "").strip()
+        if candidate and os.path.exists(candidate):
+            return candidate
+
+    base_dirs = []
+    seen_dirs = set()
+    for raw in configured_dirs:
+        if not raw:
+            continue
+        expanded = os.path.expandvars(str(raw))
+        key = expanded.lower()
+        if key not in seen_dirs and os.path.isdir(expanded):
+            base_dirs.append(expanded)
+            seen_dirs.add(key)
+
+    for base_dir in base_dirs:
+        patterns = [
+            os.path.join(base_dir, f"*{tid}*.jsonl"),
+            os.path.join(base_dir, "**", f"*{tid}*.jsonl"),
+        ]
+        for pat in patterns:
+            files = glob_module.glob(pat, recursive=True)
+            if files:
+                return files[0]
+
+    try:
+        mgr = MoveRepairManager(
+            db_path=config.get("db_path", ""),
+            sessions_dir=config.get("sessions_dir", ""),
+            archived_dir=config.get("archived_dir", ""),
+        )
+        found = mgr.find_jsonl_for_thread(tid)
+        if found and found.exists():
+            return str(found)
+    except Exception:
+        pass
     return ""
 
 

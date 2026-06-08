@@ -548,6 +548,8 @@ function renderProvidersPage() {
             </div>
         </div>
 
+        ${renderProviderResponsibilityStrip()}
+
         <div class="grid grid-cols-1 2xl:grid-cols-[320px_1fr_420px] gap-4 mt-6">
             <div class="space-y-4">
                 <div class="card">
@@ -585,10 +587,8 @@ function renderProvidersPage() {
 
 function renderProviderSidePanel() {
     return `
+        ${renderProviderScopeCard()}
         ${renderCatalogPreviewPanel()}
-        ${renderProxyRouteTestCard()}
-        ${renderRouteSimulatorShell()}
-        ${renderCodexDiffPreviewShell()}
     `;
 }
 
@@ -601,6 +601,44 @@ function refreshProviderSidePanel() {
     root.innerHTML = renderProviderSidePanel();
     if (typeof triggerStaggerAnimations === 'function') triggerStaggerAnimations(root);
     if (typeof attachRippleToButtons === 'function') attachRippleToButtons(root);
+}
+
+function renderProviderResponsibilityStrip() {
+    return `
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-5">
+            ${renderProviderResponsibilityTile(t('providerScopeConnection'), t('providerScopeConnectionDesc'))}
+            ${renderProviderResponsibilityTile(t('providerScopeModels'), t('providerScopeModelsDesc'))}
+            ${renderProviderResponsibilityTile(t('providerScopeMediaQuota'), t('providerScopeMediaQuotaDesc'))}
+            <div class="rounded-lg border border-amber-700/40 bg-amber-950/20 p-3">
+                <div class="text-xs font-semibold text-amber-200">${escapeHtml(t('providerScopeRouting'))}</div>
+                <div class="text-xs text-amber-100/80 mt-1">${escapeHtml(t('providerScopeRoutingDesc'))}</div>
+                <button onclick="navigateTo('amr')" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('openModelRotation'))}</button>
+            </div>
+        </div>
+    `;
+}
+
+function renderProviderResponsibilityTile(title, detail) {
+    return `
+        <div class="rounded-lg border border-dark-800 bg-dark-950/45 p-3">
+            <div class="text-xs font-semibold text-dark-200">${escapeHtml(title)}</div>
+            <div class="text-xs text-dark-500 mt-1">${escapeHtml(detail)}</div>
+        </div>
+    `;
+}
+
+function renderProviderScopeCard() {
+    return `
+        <div class="card">
+            <h3 class="card-title">${escapeHtml(t('providerScopeTitle'))}</h3>
+            <div class="space-y-2 mt-3 text-sm text-dark-300">
+                <div>${escapeHtml(t('providerScopeKeepHere'))}</div>
+                <div>${escapeHtml(t('providerScopeMoveToAmr'))}</div>
+                <div>${escapeHtml(t('providerScopeCodexApply'))}</div>
+            </div>
+            <button onclick="navigateTo('amr')" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('openModelRotation'))}</button>
+        </div>
+    `;
 }
 
 function renderProviderListItem(provider) {
@@ -702,6 +740,7 @@ function renderProviderEditor(provider) {
                 ${renderInput('provider-display-name', t('displayName'), provider.display_name, 'text', providerReadOnly)}
                 ${renderInput('provider-short-alias', t('shortAlias'), provider.short_alias, 'text', providerReadOnly)}
                 ${renderInput('provider-base-url', t('baseUrl'), provider.base_url, 'text', providerReadOnly)}
+                ${renderInput('provider-api-key', t('apiKey'), provider.api_key || '', 'password', providerReadOnly)}
                 ${renderSelect('provider-api-format', t('apiFormat'), provider.api_format, [
                     'openai_responses',
                     'openai_chat',
@@ -711,6 +750,12 @@ function renderProviderEditor(provider) {
                     'anthropic',
                     'custom',
                 ], 'syncResponsesModeControls(true); syncMediaModeControls(true)', providerReadOnly)}
+                ${renderSelect('provider-auth-mode', t('authMode'), provider.auth_mode, [
+                    'provider_api_key',
+                    'global_auth_json',
+                    'official_oauth',
+                    'no_auth',
+                ], '', providerReadOnly)}
                 ${renderInput('provider-country-region', t('countryRegion'), provider.country_region, 'text', providerReadOnly)}
                 ${renderInput('provider-native-currency', t('nativeCurrency'), provider.native_currency, 'text', providerReadOnly)}
                 ${renderSelect('provider-visibility', t('catalogVisibility'), provider.catalog_visibility, [
@@ -727,27 +772,17 @@ function renderProviderEditor(provider) {
                     <input id="provider-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${provider.enabled ? 'checked' : ''}>
                     <span>${escapeHtml(t('enabledLabel'))}</span>
                 </label>
-                <label class="flex items-center gap-2 text-sm cursor-pointer">
-                    <input id="provider-fallback-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${provider.fallback_enabled ? 'checked' : ''}>
-                    <span>${escapeHtml(t('fallbackEnabled'))}</span>
-                </label>
+                <div class="text-xs text-dark-500">${escapeHtml(t('providerFallbackMoved'))}</div>
             </div>
 
             <details class="advanced-box mt-4">
-                <summary>${escapeHtml(t('advanced'))}</summary>
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderInput('provider-api-key', t('apiKey'), provider.api_key || '', 'password', providerReadOnly)}
-                    ${renderSelect('provider-auth-mode', t('authMode'), provider.auth_mode, [
-                        'provider_api_key',
-                        'global_auth_json',
-                        'official_oauth',
-                        'no_auth',
-                    ], '', providerReadOnly)}
-                </div>
+                <summary>${escapeHtml(t('providerDetailedProfile'))}</summary>
+                ${renderProviderSectionHeading(t('providerHeadersModels'), t('providerHeadersModelsDesc'))}
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                     ${renderTextarea('provider-headers-json', t('headersJson'), JSON.stringify(provider.headers || {}, null, 2), 7, '', providerReadOnly)}
                     ${renderTextarea('provider-models-text', t('modelsText'), modelsText, 7, t('modelsTextHint'), providerReadOnly)}
                 </div>
+                ${renderProviderSectionHeading(t('providerAliasesPolicy'), t('providerAliasesPolicyDesc'))}
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                     ${renderTextarea('provider-aliases-json', t('modelAliasesJson'), JSON.stringify(provider.aliases || {}, null, 2), 6, '', providerReadOnly)}
                     ${renderTextarea('provider-alias-patterns-json', t('regexRewritePatternsJson'), JSON.stringify(provider.alias_patterns || [], null, 2), 6, '', providerReadOnly)}
@@ -770,6 +805,7 @@ function renderProviderEditor(provider) {
                     <button data-bulk-action="add_selected_to_amr" onclick="addSelectedModelsToAmr()" class="btn btn-secondary text-xs">${escapeHtml(t('addToAmr'))}</button>
                 </div>
                 <div id="bulk-action-error" class="hidden mt-2 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2"></div>
+                ${renderProviderSectionHeading(t('providerCapabilities'), t('providerCapabilitiesDesc'))}
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
                     ${renderCapabilityToggle('cap-text', t('textCapability'), capabilitySource.text, '', capabilityLocked || providerReadOnly)}
                     ${renderCapabilityToggle('cap-vision', t('visionInputCapability'), capabilitySource.vision, '', capabilityLocked || providerReadOnly)}
@@ -781,6 +817,7 @@ function renderProviderEditor(provider) {
                 </div>
                 ${capabilityLocked ? `<div id="native-capability-lock-note" class="mt-3 text-xs text-emerald-200 bg-emerald-950/20 border border-emerald-700/40 rounded-lg p-3">${escapeHtml(t('nativeCapabilitiesLocked'))}</div>` : ''}
                 ${renderResponsesModeSegment(provider, providerReadOnly)}
+                ${renderProviderSectionHeading(t('providerResponsesProfile'), t('providerResponsesProfileDesc'))}
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
                     ${renderCapabilityToggle('responses-domestic', t('domesticResponses'), provider.responses_profile && provider.responses_profile.domestic_responses)}
                     ${renderCapabilityToggle('responses-partial', t('partialResponsesCompatibility'), provider.responses_profile && provider.responses_profile.partial_compatibility)}
@@ -792,6 +829,7 @@ function renderProviderEditor(provider) {
                     ${renderInput('responses-unsupported', t('unsupportedFields'), provider.responses_profile && (provider.responses_profile.unsupported_fields || []).join(', '))}
                 </div>
                 ${renderApprovalModeSegment(approvalProfile)}
+                ${renderProviderSectionHeading(t('providerApprovalProfile'), t('providerApprovalProfileDesc'))}
                 <div id="approval-auto-fields" class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 ${approvalModeFromProfile(approvalProfile) === 'proxy_auto_approve' ? '' : 'hidden'}">
                     ${renderInput('approval-reviewer-model', t('reviewerModel'), approvalProfile.reviewer_model || '')}
                     ${renderInput('approval-allowed-actions', t('allowedActions'), (approvalProfile.allowed_actions || []).join(', '))}
@@ -806,6 +844,7 @@ function renderProviderEditor(provider) {
                     ${renderCapabilityToggle('approval-auto-accept-low-risk', t('autoAcceptLowRisk'), approvalProfile.auto_accept_low_risk !== false)}
                     ${renderCapabilityToggle('approval-auto-decline-high-risk', t('autoDeclineHighRisk'), approvalProfile.auto_decline_high_risk !== false)}
                 </div>
+                ${renderProviderSectionHeading(t('providerMediaQuota'), t('providerMediaQuotaDesc'))}
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4">
                     ${renderCapabilityToggle('media-default-image', t('defaultImageProvider'), mediaProfile.default_image_provider, 'syncMediaModeControls(true)')}
                     ${renderCapabilityToggle('media-default-video', t('defaultVideoProvider'), mediaProfile.default_video_provider, 'syncMediaModeControls(true)')}
@@ -842,6 +881,15 @@ function renderProviderEditor(provider) {
 
         <div id="provider-preview-panels-root" class="space-y-4">
             ${renderProviderPreviewPanels()}
+        </div>
+    `;
+}
+
+function renderProviderSectionHeading(title, detail) {
+    return `
+        <div class="mt-5 border-t border-dark-800 pt-4">
+            <div class="text-xs font-semibold text-dark-200">${escapeHtml(title)}</div>
+            <div class="text-xs text-dark-500 mt-1">${escapeHtml(detail)}</div>
         </div>
     `;
 }
@@ -1872,7 +1920,9 @@ function readProviderForm(existing) {
             catalog_visibility: document.getElementById('provider-visibility')?.value || 'focused_only',
             user_agent: document.getElementById('provider-user-agent')?.value || '',
             enabled: document.getElementById('provider-enabled')?.checked || false,
-            fallback_enabled: document.getElementById('provider-fallback-enabled')?.checked || false,
+            fallback_enabled: document.getElementById('provider-fallback-enabled')
+                ? document.getElementById('provider-fallback-enabled').checked
+                : Boolean(existing.fallback_enabled),
             api_key: document.getElementById('provider-api-key') ? document.getElementById('provider-api-key').value : (existing.api_key || ''),
             auth_mode: document.getElementById('provider-auth-mode')?.value || 'provider_api_key',
             headers,
@@ -2749,6 +2799,7 @@ let codexIntegrationState = {
         reason: '',
     },
     backups: [],
+    injectionApplying: false,
     loading: false,
 };
 
@@ -2792,15 +2843,22 @@ async function refreshCodexIntegrationBackups() {
 }
 
 function readCodexConnectionForm() {
+    const status = codexIntegrationState.status || {};
     const proxyBaseUrl = document.getElementById('ci-proxy-base-url')?.value || getCodexIntegrationProxyBaseUrl();
     const proxyModel = document.getElementById('ci-proxy-model')?.value || 'auto';
     const preserveAuth = document.getElementById('ci-preserve-auth')?.checked !== false;
     const startMode = document.getElementById('ci-start-mode')?.value || 'preserve_login_proxy';
+    const injectionEnabled = document.getElementById('ci-enable-cdp-injection')
+        ? document.getElementById('ci-enable-cdp-injection').checked
+        : status.codex_injection_enabled !== false;
+    const cdpPort = parseInt(document.getElementById('ci-cdp-port')?.value || status.codex_cdp_port || '51236', 10) || 51236;
     const draft = {
         proxy_base_url: proxyBaseUrl,
         proxy_model: proxyModel,
         preserve_official_auth: preserveAuth,
         start_mode: startMode,
+        enable_cdp_injection: injectionEnabled,
+        cdp_port: cdpPort,
     };
     codexIntegrationState.connectionDraft = draft;
     return draft;
@@ -2939,14 +2997,15 @@ async function applyCodexIntegration() {
 
 async function startCodexWithSelectedMode() {
     try {
-        const startMode = document.getElementById('ci-start-mode')?.value || 'preserve_login_proxy';
-        const preserveAuth = document.getElementById('ci-preserve-auth')?.checked !== false;
+        const draft = readCodexConnectionForm();
         setStatus(t('codexStartRequested'));
         const result = await api('/api/codex/start', {
             method: 'POST',
             body: JSON.stringify({
-                start_mode: startMode,
-                preserve_official_auth: preserveAuth,
+                start_mode: draft.start_mode,
+                preserve_official_auth: draft.preserve_official_auth,
+                enable_cdp_injection: draft.enable_cdp_injection,
+                cdp_port: draft.cdp_port,
             }),
         });
         showToast(result.message || t('codexStartRequested'), result.success ? 'success' : 'error');
@@ -2954,6 +3013,29 @@ async function startCodexWithSelectedMode() {
         renderCodexIntegrationPage();
     } catch (err) {
         showToast(t('codexStartFailed') + err.message, 'error');
+    }
+}
+
+async function retryCodexInjection() {
+    const draft = readCodexConnectionForm();
+    codexIntegrationState.injectionApplying = true;
+    renderCodexIntegrationPage();
+    try {
+        const result = await api('/api/codex-injection/apply', {
+            method: 'POST',
+            body: JSON.stringify({
+                enable_cdp_injection: draft.enable_cdp_injection,
+                cdp_port: draft.cdp_port,
+                backend_url: (codexIntegrationState.status || {}).backend_url || '',
+            }),
+        });
+        showToast(result.message || t('codexInjectionApplied'), result.success ? 'success' : 'warning');
+    } catch (err) {
+        showToast(t('codexInjectionFailed') + err.message, 'error');
+    } finally {
+        codexIntegrationState.injectionApplying = false;
+        await refreshCodexIntegrationStatus();
+        renderCodexIntegrationPage();
     }
 }
 
@@ -3049,6 +3131,39 @@ function renderCodexEnhancementModeCard(status = {}) {
     `;
 }
 
+function renderCodexInjectionCard(status = {}) {
+    const draft = codexIntegrationState.connectionDraft || {};
+    const injectionEnabled = Object.prototype.hasOwnProperty.call(draft, 'enable_cdp_injection')
+        ? draft.enable_cdp_injection !== false
+        : status.codex_injection_enabled !== false;
+    const cdpPort = Number(draft.cdp_port || status.codex_cdp_port || 51236);
+    const backendUrl = status.backend_url || '';
+    const applying = Boolean(codexIntegrationState.injectionApplying);
+    return `
+        <div class="card">
+            <div class="flex items-center justify-between gap-3">
+                <h3 class="card-title">${escapeHtml(t('codexInjectionTitle'))}</h3>
+                ${renderStatusPill('cdp', injectionEnabled ? t('codexInjectionOn') : t('codexInjectionOff'), injectionEnabled ? 'emerald' : 'dark')}
+            </div>
+            <p class="text-sm text-dark-400 mt-2">${escapeHtml(t('codexInjectionDesc'))}</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                <label class="flex items-center gap-2 text-sm cursor-pointer bg-dark-900/60 border border-dark-700 rounded-lg px-3 py-2">
+                    <input id="ci-enable-cdp-injection" type="checkbox" onchange="scheduleCodexConnectionCheck()" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${injectionEnabled ? 'checked' : ''}>
+                    <span>${escapeHtml(t('enableCodexInjection'))}</span>
+                </label>
+                ${renderInput('ci-cdp-port', t('cdpPort'), cdpPort, 'number', false, 'scheduleCodexConnectionCheck()')}
+            </div>
+            <div class="grid grid-cols-1 gap-3 mt-3">
+                ${renderReadonlyKV(t('backendUrl'), backendUrl || '-')}
+                ${renderReadonlyKV(t('cdpEndpoint'), `127.0.0.1:${cdpPort}`)}
+            </div>
+            <div class="flex flex-wrap gap-2 mt-4">
+                <button onclick="retryCodexInjection()" class="btn btn-secondary text-xs" ${applying || !injectionEnabled ? 'disabled' : ''}>${escapeHtml(applying ? t('applying') : t('retryCodexInjection'))}</button>
+            </div>
+        </div>
+    `;
+}
+
 /**
  * 渲染 Codex Integration 页面（状态查看 / Diff 预览 / 回滚）。
  * 该页卡片为静态 HTML 结构（无 .stagger-item），因此依赖 app.js 中
@@ -3103,6 +3218,7 @@ function renderCodexIntegrationPage() {
                 </div>
 
                 ${renderCodexEnhancementModeCard(status)}
+                ${renderCodexInjectionCard(status)}
 
                 <div class="card">
                     <h3 class="card-title">${escapeHtml(t('localProxySettings'))}</h3>
