@@ -59,6 +59,7 @@ IDNO = 7
 LOCAL_API_TIMEOUT = 10
 TRAY_MENU_TEXT = {
     "show_main": "显示主窗口",
+    "show_settings": "打开设置",
     "show_monitor": "显示悬浮窗",
     "hide_monitor": "隐藏悬浮窗",
     "start_codex": "启动 Codex",
@@ -133,6 +134,9 @@ class DesktopApi:
             return {"success": True}
         return {"success": False, "error": "Main window is not ready."}
 
+    def show_settings(self):
+        return _show_main_page("settings")
+
     def start_codex(self):
         return _start_codex_from_desktop()
 
@@ -193,6 +197,19 @@ def _show_window(window):
         window.restore()
     except Exception:
         pass
+
+
+def _show_main_page(page: str = "") -> dict:
+    if main_window is None:
+        return {"success": False, "error": "Main window is not ready."}
+    _show_window(main_window)
+    safe_page = "".join(ch for ch in str(page or "") if ch.isalnum() or ch in {"-", "_"})
+    if safe_page:
+        try:
+            main_window.evaluate_js(f"navigateTo({json.dumps(safe_page)})")
+        except Exception:
+            pass
+    return {"success": True}
 
 
 def _hide_to_tray(window) -> bool:
@@ -501,6 +518,9 @@ def _setup_tray(window):
     def show_from_menu(icon=None, item=None):
         _show_window(window)
 
+    def show_settings_from_menu(icon=None, item=None):
+        _show_main_page("settings")
+
     def show_monitor_from_menu(icon=None, item=None):
         _show_monitor()
 
@@ -546,6 +566,7 @@ def _setup_tray(window):
     def build_menu():
         return pystray.Menu(
             pystray.MenuItem(TRAY_MENU_TEXT["show_main"], show_from_menu, default=True),
+            pystray.MenuItem(TRAY_MENU_TEXT["show_settings"], show_settings_from_menu),
             pystray.MenuItem(TRAY_MENU_TEXT["show_monitor"], show_monitor_from_menu),
             pystray.MenuItem(TRAY_MENU_TEXT["hide_monitor"], hide_monitor_from_menu),
             pystray.MenuItem(TRAY_MENU_TEXT["start_codex"], start_codex_from_menu),

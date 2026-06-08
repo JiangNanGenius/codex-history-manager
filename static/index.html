@@ -694,10 +694,14 @@
                 </div>
                 <div class="mt-4">
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
-                        <input id="setting-desktop-monitor-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <input id="setting-desktop-monitor-enabled" type="checkbox" checked class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
                         <span data-i18n="desktopMonitorEnabled">启动时显示桌面悬浮窗</span>
                     </label>
                     <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorEnabledDesc">桌面版启动后自动显示 Token 悬浮窗；仍可通过托盘或右键菜单隐藏。</p>
+                    <div class="flex flex-wrap gap-2 mt-3">
+                        <button onclick="showDesktopTokenMonitor()" class="btn btn-primary text-xs" data-i18n="showFloatingMonitorNow">立即显示悬浮窗</button>
+                        <button onclick="startCodexFromQuickAction()" class="btn btn-secondary text-xs" data-i18n="startCodex">启动 Codex</button>
+                    </div>
                     <div class="text-xs text-dark-400 mt-4 mb-2" data-i18n="floatingMonitorFields">Floating Monitor Fields</div>
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
                         <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-tokens" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorTokens">Tokens</span></label>

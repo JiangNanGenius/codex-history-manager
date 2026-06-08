@@ -52,12 +52,18 @@ def test_monitor_context_menu_exposes_desktop_actions():
 
     assert 'id="sidebar-open-monitor"' in index
     assert 'id="sidebar-start-codex"' in index
+    assert 'id="setting-desktop-monitor-enabled" type="checkbox" checked' in index
+    assert "showFloatingMonitorNow" in index
     assert "startCodexFromQuickAction" in app_js
+    assert 'id="menu-btn"' in html
     assert 'data-action="start"' in html
     assert 'data-action="main"' in html
+    assert 'data-action="settings"' in html
     assert 'data-action="hide"' in html
     assert 'data-action="exit"' in html
     assert 'id="provider-menu-items"' in html
+    assert "showButtonMenu" in js
+    assert "show_settings" in js
     assert "list_quick_providers" in js
     assert "switch_provider" in js
     assert "autoProvider" in js

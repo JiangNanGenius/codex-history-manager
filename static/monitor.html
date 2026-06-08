@@ -13,9 +13,14 @@
                 <div class="monitor-kicker">Token 监控</div>
                 <div id="monitor-mode" class="monitor-mode">近 1 小时用量</div>
             </div>
-            <button id="compact-btn" class="icon-btn" title="折叠">
-                <span id="compact-glyph">−</span>
-            </button>
+            <div class="monitor-actions">
+                <button id="menu-btn" class="icon-btn" title="菜单">
+                    <span>⋯</span>
+                </button>
+                <button id="compact-btn" class="icon-btn" title="折叠">
+                    <span id="compact-glyph">−</span>
+                </button>
+            </div>
         </header>
         <section id="monitor-body" class="monitor-body">
             <div class="value-row">
@@ -35,6 +40,7 @@
     <nav id="context-menu" class="context-menu">
         <button data-action="start">启动 Codex</button>
         <button data-action="main">显示主窗口</button>
+        <button data-action="settings">打开设置</button>
         <div class="menu-separator"></div>
         <div class="menu-label" data-copy="quickSwitchProvider">快速切换供应商</div>
         <div id="provider-menu-items" class="provider-menu-items">

@@ -52,6 +52,13 @@ html, body {
     font-weight: 650;
 }
 
+.monitor-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    -webkit-app-region: no-drag;
+}
+
 .icon-btn {
     -webkit-app-region: no-drag;
     width: 28px;

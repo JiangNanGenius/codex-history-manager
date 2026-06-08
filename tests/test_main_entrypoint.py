@@ -130,6 +130,35 @@ class MainEntrypointTest(unittest.TestCase):
             main.monitor_window = original_window
             main.desktop_api = original_api
 
+    def test_show_settings_restores_main_window_and_navigates(self):
+        class FakeWindow:
+            def __init__(self):
+                self.shown = False
+                self.restored = False
+                self.js = []
+
+            def show(self):
+                self.shown = True
+
+            def restore(self):
+                self.restored = True
+
+            def evaluate_js(self, script):
+                self.js.append(script)
+
+        original = main.main_window
+        fake = FakeWindow()
+        try:
+            main.main_window = fake
+            result = main.DesktopApi().show_settings()
+
+            self.assertTrue(result["success"])
+            self.assertTrue(fake.shown)
+            self.assertTrue(fake.restored)
+            self.assertEqual(fake.js, ['navigateTo("settings")'])
+        finally:
+            main.main_window = original
+
     def test_configured_close_action_skips_prompt(self):
         with patch.object(main, "_configured_close_action", return_value="exit"):
             self.assertEqual(main._ask_close_action(None), "exit")
@@ -164,6 +193,7 @@ class MainEntrypointTest(unittest.TestCase):
 
     def test_tray_menu_texts_cover_desktop_actions(self):
         self.assertEqual(main.TRAY_MENU_TEXT["show_main"], "显示主窗口")
+        self.assertEqual(main.TRAY_MENU_TEXT["show_settings"], "打开设置")
         self.assertEqual(main.TRAY_MENU_TEXT["show_monitor"], "显示悬浮窗")
         self.assertEqual(main.TRAY_MENU_TEXT["hide_monitor"], "隐藏悬浮窗")
         self.assertEqual(main.TRAY_MENU_TEXT["start_codex"], "启动 Codex")

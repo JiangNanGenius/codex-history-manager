@@ -23,11 +23,13 @@ const monitorCopy = {
         contextUsage: '上下文',
         contextUnavailable: '上下文长度: 暂未匹配模型列表',
         tokenReached: 'Token 已达到',
+        menuTitle: '打开菜单',
         compactTitle: '折叠',
         compact: '折叠 / 展开',
         refresh: '立即刷新',
         hide: '隐藏悬浮窗',
         main: '显示主窗口',
+        settings: '打开设置',
         start: '启动 Codex',
         exit: '退出程序',
         quickSwitchProvider: '快速切换供应商',
@@ -53,11 +55,13 @@ const monitorCopy = {
         contextUsage: 'Context',
         contextUnavailable: 'Context length: model list not matched yet',
         tokenReached: 'Token reached',
+        menuTitle: 'Open menu',
         compactTitle: 'Collapse',
         compact: 'Collapse / Expand',
         refresh: 'Refresh now',
         hide: 'Hide monitor',
         main: 'Show main window',
+        settings: 'Open settings',
         start: 'Start Codex',
         exit: 'Exit app',
         quickSwitchProvider: 'Quick switch provider',
@@ -278,14 +282,25 @@ function toggleCompact() {
     setCompact(!card.classList.contains('compact'));
 }
 
-function showContextMenu(event) {
-    event.preventDefault();
+function openContextMenuAt(x, y) {
     loadQuickProviders().catch(() => renderProviderMenu(true));
     const menu = document.getElementById('context-menu');
     const rectWidth = Math.min(230, window.innerWidth - 12);
-    menu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - rectWidth - 6))}px`;
-    menu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - 260))}px`;
+    menu.style.left = `${Math.max(6, Math.min(x, window.innerWidth - rectWidth - 6))}px`;
+    menu.style.top = `${Math.max(6, Math.min(y, window.innerHeight - 260))}px`;
     menu.classList.add('open');
+}
+
+function showContextMenu(event) {
+    event.preventDefault();
+    openContextMenuAt(event.clientX, event.clientY);
+}
+
+function showButtonMenu(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    openContextMenuAt(rect.right - 216, rect.bottom + 6);
 }
 
 function hideContextMenu() {
@@ -362,6 +377,9 @@ async function runMenuAction(action) {
     if (action === 'main' && window.pywebview?.api?.show_main) {
         await window.pywebview.api.show_main();
     }
+    if (action === 'settings' && window.pywebview?.api?.show_settings) {
+        await window.pywebview.api.show_settings();
+    }
     if (action === 'start' && window.pywebview?.api?.start_codex) {
         await window.pywebview.api.start_codex();
     }
@@ -377,6 +395,8 @@ function applyMonitorCopy() {
     if (kicker) kicker.textContent = mt('title');
     const compactBtn = document.getElementById('compact-btn');
     if (compactBtn) compactBtn.title = mt('compactTitle');
+    const menuBtn = document.getElementById('menu-btn');
+    if (menuBtn) menuBtn.title = mt('menuTitle');
     document.querySelectorAll('#context-menu [data-action]').forEach(btn => {
         const action = btn.getAttribute('data-action');
         const text = mt(action);
@@ -403,6 +423,7 @@ function escapeAttr(value) {
 window.addEventListener('DOMContentLoaded', () => {
     applyMonitorCopy();
     setCompact(localStorage.getItem('desktop_token_monitor_compact') === 'true');
+    document.getElementById('menu-btn').addEventListener('click', showButtonMenu);
     document.getElementById('compact-btn').addEventListener('click', toggleCompact);
     document.addEventListener('contextmenu', showContextMenu);
     document.addEventListener('click', hideContextMenu);
