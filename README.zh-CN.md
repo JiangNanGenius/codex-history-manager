@@ -1,71 +1,103 @@
-# Codex Enhance Manager
+<p align="center">
+  <img src="icon.png" alt="Codex Enhance Manager 图标" width="96">
+</p>
+
+<h1 align="center">Codex Enhance Manager</h1>
 
 <p align="center">
-  <strong>面向 Codex 的本地优先 Windows 控制中心：会话、供应商、路由、用量和恢复都放在一个地方。</strong>
+  <strong>让 Codex 尽量保持原生，同时补上它本该有的控制台。</strong>
+</p>
+
+<p align="center">
+  官方登录切换 · 本地代理路由 · 模型轮换 · Token 监控 · 配置修复
 </p>
 
 <p align="center">
   <a href="README.md">English</a>
   ·
-  <a href="https://github.com/JiangNanGenius/Codex-Enhance-Manager">项目仓库</a>
-  ·
   <a href="https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases">下载发布版</a>
+  ·
+  <a href="RELEASE_NOTES.md">更新日志</a>
+  ·
+  <a href="LICENSE">许可证</a>
 </p>
 
 <p align="center">
-  <a href="https://opensource.org/licenses/Apache-2.0">
-    <img alt="License: Apache-2.0" src="https://img.shields.io/badge/License-Apache--2.0-green.svg">
-  </a>
-  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue.svg">
-  <img alt="Platform: Windows" src="https://img.shields.io/badge/Platform-Windows-informational.svg">
-  <img alt="Design: local first" src="https://img.shields.io/badge/Design-local--first-0f766e.svg">
+  <img alt="Platform: Windows" src="https://img.shields.io/badge/Platform-Windows-2563eb.svg">
+  <img alt="Local first" src="https://img.shields.io/badge/Local--first-by_default-0f766e.svg">
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-334155.svg">
+  <img alt="License: Apache-2.0" src="https://img.shields.io/badge/License-Apache--2.0-green.svg">
 </p>
 
 ---
 
-## 这是什么
+## 为什么要做它
 
-Codex Enhance Manager 是 Codex 的桌面辅助工具。它帮助你保留官方登录态、保持本地历史可见、切换供应商时不丢上下文，并且更直观地看到 Token 用量、连接状态和恢复入口。
+Codex 最舒服的状态应该是：官方登录态还在，启动像原生一样顺，历史记录能看，用量能看，供应商和模型可以换，但不会把配置文件搞成一团。
 
-它默认只在本机工作。供应商配置、备份、请求元数据、诊断、导出和临时文件都保存在你的电脑上。API Key、Bearer Token 和敏感 Header 会在界面、诊断和日志里默认隐藏。
+Codex Enhance Manager 做的就是这件事：尽量不破坏 Codex 原生体验，把供应商、路由、模型轮换、用量统计、备份恢复、配置修复和悬浮窗放进一个本地 Windows 桌面工具里。
 
-## 现在能做什么
+所有配置、供应商、请求元数据、诊断包、备份和导出默认都留在本机。
 
-| 功能区 | 用户看到的结果 |
-| --- | --- |
-| 设置向导 | 一步步完成 Codex 路径、供应商、模型能力、路由、媒体 fallback、用量提醒、开机启动和保存检查。 |
-| 供应商管理 | 添加一个或多个供应商；一个供应商可以配置多个模型；支持 Header、`User-Agent`、模型名映射和模型级能力标记。 |
-| Codex 连接 | 支持官方登录、保留官方登录并接入本地代理/API、非官方供应商三类模式。官方直连会锁定会改变路由的配置。 |
-| Responses 和 Chat | 在模型级区分原生 Responses、兼容 Responses 和 Chat 接口，不再把所有模型当成一种协议处理。 |
-| 模型目录 | 决定哪些模型会显示给 Codex，同时把“供应商连接”和“新会话轮换策略”分开。 |
-| 模型轮换 | 设置下一个新会话的模型顺序、优先级、能力筛选、故障转移和会话结束后的动态切换。 |
-| 图片和视频 | 可以指定媒体供应商，也可以开启全局 fallback，让文本模型借用指定供应商的图片/视频生成能力。 |
-| 自动审批 | 默认开启低风险无感处理；用户可以自定义审批提示词；模型回复必须是严格 JSON 决策。 |
-| 用量和费用 | 读取 Codex Token、缓存用量、本地代理请求元数据、本地费用估算，以及可用时的供应商官方扣费信息。 |
-| 悬浮窗 | 原生悬浮窗显示 Token，用托盘和右键菜单启动 Codex、打开主界面、切换供应商、调透明度和刷新数据。 |
-| 恢复和更新 | 备份/恢复 Codex 配置和登录文件，修复移动后的会话，导出脱敏诊断，检查 GitHub Releases 并下载新版 EXE。 |
+## 一眼看懂
 
-## 连接模式
+<table>
+  <tr>
+    <td width="50%">
+      <strong>官方登录态不乱动</strong><br>
+      能识别 ChatGPT/OAuth 登录，显示真实的 OpenAI 官方状态和当前模型；官方直连只做切换，不进本地代理、AMR 和模型轮换。
+    </td>
+    <td width="50%">
+      <strong>要路由时才路由</strong><br>
+      需要代理/API 模式时才启动本地代理；端口被占用会自动退避，并把真实端口和强 bearer token 写进 Codex 配置。
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <strong>供应商和轮换分清楚</strong><br>
+      供应商页管密钥、地址、Header、模型能力和媒体能力；模型轮换页只管新会话顺序、优先级、故障转移和能力匹配。
+    </td>
+    <td width="50%">
+      <strong>真出问题也能修</strong><br>
+      一键把 Codex 配置修回模板态；首次切回官方登录有风险提示和重置流程；备份可以清理，诊断会脱敏。
+    </td>
+  </tr>
+</table>
+
+## 三种连接模式
 
 | 模式 | 适合谁 | 行为 |
 | --- | --- | --- |
-| 官方登录直连 | 想完全保持 Codex 官方账号行为的用户。 | 保留官方 OAuth 登录态，并关闭会改变本地路由的供应商功能；只读显示增强仍可使用。 |
-| 保留登录并接入代理/API | 想保留官方登录，同时把部分请求交给本地代理或配置好的 API 的用户。 | 默认保留登录态，只有用户选择该模式时才改变路由。 |
-| 第三方供应商 | 使用自定义供应商或代理商运行 Codex 的用户。 | 开启供应商密钥、模型级 Responses/Chat、媒体 fallback、模型映射、额度脚本和模型轮换。 |
+| 官方登录直连 | 想让 Codex 完全走官方账号的用户。 | 保留 OAuth 登录态，锁定会改变路由的供应商能力；安全的页面增强注入仍可开启。 |
+| 保留登录并接入代理/API | 想保留官方登录，同时使用本地代理或 API 路由的用户。 | 启动本地代理，写入真实退避端口和强 token，再带进度同步历史记录。 |
+| 第三方供应商 | 使用自定义供应商、代理商或兼容 API 的用户。 | 启用供应商密钥、Responses/Chat 协议选择、模型映射、媒体 fallback、额度脚本和模型轮换。 |
 
-## 供应商和轮换的边界
+## 你会得到什么
 
-供应商页只负责连接信息：密钥、地址、Header、`User-Agent`、模型名称、模型能力、媒体能力、额度脚本和目录可见性。
+- 设置向导：Codex 路径、官方登录态、供应商、模型能力、路由、媒体 fallback、开机启动和保存检查。
+- 供应商管理：一个供应商可配置多个模型，支持 Header、`User-Agent`、模型别名、能力标签和媒体路由。
+- 模型轮换：管理下一个新会话的顺序、优先级、故障转移和能力筛选，不和密钥配置混在一起。
+- 用量统计：读取 Codex Token、缓存、代理请求元数据、本地费用估算，以及可用时的供应商官方扣费信息。
+- 悬浮窗：显示 Token、缓存、上下文、一小时用量、消耗速度、透明度、托盘操作和快速切换。
+- 恢复工具：备份/恢复、配置模板修复、移动会话修复、脱敏诊断、更新检查和打包版 EXE 发布支持。
 
-模型轮换页只负责下一个新会话如何选模型：顺序、优先级、能力匹配、故障转移，以及当前会话结束后的动态切换。
+## 安全边界
 
-Codex 连接页只负责启动和写入：保留官方登录、接入代理/API、更新配置、备份和恢复入口。
+- 默认数据目录是 `Documents/Codex Enhance Manager/`。
+- API Key、Bearer Token 和敏感 Header 会在设置导出、诊断和日志里脱敏。
+- 本地代理默认生成高熵 bearer token；设置页只显示指纹。
+- 官方直连是“只切换”的状态，不进入 AMR，也不参与模型轮换。
+- 删除/重置 Codex 配置和登录文件必须明确确认，并提示聊天记录有概率丢失。
 
-## 快速开始
+## 安装
 
 ### Windows EXE
 
-从 [Releases](https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases) 下载最新 Windows 构建，然后运行 `CodexHistoryManager.exe`。
+从 [Releases](https://github.com/JiangNanGenius/Codex-Enhance-Manager/releases) 下载最新版，然后运行：
+
+```text
+CodexHistoryManager.exe
+```
 
 ### 从源码运行
 
@@ -74,61 +106,42 @@ pip install -r requirements.txt
 python main.py
 ```
 
-桌面窗口背后是本地 Flask 服务：
+桌面应用背后是本地后端，通常是：
 
 ```text
 http://127.0.0.1:51234
 ```
 
-## 打包和发布
+如果端口被占用，桌面启动器会自动切到后续可用端口。
 
-构建并验证 Windows EXE：
+## 构建发布版
 
 ```bash
+python -m pytest -q
+node --check static/js/app.js static/js/providers.js static/js/i18n.js static/js/monitor.js
 python build_exe.py --no-desktop-copy --smoke-test --write-release-manifest
 ```
 
-发布资产是：
+发布资产：
 
 ```text
 dist/CodexHistoryManager.exe
+dist/release-manifest.json
 ```
 
-每个 GitHub Release 都必须上传打包好的 EXE 和 `dist/release-manifest.json`。只有源码压缩包不算完整的用户发布。发布描述需要同时包含中文和英文，模板见 `RELEASE_NOTES.md`。
+每个 GitHub Release 都应该包含这两个文件。只有源码压缩包不算可用的 Windows 发布版。
 
-## 本地存储
-
-新用户数据默认保存到：
-
-```text
-Documents/Codex Enhance Manager/
-```
+## 本地文件
 
 | 路径 | 用途 |
 | --- | --- |
 | `config.json` | 应用主设置。 |
 | `providers/providers.json` | 本地供应商注册表。 |
-| `logs/proxy_requests.jsonl` | 只记录元数据的本地代理请求日志。 |
-| `backups/`, `codex_backups/` | 应用和 Codex 配置备份。 |
+| `logs/proxy_requests.jsonl` | 只记录元数据的代理请求日志。 |
+| `backups/` | 应用和 Codex 配置备份。 |
 | `diagnostics/` | 脱敏诊断包。 |
 | `exports/` | 用户主动导出的文件。 |
 | `temp/` | 临时文件。 |
-
-## 开发检查
-
-```bash
-python -m pytest -q
-node --check static/js/i18n.js static/js/providers.js static/js/amr.js static/js/sync.js
-python -m py_compile approval_broker.py app.py main.py providers.py capabilities.py
-```
-
-## 参考资料
-
-- [OpenAI Codex 源码](https://github.com/openai/codex)
-- [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses)
-- [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat)
-- [OpenAI Images API](https://platform.openai.com/docs/api-reference/images)
-- [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)
 
 ## 许可证
 
