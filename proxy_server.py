@@ -81,8 +81,12 @@ from request_capabilities import classify_request_capabilities
 from amr_registry import AMRRegistry, DEFAULT_STORE_PATH as DEFAULT_AMR_STORE_PATH
 from provider_routing import provider_allows_local_routing
 from local_proxy_auth import local_proxy_token_fingerprint
+from reasoning_policy import (
+    apply_reasoning_policy_to_chat_request,
+    apply_reasoning_policy_to_responses_request,
+)
 
-DEFAULT_PROXY_PORT = 8080
+DEFAULT_PROXY_PORT = 51235
 PORT_BACKOFF_SCAN_LIMIT = 50
 MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
 DEFAULT_UPSTREAM_TIMEOUT = 120  # 秒
@@ -278,7 +282,7 @@ def _resolve_provider_for_model(model_id: str) -> Optional[Dict[str, Any]]:
         for p in providers:
             if not provider_allows_local_routing(p):
                 continue
-            if p.get("short_alias", "").lower() == prefix or p.get("id", "").lower() == prefix:
+            if prefix in _provider_route_prefixes(p):
                 return p
         return None
 
@@ -316,6 +320,7 @@ def _resolve_provider_route_for_model(
     provider = _resolve_provider_for_model(model_id)
     if provider:
         upstream_model = _extract_model_id_for_upstream({"model": model_id}, provider)
+        route_model = _find_enabled_model(provider, upstream_model) or {}
         requested_upstream = model_id.split("/", 1)[1] if "/" in model_id else model_id
         explanation = ["Direct provider/model route."]
         if upstream_model and upstream_model != requested_upstream:
@@ -323,6 +328,7 @@ def _resolve_provider_route_for_model(
         return {
             "success": True,
             "provider": provider,
+            "model": route_model,
             "upstream_model": upstream_model,
             "api_format": _route_api_format(provider, upstream_model),
             "route_type": "direct",
@@ -389,6 +395,7 @@ def _resolve_provider_route_for_model(
     return {
         "success": True,
         "provider": selected,
+        "model": _find_enabled_model(selected, upstream_model) or {},
         "upstream_model": upstream_model,
         "api_format": _route_api_format(selected, upstream_model),
         "route_type": "amr",
@@ -422,10 +429,16 @@ def _provider_has_enabled_model(provider: Dict[str, Any], model_id: str) -> bool
 
 
 def _find_enabled_model(provider: Dict[str, Any], model_id: str) -> Optional[Dict[str, Any]]:
+    requested = str(model_id or "").strip()
+    requested_lower = requested.lower()
     for model in provider.get("models", []):
         if not isinstance(model, dict):
             continue
-        if model.get("enabled", True) and str(model.get("id") or "") == model_id:
+        if not model.get("enabled", True):
+            continue
+        if str(model.get("id") or "").strip() == requested:
+            return model
+        if requested_lower and requested_lower in _model_aliases_lower(model):
             return model
     return None
 
@@ -453,16 +466,16 @@ def _provider_alias_pattern_matches(provider: Dict[str, Any], model_id: str) -> 
 
 
 def _provider_alias_map(provider: Dict[str, Any]) -> Dict[str, str]:
+    result: Dict[str, str] = {}
     aliases = provider.get("aliases")
     if isinstance(aliases, dict):
-        return {
-            str(key).strip(): str(value).strip()
-            for key, value in aliases.items()
-            if str(key).strip() and str(value).strip()
-        }
+        for key, value in aliases.items():
+            source = str(key).strip()
+            target = str(value).strip()
+            if source and target:
+                result[source] = target
     # Backward compatibility for early weak-model stores that kept aliases as a list.
-    if isinstance(aliases, list):
-        result: Dict[str, str] = {}
+    elif isinstance(aliases, list):
         for item in aliases:
             if not isinstance(item, dict):
                 continue
@@ -470,8 +483,29 @@ def _provider_alias_map(provider: Dict[str, Any]) -> Dict[str, str]:
             target = str(item.get("target") or item.get("to") or item.get("model") or "").strip()
             if source and target:
                 result[source] = target
-        return result
-    return {}
+
+    for model in provider.get("models", []):
+        if not isinstance(model, dict) or not model.get("enabled", True):
+            continue
+        target = str(model.get("id") or "").strip()
+        if not target:
+            continue
+        for source in _model_aliases(model):
+            if source and source != target:
+                result.setdefault(source, target)
+    return result
+
+
+def _provider_route_prefixes(provider: Dict[str, Any]) -> set[str]:
+    values = [
+        provider.get("id"),
+        provider.get("short_alias"),
+        provider.get("codex_visible_alias"),
+        provider.get("provider_visible_alias"),
+        provider.get("visible_alias"),
+        provider.get("display_name"),
+    ]
+    return {str(value).lower().strip() for value in values if str(value or "").strip()}
 
 
 def _provider_alias_patterns(provider: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -490,10 +524,19 @@ def _provider_alias_patterns(provider: Dict[str, Any]) -> List[Dict[str, str]]:
 
 
 def _model_aliases_lower(model: Dict[str, Any]) -> set[str]:
+    return {alias.lower().strip() for alias in _model_aliases(model) if alias.strip()}
+
+
+def _model_aliases(model: Dict[str, Any]) -> List[str]:
+    values: List[str] = []
+    for key in ("codex_visible_id", "visible_id", "display_id", "display_name"):
+        text = str(model.get(key) or "").strip()
+        if text:
+            values.append(text)
     aliases = model.get("aliases") or model.get("model_aliases")
-    if not isinstance(aliases, list):
-        return set()
-    return {str(item).lower().strip() for item in aliases if str(item).strip()}
+    if isinstance(aliases, list):
+        values.extend(str(item).strip() for item in aliases if str(item).strip())
+    return values
 
 
 def _route_explanation_text(route: Dict[str, Any], fallback: str) -> str:
@@ -1212,6 +1255,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         upstream_model = str(route.get("upstream_model") or "") or _extract_model_id_for_upstream(request_json, provider)
         request_json["model"] = upstream_model
+        request_json = apply_reasoning_policy_to_chat_request(
+            request_json,
+            request_json,
+            provider,
+            route.get("model") if isinstance(route.get("model"), dict) else {},
+            api_format=str(route.get("api_format") or _provider_api_format(provider)),
+        )
         upstream_body = json.dumps(request_json, ensure_ascii=False).encode("utf-8")
 
         upstream_url = f"{base_url}/chat/completions"
@@ -1405,6 +1455,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 provider,
                 base_url,
                 upstream_model_override=str(route.get("upstream_model") or ""),
+                route_model=route.get("model") if isinstance(route.get("model"), dict) else {},
                 route_explanation=_route_explanation_text(route, "Responses request converted to Anthropic Messages upstream"),
             )
             return
@@ -1415,6 +1466,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 base_url,
                 compact=compact,
                 upstream_model_override=str(route.get("upstream_model") or ""),
+                route_model=route.get("model") if isinstance(route.get("model"), dict) else {},
                 route_explanation=_route_explanation_text(route, "native Responses upstream"),
             )
             return
@@ -1428,6 +1480,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         upstream_model = str(route.get("upstream_model") or "") or _extract_model_id_for_upstream(chat_request, provider)
         chat_request["model"] = upstream_model
+        chat_request = apply_reasoning_policy_to_chat_request(
+            chat_request,
+            request_json,
+            provider,
+            route.get("model") if isinstance(route.get("model"), dict) else {},
+            api_format=api_format,
+        )
         upstream_body = json.dumps(chat_request, ensure_ascii=False).encode("utf-8")
 
         upstream_url = f"{base_url}/chat/completions"
@@ -1479,6 +1538,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         base_url: str,
         compact: bool = False,
         upstream_model_override: str = "",
+        route_model: Optional[Dict[str, Any]] = None,
         route_explanation: str = "native Responses upstream",
     ) -> None:
         """Forward a Responses request to an upstream that natively speaks Responses."""
@@ -1490,6 +1550,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
         upstream_request = dict(request_json)
         upstream_model = upstream_model_override or _extract_model_id_for_upstream(request_json, provider)
         upstream_request["model"] = upstream_model
+        upstream_request = apply_reasoning_policy_to_responses_request(
+            upstream_request,
+            provider,
+            route_model or _find_enabled_model(provider, upstream_model) or {},
+            api_format=str(provider.get("api_format") or ""),
+        )
         upstream_body = json.dumps(upstream_request, ensure_ascii=False).encode("utf-8")
 
         upstream_url = responses_url(base_url)
@@ -1540,12 +1606,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
         provider: Dict[str, Any],
         base_url: str,
         upstream_model_override: str = "",
+        route_model: Optional[Dict[str, Any]] = None,
         route_explanation: str = "Responses request converted to Anthropic Messages upstream",
     ) -> None:
         """Forward a Responses request to an Anthropic Messages upstream."""
         upstream_model = upstream_model_override or _extract_model_id_for_upstream(request_json, provider)
         try:
-            anthropic_request = responses_to_anthropic_messages(request_json, upstream_model=upstream_model)
+            policy_request = apply_reasoning_policy_to_responses_request(
+                request_json,
+                provider,
+                route_model or _find_enabled_model(provider, upstream_model) or {},
+                api_format="anthropic",
+            )
+            anthropic_request = responses_to_anthropic_messages(policy_request, upstream_model=upstream_model)
         except AnthropicConversionError as e:
             _send_error(self, 400, f"Anthropic request conversion failed: {e}", "invalid_request_error")
             return

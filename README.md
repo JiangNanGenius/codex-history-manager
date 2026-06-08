@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  Official login switching · local proxy routing · model rotation · token telemetry · recovery tools
+  Official login switching · local proxy routing · smart routing · token telemetry · recovery tools
 </p>
 
 <p align="center">
@@ -43,7 +43,7 @@ It is a Windows desktop app backed by a local service. Your settings, providers,
   <tr>
     <td width="50%">
       <strong>Official login stays official</strong><br>
-      Detects ChatGPT/OAuth login, shows the effective OpenAI state, and keeps official direct mode out of local proxy routing, AMR, and model rotation.
+      Detects ChatGPT/OAuth login, shows the effective OpenAI state, and keeps official direct mode out of local proxy routing and Smart Routing.
     </td>
     <td width="50%">
       <strong>Routing when you actually want it</strong><br>
@@ -68,7 +68,7 @@ It is a Windows desktop app backed by a local service. Your settings, providers,
 | --- | --- | --- |
 | Official direct | You want Codex to use the official account exactly as-is. | Keeps OAuth login intact, locks routing-changing provider behavior, and still allows safe UI enhancement injection. |
 | Login plus proxy/API | You want the official login preserved while using local proxy/API routing. | Starts the local proxy, writes the active port and bearer token into Codex provider config, then syncs history with progress. |
-| Third-party provider | You run Codex through custom vendors, proxy providers, or compatibility APIs. | Enables provider credentials, Responses/Chat selection, model mapping, media fallback, quotas, and model rotation. |
+| Third-party provider | You run Codex through custom vendors, proxy providers, or compatibility APIs. | Enables provider credentials, Responses/Chat selection, model mapping, media fallback, quotas, and Smart Routing. |
 
 ## What You Get
 
@@ -84,7 +84,7 @@ It is a Windows desktop app backed by a local service. Your settings, providers,
 - Local-first storage under `Documents/Codex Enhance Manager/`.
 - API keys, bearer tokens, and sensitive headers are redacted in settings exports, diagnostics, and logs.
 - The local proxy requires a generated bearer token; settings show only a fingerprint.
-- Official direct mode is switch-only and does not enter AMR or model rotation.
+- Official direct mode is switch-only and does not enter local proxy routing or Smart Routing.
 - Destructive Codex config/auth resets require explicit confirmation and warn that chat history may be lost.
 
 ## Install

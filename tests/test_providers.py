@@ -12,6 +12,7 @@ from providers import (
     validate_provider,
 )
 from provider_routing import provider_allows_local_routing
+from codex_official_provider import build_official_login_provider
 
 
 class ProviderRegistryTest(unittest.TestCase):
@@ -62,6 +63,29 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertIn("payload_until_verified", profile["unsupported_fields"])
             self.assertIn("image_process", profile["allowed_tool_types"])
 
+    def test_volcengine_plan_presets_are_separate_and_include_user_contexts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            coding = registry.import_preset("volcengine-coding-plan")
+            agent = registry.import_preset("volcengine-agent-plan")
+
+            self.assertEqual(coding["base_url"], "https://ark.cn-beijing.volces.com/api/coding/v3")
+            self.assertEqual(agent["base_url"], "https://ark.cn-beijing.volces.com/api/plan/v3")
+            self.assertEqual(coding["codex_visible_alias"], "Ark Coding Plan")
+            self.assertEqual(agent["codex_visible_alias"], "Ark Agent Plan")
+
+            coding_models = {model["id"]: model for model in coding["models"]}
+            agent_models = {model["id"]: model for model in agent["models"]}
+            self.assertEqual(coding_models["ark-code-latest"]["context_window"], 256000)
+            self.assertEqual(coding_models["ark-code-latest"]["max_output_tokens"], 32000)
+            self.assertEqual(coding_models["deepseek-v4-pro"]["context_window"], 1024000)
+            self.assertEqual(coding_models["minimax-m3"]["context_window"], 512000)
+            self.assertTrue(coding_models["ark-code-latest"]["capabilities"]["vision"])
+            self.assertFalse(coding_models["deepseek-v4-pro"]["capabilities"]["vision"])
+            self.assertIn("doubao-seed-code", coding_models)
+            self.assertIn("doubao-seed-2.0-mini", agent_models)
+            self.assertNotIn("doubao-seed-code", agent_models)
+
     def test_catalog_preview_includes_selected_models(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
@@ -77,7 +101,7 @@ class ProviderRegistryTest(unittest.TestCase):
 
             preview = registry.preview_catalog()
             model_ids = [entry["codex_model_id"] for entry in preview["entries"]]
-            self.assertEqual(model_ids, [f"{provider['short_alias']}/visible"])
+            self.assertEqual(model_ids, ["Catalog Provider/visible"])
 
     def test_switch_only_official_provider_is_listed_but_not_catalog_routed(self):
         official = normalize_provider({
@@ -94,6 +118,21 @@ class ProviderRegistryTest(unittest.TestCase):
         self.assertFalse(provider_allows_local_routing(official))
         preview = build_catalog_preview_from_providers([official])
         self.assertEqual(preview["entry_count"], 0)
+
+    def test_official_login_provider_is_switch_only_with_full_display_capabilities(self):
+        official = build_official_login_provider(
+            {"model": "gpt-5.5"},
+            {"auth_mode": "chatgpt", "tokens": {"access_token": "eyJhbGciOiJ.demo"}},
+        )
+
+        self.assertIsNotNone(official)
+        self.assertFalse(provider_allows_local_routing(official))
+        self.assertTrue(official["switch_only"])
+        self.assertTrue(official["amr_excluded"])
+        self.assertFalse(official["local_proxy_routing"])
+        for capability in ("text", "vision", "tools", "reasoning", "streaming", "compact", "models"):
+            self.assertTrue(official["capabilities"][capability])
+            self.assertTrue(official["models"][0]["capabilities"][capability])
 
     def test_registry_extra_official_provider_can_be_focused_without_catalog_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -155,6 +194,57 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(model["pricing"]["input_per_million"], 1.25)
             self.assertEqual(model["tags"], ["media"])
 
+    def test_model_context_window_change_marks_codex_restart_required(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.create_provider({
+                "display_name": "Context Provider",
+                "short_alias": "ctx",
+                "api_key": "saved-secret",
+                "models": [{"id": "model-a", "selected": True, "context_window": 128000}],
+            })
+
+            updated = registry.update_provider(provider["id"], {
+                "models": [{"id": "model-a", "selected": True, "context_window": 64000}],
+            })
+
+            self.assertTrue(updated["status"]["needs_restart"])
+            self.assertIn("model catalog", updated["status"]["source_of_truth"])
+
+    def test_secret_only_update_does_not_mark_codex_restart_required(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.create_provider({
+                "display_name": "Secret Provider",
+                "short_alias": "secret",
+                "api_key": "old-secret",
+                "models": [{"id": "model-a", "selected": True, "context_window": 128000}],
+            })
+
+            updated = registry.update_provider(provider["id"], {"api_key": "new-secret"})
+
+            self.assertFalse(updated["status"]["needs_restart"])
+
+    def test_provider_test_preserves_pending_codex_restart_required(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.create_provider({
+                "display_name": "Restart Provider",
+                "short_alias": "restart",
+                "base_url": "https://example.test/v1",
+                "api_key": "secret",
+                "models": [{"id": "model-a", "selected": True, "context_window": 128000}],
+            })
+            registry.update_provider(provider["id"], {
+                "models": [{"id": "model-a", "selected": True, "context_window": 64000}],
+            })
+
+            result = registry.test_provider(provider_id=provider["id"])
+            loaded = registry.get_provider(provider["id"], include_secrets=True)
+
+            self.assertTrue(result["success"])
+            self.assertTrue(loaded["status"]["needs_restart"])
+
     def test_test_provider_payload_validates_draft_without_writing_status(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
@@ -210,9 +300,9 @@ class ProviderRegistryTest(unittest.TestCase):
 
             preview = registry.preview_catalog()
             model_ids = [entry["codex_model_id"] for entry in preview["entries"]]
-            self.assertEqual(model_ids, ["provider-one/shared", "provider-two/shared"])
-            self.assertTrue(all(entry["catalog_collision"] for entry in preview["entries"]))
-            self.assertTrue(any("Catalog ID collision" in item for item in preview["route_explanation"]))
+            self.assertEqual(model_ids, ["Provider One/shared", "Provider Two/shared"])
+            self.assertFalse(any(entry["catalog_collision"] for entry in preview["entries"]))
+            self.assertFalse(any("Catalog ID collision" in item for item in preview["route_explanation"]))
 
     def test_focus_provider_includes_all_enabled_models(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -262,7 +352,7 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(preview["focus_provider_id"], provider["id"])
             self.assertEqual(preview["entry_count"], 1)
             entry = preview["entries"][0]
-            self.assertEqual(entry["codex_model_id"], "draft/unsaved-image")
+            self.assertEqual(entry["codex_model_id"], "Draft Catalog Provider/Unsaved Image")
             self.assertEqual(entry["context_window"], 256000)
             self.assertTrue(entry["capabilities"]["images"])
             self.assertEqual(entry["native_currency"], "CNY")
@@ -426,7 +516,7 @@ class ProviderRegistryTest(unittest.TestCase):
 
         _errors, warnings = validate_provider(provider)
 
-        self.assertTrue(any("no Images/Videos capability" in warning for warning in warnings))
+        self.assertTrue(any("no image capability" in warning for warning in warnings))
 
     def test_proxy_profile_preserves_bypass_and_network_policy(self):
         provider = normalize_provider({
@@ -581,6 +671,8 @@ class ProviderRegistryTest(unittest.TestCase):
     def test_openai_compatible_videos_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            visible_preset_ids = [p["preset_id"] for p in registry.list_presets()["presets"]]
+            self.assertNotIn("openai-compatible-videos", visible_preset_ids)
             provider = registry.import_preset("openai-compatible-videos")
 
             self.assertEqual(provider["api_format"], "openai_videos")
@@ -698,7 +790,7 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertTrue(provider["capabilities"]["text"])
             self.assertTrue(provider["capabilities"]["streaming"])
             self.assertFalse(provider["capabilities"]["vision"])
-            self.assertFalse(provider["capabilities"]["tools"])
+            self.assertTrue(provider["capabilities"]["tools"])
             self.assertFalse(provider["capabilities"]["reasoning"])
             self.assertFalse(provider["responses_profile"]["domestic_responses"])
             model_ids = [m["id"] for m in provider["models"]]
@@ -758,7 +850,7 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(provider["api_format"], "openai_chat")
             self.assertTrue(provider["capabilities"]["text"])
             self.assertFalse(provider["capabilities"]["vision"])
-            self.assertFalse(provider["capabilities"]["tools"])
+            self.assertTrue(provider["capabilities"]["tools"])
             self.assertFalse(provider["capabilities"]["reasoning"])
             self.assertTrue(provider["capabilities"]["streaming"])
             self.assertFalse(provider["responses_profile"]["domestic_responses"])
@@ -804,7 +896,7 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(provider["api_format"], "openai_chat")
             self.assertTrue(provider["capabilities"]["text"])
             self.assertFalse(provider["capabilities"]["vision"])
-            self.assertFalse(provider["capabilities"]["tools"])
+            self.assertTrue(provider["capabilities"]["tools"])
             self.assertFalse(provider["capabilities"]["reasoning"])
             self.assertTrue(provider["capabilities"]["streaming"])
             self.assertFalse(provider["responses_profile"]["domestic_responses"])

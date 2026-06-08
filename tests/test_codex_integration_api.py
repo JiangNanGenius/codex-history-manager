@@ -1,4 +1,5 @@
 import unittest
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -25,6 +26,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             patch("app.AMRRegistry"),
             patch("app.QuotaManager"),
             patch("app.StartupManager"),
+            patch("app.DesktopShortcutManager") as MockDesktopShortcutManager,
             patch("app.DiagnosticsCollector"),
         ):
             config = MagicMock()
@@ -36,6 +38,12 @@ class CodexIntegrationApiTest(unittest.TestCase):
             self.last_config = config
             MockDB.return_value.get_provider_distribution.return_value = []
             MockLocalProxyServer.return_value.status.return_value = {}
+            self.proxy_server = MockLocalProxyServer.return_value
+            MockDesktopShortcutManager.return_value.create_shortcuts.return_value = {
+                "success": True,
+                "shortcuts": [],
+            }
+            self.shortcut_manager = MockDesktopShortcutManager.return_value
 
             from app import create_app
 
@@ -156,6 +164,83 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertEqual(saved["local_proxy_bearer_token"], token)
         self.assertFalse(saved["dark_mode"])
 
+    def test_save_settings_defers_codex_goals_write_until_start(self):
+        app = self._app()
+        fake_mgr = MagicMock()
+
+        with patch("app.CodexConfigManager", return_value=fake_mgr):
+            response = app.test_client().post("/api/settings", json={
+                "codex_goals_enabled": False,
+            })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["codex_goals_sync"]["skipped"])
+        self.assertEqual(data["codex_goals_sync"]["reason"], "deferred_until_codex_start")
+        fake_mgr.write_goals_feature.assert_not_called()
+
+    def test_codex_integration_apply_is_preview_only_until_start(self):
+        app = self._app()
+        fake_mgr = MagicMock()
+        fake_mgr.read_auth.return_value = {}
+        fake_mgr.preview_write_provider.return_value = {
+            "will_write_config": True,
+            "will_write_auth": False,
+            "config_diff": {"added": {"model_provider": "codex_enhance_manager"}},
+            "auth_diff": {},
+            "warnings": [],
+        }
+
+        with patch("app.CodexConfigManager", return_value=fake_mgr):
+            response = app.test_client().post("/api/codex-integration/apply", json={
+                "manual_codex_mutation": True,
+                "confirmation": "MODIFY_CODEX_FILES",
+                "proxy_base_url": "http://127.0.0.1:51236/v1",
+                "proxy_model": "auto",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertFalse(data["applied"])
+        self.assertTrue(data["deferred_until_codex_start"])
+        fake_mgr.preview_write_provider.assert_called_once()
+        fake_mgr.write_provider_config.assert_not_called()
+
+    def test_proxy_start_does_not_sync_codex_config(self):
+        app = self._app()
+        self.proxy_server.start.return_value = True
+        self.proxy_server.status.return_value = {
+            "running": True,
+            "port": 51236,
+            "base_url": "http://127.0.0.1:51236/v1",
+        }
+        fake_mgr = MagicMock()
+
+        with patch("app.CodexConfigManager", return_value=fake_mgr):
+            response = app.test_client().post("/api/proxy/start", json={})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["provider_config"]["skipped"])
+        self.assertEqual(data["provider_config"]["reason"], "deferred_until_codex_start")
+        fake_mgr.write_provider_config.assert_not_called()
+
+    def test_desktop_shortcut_endpoint_creates_selected_kind_only(self):
+        app = self._app()
+
+        response = app.test_client().post("/api/desktop-shortcuts/create", json={
+            "kind": "start_codex",
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        self.shortcut_manager.create_shortcuts.assert_called_once_with(
+            normal=False,
+            start_codex=True,
+        )
+
     def test_start_codex_official_mode_skips_provider_sync_and_cpp(self):
         app = self._app()
         with (
@@ -227,6 +312,30 @@ class CodexIntegrationApiTest(unittest.TestCase):
         start.assert_called_once()
         self.assertTrue(start.call_args.kwargs["enable_cdp_injection"])
         self.assertEqual(start.call_args.kwargs["cdp_port"], 51236)
+
+    def test_start_codex_runs_optional_sandbox_repair_when_enabled(self):
+        app = self._app()
+        self.last_config.get.side_effect = lambda key, default=None: (
+            True if key == "codex_sandbox_auto_repair_enabled" else default
+        )
+        with (
+            patch("app.repair_codex_sandbox_permissions", return_value={
+                "success": True,
+                "changed": True,
+                "restart_required": True,
+            }) as repair,
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)),
+            patch("app.start_codex", return_value=(True, "started")),
+        ):
+            response = app.test_client().post("/api/codex/start", json={
+                "start_mode": "preserve_login_proxy",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["sandbox_repair"]["changed"])
+        repair.assert_called_once()
 
     def test_start_codex_persists_requested_injection_settings(self):
         app = self._app()
@@ -302,6 +411,10 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data["backend_url"], "http://127.0.0.1:59999")
+        self.assertIn("hide_official_usage_alert", data)
+        self.assertIn("plugin_marketplace_unlock", data)
+        self.assertIn("force_plugin_install", data)
+        self.assertIn("official_usage_visible", data)
 
     def test_disable_codex_enhance_provider_config_removes_only_local_routing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -316,11 +429,11 @@ class CodexIntegrationApiTest(unittest.TestCase):
                 "model": "gpt-5",
                 "defaults": {"model_provider": "codex_enhance_manager", "model": "gpt-5"},
                 "providers": {
-                    "codex_enhance_manager": {"base_url": "http://127.0.0.1:8080/v1"},
+                    "codex_enhance_manager": {"base_url": "http://127.0.0.1:51235/v1"},
                     "openai": {"name": "OpenAI"},
                 },
                 "model_providers": {
-                    "codex_enhance_manager": {"base_url": "http://127.0.0.1:8080/v1"},
+                    "codex_enhance_manager": {"base_url": "http://127.0.0.1:51235/v1"},
                     "openai": {"name": "OpenAI"},
                 },
             }
@@ -384,6 +497,54 @@ class CodexIntegrationApiTest(unittest.TestCase):
             self.assertFalse(mgr.auth_path.exists())
             self.assertIn("config_toml", data["backups"])
             self.assertIn("auth_json", data["backups"])
+
+    def test_permissions_repair_requires_codex_mutation_confirmation(self):
+        app = self._app()
+
+        response = app.test_client().post("/api/codex-integration/permissions-repair", json={})
+
+        self.assertEqual(response.status_code, 409)
+        data = response.get_json()
+        self.assertEqual(data["required_confirmation"], "MODIFY_CODEX_FILES")
+
+    def test_permissions_repair_normalizes_full_access_without_touching_auth(self):
+        app = self._app()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = CodexConfigManager(codex_home=tmpdir)
+            mgr.backup_dir = Path(tmpdir) / "backups"
+            save_config_toml(str(mgr.config_path), {
+                "model": "gpt-5.5",
+                "model_provider": "openai",
+                "approval_policy": "on-request",
+                "sandbox_mode": "workspace-write",
+                "default_permissions": "dev",
+                "sandbox_workspace_write": {"network_access": True, "writable_roots": ["C:/old"]},
+                "permissions": {"dev": {"extends": ":workspace"}},
+                "windows": {"sandbox": "unelevated"},
+            })
+            save_auth_json(str(mgr.auth_path), {"auth_mode": "chatgpt", "tokens": {"access_token": "secret"}})
+
+            with patch("app.CodexConfigManager", return_value=mgr):
+                response = app.test_client().post("/api/codex-integration/permissions-repair", json={
+                    "manual_codex_mutation": True,
+                    "confirmation": "MODIFY_CODEX_FILES",
+                })
+
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertTrue(data["success"])
+            repaired = load_config_toml(str(mgr.config_path))
+            self.assertEqual(repaired["model"], "gpt-5.5")
+            self.assertEqual(repaired["model_provider"], "openai")
+            self.assertEqual(repaired["approval_policy"], "never")
+            self.assertEqual(repaired["sandbox_mode"], "danger-full-access")
+            self.assertEqual(repaired["default_permissions"], ":danger-full-access")
+            self.assertNotIn("sandbox_workspace_write", repaired)
+            self.assertEqual(repaired["permissions"]["dev"]["extends"], ":workspace")
+            if os.name == "nt":
+                self.assertEqual(repaired["windows"]["sandbox"], "unelevated")
+            self.assertTrue(mgr.auth_path.exists())
+            self.assertTrue(data["backup_path"])
 
     def test_repair_config_template_removes_startup_risks_and_preserves_auth(self):
         app = self._app()

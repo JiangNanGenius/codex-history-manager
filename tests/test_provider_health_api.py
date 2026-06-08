@@ -284,6 +284,70 @@ class ProviderHealthApiTest(unittest.TestCase):
             {"models": [{"id": "draft", "selected": True}]},
         )
 
+    @patch("app.urllib.request.urlopen")
+    def test_provider_models_fetch_draft_uses_user_agent_and_preserves_manual_models(self, mock_urlopen):
+        app, registry, _diagnostics = self._app_for_provider_draft({
+            "id": "p1",
+            "display_name": "Provider",
+            "short_alias": "p1",
+            "base_url": "https://old.example.test/v1",
+            "api_key": "saved-secret",
+            "user_agent": "SavedUA/1.0",
+            "headers": {"Authorization": "Bearer saved-header", "X-Trace-Id": "old"},
+            "models": [
+                {
+                    "id": "existing-model",
+                    "display_name": "Manual Name",
+                    "context_window": 123000,
+                    "selected": True,
+                    "catalog_hidden": False,
+                    "primary": True,
+                }
+            ],
+        })
+        mock_urlopen.return_value = FakeQuotaResponse({
+            "object": "list",
+            "data": [
+                {"id": "existing-model", "context_window": 999999},
+                {"id": "new-model", "input": ["text", "image"]},
+            ],
+        })
+
+        response = app.test_client().post("/api/providers/p1/models/fetch-draft", json={
+            "provider": {
+                "api_key": "********",
+                "base_url": "https://new.example.test/v1",
+                "user_agent": "DraftUA/1.0",
+                "headers": {"Authorization": "********", "X-Trace-Id": "draft"},
+            }
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["preview"])
+        self.assertEqual(data["url"], "https://new.example.test/v1/models")
+        self.assertEqual(data["fetched_count"], 2)
+        self.assertEqual(data["added_count"], 1)
+        self.assertEqual(data["updated_count"], 0)
+        request_arg = mock_urlopen.call_args.args[0]
+        headers = {key.lower(): value for key, value in request_arg.header_items()}
+        self.assertEqual(headers["user-agent"], "DraftUA/1.0")
+        self.assertEqual(headers["authorization"], "Bearer saved-secret")
+        self.assertEqual(headers["x-trace-id"], "draft")
+        existing = next(model for model in data["merged_models"] if model["id"] == "existing-model")
+        new_model = next(model for model in data["merged_models"] if model["id"] == "new-model")
+        self.assertEqual(existing["context_window"], 123000)
+        self.assertTrue(existing["primary"])
+        self.assertFalse(existing["catalog_hidden"])
+        self.assertEqual(new_model["context_window"], 200000)
+        self.assertEqual(new_model["context_window_source"], "default_200k")
+        self.assertFalse(new_model["selected"])
+        self.assertTrue(new_model["catalog_hidden"])
+        self.assertTrue(new_model["capabilities"]["vision"])
+        self.assertNotIn("saved-secret", json.dumps(data, ensure_ascii=False))
+        registry.get_provider.assert_called_once_with("p1", include_secrets=True)
+
     def test_media_adapter_preview_draft_uses_draft_without_leaking_prompt(self):
         app, registry, _diagnostics = self._app_for_provider_draft({
             "id": "p1",

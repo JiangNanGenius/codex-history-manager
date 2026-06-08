@@ -61,6 +61,14 @@ class ConfigThemeTest(unittest.TestCase):
 
         self.assertEqual(cfg._data["close_button_action"], "ask")
 
+    def test_desktop_launch_action_defaults_to_show_window_when_invalid(self):
+        cfg = Config.__new__(Config)
+        cfg._data = {"desktop_launch_action": "unexpected"}
+
+        cfg._normalize_storage_defaults()
+
+        self.assertEqual(cfg._data["desktop_launch_action"], "show_window")
+
     def test_desktop_monitor_enabled_defaults_and_string_normalization(self):
         cfg = Config.__new__(Config)
         cfg._data = {}
@@ -97,10 +105,12 @@ class ConfigThemeTest(unittest.TestCase):
         cfg._data["update_check_enabled"] = "no"
         cfg._data["update_include_prerelease"] = "yes"
         cfg._data["plugin_unlock_enabled"] = "yes"
+        cfg._data["codex_sandbox_auto_repair_enabled"] = "yes"
         cfg._normalize_storage_defaults()
         self.assertFalse(cfg._data["update_check_enabled"])
         self.assertTrue(cfg._data["update_include_prerelease"])
         self.assertTrue(cfg._data["plugin_unlock_enabled"])
+        self.assertTrue(cfg._data["codex_sandbox_auto_repair_enabled"])
 
     def test_local_proxy_token_is_generated_when_missing_or_weak(self):
         cfg = Config.__new__(Config)

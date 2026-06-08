@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from capabilities import native_full_capabilities
 from codex_config import detect_auth_mode
 from providers import normalize_provider
 
@@ -85,7 +84,17 @@ def build_official_login_provider(config_data: Dict[str, Any], auth_data: Dict[s
         "catalog_visibility": "hidden",
         "country_region": "US",
         "native_currency": "USD",
-        "capabilities": native_full_capabilities(),
+        "capability_policy": "official_managed",
+        "capabilities": {
+            "text": True,
+            "vision": True,
+            "tools": True,
+            "custom_tools": True,
+            "reasoning": True,
+            "streaming": True,
+            "compact": True,
+            "models": True,
+        },
         "responses_profile": {
             "mode": "native",
             "native_responses": True,
@@ -97,7 +106,16 @@ def build_official_login_provider(config_data: Dict[str, Any], auth_data: Dict[s
             "enabled": True,
             "selected": True,
             "context_window": 0,
-            "capabilities": {},
+            "capabilities": {
+                "text": True,
+                "vision": True,
+                "tools": True,
+                "custom_tools": True,
+                "reasoning": True,
+                "streaming": True,
+                "compact": True,
+                "models": True,
+            },
         }],
         "status": {
             "last_success": True,

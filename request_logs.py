@@ -95,11 +95,32 @@ class RequestLogStore:
             "entries": list(reversed(filtered[-limit:])),
         }
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(
+        self,
+        provider_id: str = "",
+        endpoint: str = "",
+        media_kind: str = "",
+        error_type: str = "",
+        since: str = "",
+        success: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        provider_filter = str(provider_id or "").strip()
+        endpoint_filter = str(endpoint or "").strip()
+        media_kind_filter = str(media_kind or "").strip().lower()
+        error_type_filter = str(error_type or "").strip()
+        since_dt = _parse_datetime(since) if since else None
         summary: Dict[str, Any] = {
             "path": str(self.path),
             "exists": self.path.exists(),
             "size_bytes": self.path.stat().st_size if self.path.exists() else 0,
+            "filter": {
+                "provider_id": provider_filter,
+                "endpoint": endpoint_filter,
+                "media_kind": media_kind_filter,
+                "error_type": error_type_filter,
+                "since": since,
+                "success": success,
+            },
             "count": 0,
             "success_count": 0,
             "error_count": 0,
@@ -119,6 +140,11 @@ class RequestLogStore:
             "cost_native_by_currency": {},
             "cost_display_by_currency": {},
             "provider_reported_cost_by_currency": {},
+            "effective_cost_by_currency": {},
+            "effective_cost_source_counts": {
+                "provider_reported": 0,
+                "local_estimate": 0,
+            },
             "cost_comparison": {
                 "estimated_count": 0,
                 "reported_count": 0,
@@ -147,6 +173,20 @@ class RequestLogStore:
             "endpoints": {},
         }
         for entry in self._iter_entries():
+            if provider_filter and entry.get("provider_id") != provider_filter:
+                continue
+            if endpoint_filter and entry.get("endpoint") != endpoint_filter:
+                continue
+            if media_kind_filter and entry.get("media_kind") != media_kind_filter:
+                continue
+            if error_type_filter and entry.get("error_type") != error_type_filter:
+                continue
+            if success is not None and bool(entry.get("success")) is not success:
+                continue
+            if since_dt:
+                ts = _parse_datetime(entry.get("timestamp"))
+                if not ts or ts < since_dt:
+                    continue
             summary["count"] += 1
             if entry.get("success"):
                 summary["success_count"] += 1
@@ -184,6 +224,8 @@ class RequestLogStore:
             if reported_currency and _safe_float(reported_amount) > 0:
                 summary["cost_comparison"]["reported_count"] += 1
                 _add_amount(summary["provider_reported_cost_by_currency"], reported_currency, reported_amount)
+                _add_amount(summary["effective_cost_by_currency"], reported_currency, reported_amount)
+                summary["effective_cost_source_counts"]["provider_reported"] += 1
                 if native_currency and native_currency == reported_currency and has_estimate:
                     summary["cost_comparison"]["matched_currency_count"] += 1
                     _add_amount(
@@ -193,6 +235,8 @@ class RequestLogStore:
                     )
             elif has_estimate:
                 summary["cost_comparison"]["estimated_only_count"] += 1
+                _add_amount(summary["effective_cost_by_currency"], native_currency, estimated_total)
+                summary["effective_cost_source_counts"]["local_estimate"] += 1
 
             fx_snapshot = entry.get("fx_snapshot") if isinstance(entry.get("fx_snapshot"), dict) else {}
             if not fx_snapshot and isinstance(cost.get("fx_snapshot"), dict):
@@ -309,6 +353,7 @@ def build_proxy_log_entry(
             or ""
         ),
     )
+    effective_cost = effective_request_cost(provider_reported_cost, cost_estimate)
 
     return safe_log_entry({
         "schema_version": LOG_SCHEMA_VERSION,
@@ -330,6 +375,7 @@ def build_proxy_log_entry(
         "usage": normalized_usage,
         "cost_estimate": cost_estimate,
         "provider_reported_cost": provider_reported_cost,
+        "effective_cost": effective_cost,
         "fx_snapshot": cost_estimate.get("fx_snapshot") if isinstance(cost_estimate, dict) else {},
         "error_type": error_type,
         "error_message": error_message,
@@ -341,6 +387,7 @@ def safe_log_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     usage = normalize_usage(raw.get("usage"))
     cost = raw.get("cost_estimate") if isinstance(raw.get("cost_estimate"), dict) else {}
     provider_reported_cost = normalize_provider_reported_cost(raw.get("provider_reported_cost"))
+    effective_cost = normalize_effective_cost(raw.get("effective_cost")) or effective_request_cost(provider_reported_cost, cost)
     fx_snapshot = raw.get("fx_snapshot") if isinstance(raw.get("fx_snapshot"), dict) else {}
     if not fx_snapshot and isinstance(cost, dict):
         fx_snapshot = cost.get("fx_snapshot") if isinstance(cost.get("fx_snapshot"), dict) else {}
@@ -365,6 +412,7 @@ def safe_log_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
         "usage": usage,
         "cost_estimate": redact_secrets(cost),
         "provider_reported_cost": provider_reported_cost,
+        "effective_cost": effective_cost,
         "fx_snapshot": redact_secrets(fx_snapshot),
         "error_type": _safe_short(raw.get("error_type"), 80),
         "error_message": _safe_short(redact_secrets(raw.get("error_message")), 500),
@@ -463,6 +511,43 @@ def normalize_provider_reported_cost(value: Any) -> Dict[str, Any]:
         "currency": currency,
         "source": _safe_short(value.get("source"), 80),
         "currency_inferred": bool(value.get("currency_inferred", False)),
+    }
+
+
+def effective_request_cost(provider_reported_cost: Any, cost_estimate: Any) -> Dict[str, Any]:
+    reported = normalize_provider_reported_cost(provider_reported_cost)
+    if reported:
+        return {
+            "amount": reported["amount"],
+            "currency": reported["currency"],
+            "source": reported.get("source") or "provider_reported",
+            "estimated": False,
+        }
+    estimate = cost_estimate if isinstance(cost_estimate, dict) else {}
+    amount = _safe_float(estimate.get("total_native"))
+    currency = normalize_currency_code(estimate.get("native_currency") or "", default="")
+    if amount <= 0 or not currency:
+        return {}
+    return {
+        "amount": round(amount, 12),
+        "currency": currency,
+        "source": "local_estimate",
+        "estimated": True,
+    }
+
+
+def normalize_effective_cost(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    amount = _safe_float(value.get("amount"))
+    currency = normalize_currency_code(value.get("currency") or "", default="")
+    if amount <= 0 or not currency:
+        return {}
+    return {
+        "amount": round(amount, 12),
+        "currency": currency,
+        "source": _safe_short(value.get("source") or ("local_estimate" if value.get("estimated") else "provider_reported"), 80),
+        "estimated": bool(value.get("estimated", False)),
     }
 
 

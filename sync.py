@@ -15,6 +15,7 @@ sync.py - Codex 历史记录同步引擎
 """
 import os
 import json
+import re
 import sqlite3
 import shutil
 import tempfile
@@ -298,30 +299,187 @@ def _dedupe_existing_paths(paths: List[str]) -> List[str]:
     return result
 
 
-def _windowsapps_codex_gui_candidates() -> List[str]:
-    if os.name != "nt":
+def _path_mtime(path: str) -> float:
+    try:
+        return Path(path).stat().st_mtime
+    except Exception:
+        return 0.0
+
+
+def _is_codex_desktop_root(app_root: str | Path) -> bool:
+    try:
+        return (Path(app_root) / "resources" / "app.asar").is_file()
+    except Exception:
+        return False
+
+
+def _latest_windows_squirrel_app_dir(root: str | Path) -> Optional[str]:
+    try:
+        app_dirs = [
+            path
+            for path in Path(root).iterdir()
+            if path.is_dir() and re.match(r"app-", path.name, re.IGNORECASE)
+        ]
+    except Exception:
+        return None
+    if not app_dirs:
+        return None
+    def sort_key(path: Path) -> List[object]:
+        return [
+            int(part) if part.isdigit() else part.lower()
+            for part in re.split(r"(\d+)", path.name)
+        ]
+
+    app_dirs.sort(key=sort_key)
+    return str(app_dirs[-1])
+
+
+def _windows_store_codex_root_candidates(package_root: str | Path) -> List[str]:
+    root = Path(package_root)
+    return [str(root / "app"), str(root)]
+
+
+def _windows_codex_candidate_roots(root: str | Path) -> List[str]:
+    root_path = Path(root)
+    if not root_path.exists():
         return []
-    roots = [
-        os.environ.get("ProgramFiles", r"C:\Program Files"),
-        os.environ.get("ProgramW6432", r"C:\Program Files"),
-    ]
-    candidates = []
-    for root in dict.fromkeys(filter(None, roots)):
-        windowsapps = Path(root) / "WindowsApps"
+    candidates: List[str] = []
+    try:
+        entries = list(root_path.iterdir())
+    except Exception:
+        return candidates
+    for entry in entries:
+        if "codex" not in entry.name.lower():
+            continue
         try:
-            matches = sorted(
-                windowsapps.glob("OpenAI.Codex_*_x64__*/app/Codex.exe"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
+            if not entry.is_dir():
+                continue
         except Exception:
-            matches = []
-        candidates.extend(str(path) for path in matches)
+            continue
+        candidates.append(str(entry))
+        candidates.extend(_windows_store_codex_root_candidates(entry))
+        latest = _latest_windows_squirrel_app_dir(entry)
+        if latest:
+            candidates.append(latest)
     return candidates
 
 
+def _windows_store_codex_installs() -> List[str]:
+    if os.name != "nt":
+        return []
+    import subprocess
+
+    command = " ".join([
+        "$pkgs = Get-AppxPackage | Where-Object {",
+        "$_.Name -match 'Codex' -or $_.PackageFullName -match 'Codex' -or $_.InstallLocation -match 'Codex'",
+        "} | Select-Object Name, InstallLocation;",
+        "if ($pkgs) { $pkgs | ConvertTo-Json -Compress }",
+    ])
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except Exception:
+        return []
+    output = (result.stdout or "").strip()
+    if not output:
+        return []
+    try:
+        parsed = json.loads(output)
+    except Exception:
+        return []
+    rows = parsed if isinstance(parsed, list) else [parsed]
+    installs: List[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        location = str(row.get("InstallLocation") or "").strip()
+        if location:
+            installs.extend(_windows_store_codex_root_candidates(location))
+    return installs
+
+
+def _codex_desktop_executable_from_root(app_root: str | Path) -> str:
+    root = Path(app_root)
+    if not _is_codex_desktop_root(root):
+        return ""
+    try:
+        executables = [
+            path
+            for path in root.iterdir()
+            if path.is_file() and path.suffix.lower() == ".exe" and "codex" in path.name.lower()
+        ]
+    except Exception:
+        executables = []
+    if executables:
+        executables.sort(key=lambda p: (p.name.lower() != "codex.exe", p.name.lower()))
+        return str(executables[0])
+    fallback = root / "Codex.exe"
+    return str(fallback) if fallback.exists() else ""
+
+
+def find_codex_desktop_launchers(override: str = "") -> List[str]:
+    """Return verified Codex Desktop launchers, excluding CLI shims."""
+    candidates: List[str] = []
+    if override:
+        candidates.append(override)
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA", "")
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        program_files_x86 = os.environ.get("ProgramFiles(x86)", "")
+        named_dirs = [
+            "Codex (Beta)",
+            "Codex Beta",
+            "codex-beta",
+            "Codex",
+            "codex",
+        ]
+        if local:
+            candidates.extend(_windows_codex_candidate_roots(local))
+            for name in named_dirs:
+                candidates.append(str(Path(local) / "Programs" / name))
+                candidates.append(str(Path(local) / name))
+            candidates.extend(_windows_codex_candidate_roots(Path(local) / "Programs"))
+        if program_files:
+            for name in named_dirs:
+                candidates.append(str(Path(program_files) / name))
+            candidates.extend(_windows_codex_candidate_roots(Path(program_files) / "WindowsApps"))
+            candidates.extend(_windows_codex_candidate_roots(program_files))
+        if program_files_x86:
+            for name in named_dirs:
+                candidates.append(str(Path(program_files_x86) / name))
+            candidates.extend(_windows_codex_candidate_roots(program_files_x86))
+        candidates.extend(_windows_store_codex_installs())
+
+    executables: List[str] = []
+    for raw in candidates:
+        path = Path(os.path.expandvars(str(raw).strip().strip('"')))
+        if path.is_file() and path.suffix.lower() == ".exe":
+            executable = str(path) if _is_codex_desktop_root(path.parent) else ""
+        else:
+            executable = _codex_desktop_executable_from_root(path)
+        if executable:
+            executables.append(executable)
+    executables = _dedupe_existing_paths(executables)
+    executables.sort(key=_path_mtime, reverse=True)
+    return executables
+
+
+def _windowsapps_codex_gui_candidates() -> List[str]:
+    if os.name != "nt":
+        return []
+    return [path for path in find_codex_desktop_launchers() if "\\windowsapps\\" in path.replace("/", "\\").lower()]
+
+
 def _looks_like_codex_gui_launcher(path: str) -> bool:
-    return Path(path).name == "Codex.exe"
+    candidate = Path(path)
+    if candidate.name.lower() != "codex.exe":
+        return False
+    return _is_codex_desktop_root(candidate.parent)
 
 
 def codex_launch_candidates(
@@ -346,7 +504,6 @@ def codex_launch_candidates(
     appdata = os.environ.get("LOCALAPPDATA", "")
     if appdata:
         codex_app = os.path.join(appdata, "OpenAI", "Codex")
-        gui_paths.append(os.path.join(codex_app, "Codex.exe"))
         bin_dir = os.path.join(codex_app, "bin")
         if os.path.exists(bin_dir):
             try:
@@ -355,7 +512,7 @@ def codex_launch_candidates(
             except Exception:
                 pass
 
-    gui_paths.extend(_windowsapps_codex_gui_candidates())
+    gui_paths.extend(find_codex_desktop_launchers(codex_cli_path if _looks_like_codex_gui_launcher(codex_cli_path) else ""))
 
     env_cli = os.environ.get("CODEX_CLI_PATH", "")
     if env_cli:

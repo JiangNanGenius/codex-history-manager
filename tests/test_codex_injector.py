@@ -11,7 +11,22 @@ class CodexInjectorTest(unittest.TestCase):
         self.assertIn("Codex Enhance", script)
         self.assertIn("http://127.0.0.1:51234", script)
         self.assertIn("/api/codex-injection/status", script)
+        self.assertIn("/api/codex-injection/quick-settings", script)
+        self.assertIn("Usage Panel", script)
+        self.assertIn('data-cem-stat="tokens"', script)
+        self.assertIn('data-cem-refresh', script)
         self.assertIn("${rootId}", script)
+
+    def test_build_injection_script_contains_marketplace_and_usage_alert_patches(self):
+        script = build_injection_script("http://127.0.0.1:51234")
+
+        self.assertIn("hideOfficialUsageAlert", script)
+        self.assertIn("data-cem-hidden-usage-alert", script)
+        self.assertIn("patchPluginMarketplaceParams", script)
+        self.assertIn("delete next.marketplaceKinds", script)
+        self.assertIn("forcePluginInstall", script)
+        self.assertIn("cem-force-install-unlocked", script)
+        self.assertIn("pluginEntryUnlock", script)
 
     def test_parse_ws_url(self):
         host, port, path = _parse_ws_url("ws://127.0.0.1:51236/devtools/page/abc")

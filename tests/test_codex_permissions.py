@@ -32,6 +32,13 @@ class CodexPermissionsTest(unittest.TestCase):
 
         self.assertTrue(any("missing [permissions.dev]" in issue["message"] for issue in result["issues"]))
 
+    def test_windows_sandbox_accepts_elevated_and_unelevated_only(self):
+        valid = inspect_codex_permissions({"windows": {"sandbox": "unelevated"}})
+        invalid = inspect_codex_permissions({"windows": {"sandbox": "restricted-token"}})
+
+        self.assertEqual(valid["issue_count"], 0)
+        self.assertTrue(any(issue["field"] == "windows.sandbox" for issue in invalid["issues"]))
+
     def test_preview_update_builds_diff_without_mutating_current(self):
         current = {
             "approval_policy": "on-request",

@@ -28,9 +28,8 @@ VALID_SANDBOX_MODES = {
 }
 
 VALID_WINDOWS_SANDBOX_LEVELS = {
-    "disabled",
-    "restricted-token",
     "elevated",
+    "unelevated",
 }
 
 VALID_BUILT_IN_PERMISSION_PROFILES = {
@@ -44,6 +43,7 @@ SOURCE_NOTES = [
     "openai/codex codex-rs/protocol/src/protocol.rs: AskForApproval = untrusted, on-failure, on-request, granular, never; on-failure is deprecated.",
     "openai/codex codex-rs/config/src/config_toml.rs: config.toml fields include approval_policy, sandbox_mode, sandbox_workspace_write, default_permissions, permissions.",
     "openai/codex codex-rs/config/src/types.rs: sandbox_workspace_write supports writable_roots, network_access, exclude_tmpdir_env_var, exclude_slash_tmp.",
+    "OpenAI Codex Windows docs: windows.sandbox is configured as elevated or unelevated.",
     "openai/codex codex-rs/core/src/config/config_tests.rs: approval_policy=never with full access is rejected if requirements force read-only fallback.",
 ]
 

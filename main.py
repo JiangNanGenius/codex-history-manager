@@ -47,11 +47,15 @@ except Exception:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from desktop_shortcuts import START_CODEX_ARG
+
 DEFAULT_PORT = 51234
 PORT = DEFAULT_PORT
 URL = f"http://127.0.0.1:{PORT}"
 APP_TITLE = "Codex 历史记录管理器"
 SMOKE_TEST_ARG = "--smoke-test"
+DESKTOP_LAUNCH_ACTION_SHOW_WINDOW = "show_window"
+DESKTOP_LAUNCH_ACTION_START_CODEX = "start_codex"
 SMOKE_TEST_ENV = "CODEX_ENHANCE_MANAGER_SMOKE_TEST"
 WEBVIEW_MONITOR_BACKGROUND = "#111827"
 MONITOR_WINDOW_WIDTH = 360
@@ -101,6 +105,7 @@ monitor_window = None
 desktop_api = None
 single_instance_lock = None
 loaded_icon_handles: list[int] = []
+pending_launch_action = DESKTOP_LAUNCH_ACTION_SHOW_WINDOW
 
 
 def _resource_path(name: str) -> str:
@@ -163,11 +168,88 @@ def _start_pyinstaller_parent_watchdog() -> bool:
     return True
 
 
-def _existing_instance_responds() -> bool:
-    health = _desktop_backend_health(DEFAULT_PORT)
-    if health.get("desktop_mode"):
-        _show_existing_desktop_window()
+def _desktop_backend_state_path():
+    try:
+        from app_paths import app_data_path, ensure_app_dirs
+
+        ensure_app_dirs()
+        return app_data_path("desktop_backend.json")
+    except Exception:
+        return None
+
+
+def _write_desktop_backend_state(port: int) -> bool:
+    path = _desktop_backend_state_path()
+    if path is None:
+        return False
+    try:
+        path.write_text(
+            json.dumps({"port": int(port), "url": f"http://127.0.0.1:{int(port)}", "pid": os.getpid()}),
+            encoding="utf-8",
+        )
         return True
+    except Exception:
+        return False
+
+
+def _desktop_backend_port_candidates() -> list[int]:
+    candidates: list[int] = []
+    path = _desktop_backend_state_path()
+    if path is not None and path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            port = int(data.get("port") or 0)
+            if 0 < port <= 65535:
+                candidates.append(port)
+        except Exception:
+            pass
+    candidates.append(DEFAULT_PORT)
+    result: list[int] = []
+    for port in candidates:
+        if port not in result:
+            result.append(port)
+    return result
+
+
+def _request_existing_desktop_start_codex(port: int) -> dict:
+    try:
+        body = json.dumps({"start_mode": "preserve_login_proxy", "async": True}).encode("utf-8")
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{int(port)}/api/codex/start",
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=LOCAL_API_TIMEOUT) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            data = json.loads(raw) if raw else {"success": True}
+            return data if isinstance(data, dict) else {"success": True}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def _request_existing_desktop_action(action: str) -> bool:
+    if action != DESKTOP_LAUNCH_ACTION_START_CODEX:
+        return False
+    for port in _desktop_backend_port_candidates():
+        health = _desktop_backend_health(port)
+        if not health.get("desktop_mode"):
+            continue
+        result = _request_existing_desktop_start_codex(port)
+        if result.get("success") is not False:
+            return True
+    return False
+
+
+def _existing_instance_responds(action: str = DESKTOP_LAUNCH_ACTION_SHOW_WINDOW) -> bool:
+    for port in _desktop_backend_port_candidates():
+        health = _desktop_backend_health(port)
+        if health.get("desktop_mode"):
+            if action == DESKTOP_LAUNCH_ACTION_START_CODEX:
+                _request_existing_desktop_start_codex(port)
+            else:
+                _show_existing_desktop_window()
+            return True
     return False
 
 
@@ -390,6 +472,24 @@ def _configured_close_action() -> str:
     except Exception:
         pass
     return "ask"
+
+
+def _configured_launch_action() -> str:
+    try:
+        from config import Config
+        action = Config().get("desktop_launch_action", DESKTOP_LAUNCH_ACTION_SHOW_WINDOW)
+        if action in {DESKTOP_LAUNCH_ACTION_SHOW_WINDOW, DESKTOP_LAUNCH_ACTION_START_CODEX}:
+            return action
+    except Exception:
+        pass
+    return DESKTOP_LAUNCH_ACTION_SHOW_WINDOW
+
+
+def _launch_action_from_args(argv: list[str] | None = None) -> str:
+    args = list(sys.argv if argv is None else argv)
+    if START_CODEX_ARG in args:
+        return DESKTOP_LAUNCH_ACTION_START_CODEX
+    return _configured_launch_action()
 
 
 def _monitor_auto_show_enabled() -> bool:
@@ -1472,7 +1572,7 @@ def _wait_for_flask(host="127.0.0.1", port=None, timeout=10):
     return False
 
 
-def _create_main_window(api):
+def _create_main_window(api, hidden: bool = False):
     window = webview.create_window(
         title=APP_TITLE,
         url=URL,
@@ -1480,6 +1580,7 @@ def _create_main_window(api):
         width=1280,
         height=800,
         min_size=(900, 600),
+        hidden=bool(hidden),
         confirm_close=False,
         text_select=True,
     )
@@ -1495,21 +1596,30 @@ def _create_monitor_window(api, hidden: bool | None = None):
     return NativeTokenMonitor(api, hidden=should_hide)
 
 
-def _create_desktop_windows(api):
-    return _create_main_window(api), _create_monitor_window(api)
+def _create_desktop_windows(api, hide_main: bool = False):
+    return _create_main_window(api, hidden=hide_main), _create_monitor_window(api)
 
 
 def _on_webview_started():
-    """Show the monitor after WebView is ready so default-on is reliable."""
+    """Run deferred desktop startup actions after WebView is ready."""
+    started_action = False
+    if pending_launch_action == DESKTOP_LAUNCH_ACTION_START_CODEX:
+        try:
+            starter = threading.Timer(0.8, _start_codex_from_desktop)
+            starter.daemon = True
+            starter.start()
+            started_action = True
+        except Exception:
+            pass
     if not _monitor_auto_show_enabled():
-        return False
+        return started_action
     try:
         timer = threading.Timer(2.5, _show_monitor)
         timer.daemon = True
         timer.start()
         return True
     except Exception:
-        return False
+        return started_action
 
 
 def _smoke_test_webview_window_creation() -> bool:
@@ -1590,16 +1700,19 @@ def main():
       - 若 Flask 启动超时（如端口被占用），打印错误并 sys.exit(1)，
         避免用户看到空白窗口。
     """
-    global main_window, monitor_window, desktop_api
+    global main_window, monitor_window, desktop_api, pending_launch_action
+    pending_launch_action = _launch_action_from_args()
     if not _acquire_single_instance_lock():
-        _show_existing_desktop_window()
+        if not _request_existing_desktop_action(pending_launch_action):
+            _show_existing_desktop_window()
         print("Codex Enhance Manager is already running or still shutting down.")
         return
-    if _existing_instance_responds():
+    if _existing_instance_responds(pending_launch_action):
         print("Codex Enhance Manager is already running.")
         return
     try:
         _set_backend_port(_select_backend_port(DEFAULT_PORT))
+        _write_desktop_backend_state(PORT)
     except Exception as exc:
         print(f"Unable to choose local backend port: {exc}")
         sys.exit(1)
@@ -1615,7 +1728,7 @@ def main():
 
     # 创建 PyWebView 窗口（内嵌 Edge WebView2）
     desktop_api = DesktopApi()
-    window = _create_main_window(desktop_api)
+    window = _create_main_window(desktop_api, hidden=pending_launch_action == DESKTOP_LAUNCH_ACTION_START_CODEX)
     main_window = window
     _setup_tray(window)
     try:

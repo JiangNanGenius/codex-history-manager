@@ -26,7 +26,7 @@ class MockConfig:
     def get_all(self):
         return {
             "db_path": ":memory:",
-            "proxy_port": 8080,
+            "proxy_port": 51235,
             "request_log_path": "__missing_request_logs__.jsonl",
             "request_log_retention_days": 30,
             "request_log_max_mb": 50,
@@ -51,7 +51,7 @@ class MockProxyServer:
     """极简 LocalProxyServer mock。"""
 
     def status(self):
-        return {"running": False, "port": 8080, "base_url": ""}
+        return {"running": False, "port": 51235, "base_url": ""}
 
 
 class MockAMRRegistry:
@@ -233,7 +233,7 @@ class TestDiagnosticsCollector(unittest.TestCase):
                     "short_alias": "img",
                     "base_url": "https://image.example.test/v1",
                     "api_format": "openai_responses",
-                    "api_key": "sk-image-secret",
+                    "api_key": "test-image-secret",
                     "capabilities": {"text": True, "images": True},
                     "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
                     "models": [{"id": "gpt-image-1", "enabled": True}],
@@ -258,7 +258,7 @@ class TestDiagnosticsCollector(unittest.TestCase):
         video_check = next(item for item in media_route["checks"] if item["media_kind"] == "video")
         self.assertEqual(video_check["error_type"], "media_capability_unsupported")
         self.assertIn("not configured for video media requests", video_check["message"])
-        self.assertNotIn("sk-image-secret", json.dumps(result, ensure_ascii=False))
+        self.assertNotIn("test-image-secret", json.dumps(result, ensure_ascii=False))
 
     @patch("diagnostics.CodexConfigManager")
     def test_export_safe_bundle_outputs_valid_json(self, MockMgr):

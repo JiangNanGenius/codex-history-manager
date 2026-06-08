@@ -23,7 +23,7 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         ]
         catalog = UnifiedModelCatalog(providers).build_catalog()
         self.assertEqual(catalog["entry_count"], 2)
-        self.assertEqual(catalog["entries"][0]["codex_model_id"], "openai/gpt-5")
+        self.assertEqual(catalog["entries"][0]["codex_model_id"], "openai/GPT-5")
 
     def test_selected_models_only_shows_selected(self):
         providers = [
@@ -119,7 +119,7 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         ]
         injection = UnifiedModelCatalog(providers).build_injection_data()
         self.assertEqual(len(injection), 1)
-        self.assertEqual(injection[0]["id"], "openai/gpt-5")
+        self.assertEqual(injection[0]["id"], "openai/GPT-5")
         self.assertEqual(injection[0]["name"], "GPT-5")
 
     def test_find_entry(self):
@@ -161,7 +161,7 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         self.assertIn("qwen/gpt-4", ids)
         self.assertEqual(len(ids), 2)
 
-    def test_duplicate_alias_collision_uses_provider_id_prefix(self):
+    def test_duplicate_provider_alias_gets_visible_suffix_before_collision_fallback(self):
         providers = [
             {
                 "id": "p1",
@@ -180,10 +180,9 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         ]
         catalog = UnifiedModelCatalog(providers).build_catalog()
         ids = [e["codex_model_id"] for e in catalog["entries"]]
-        self.assertEqual(ids, ["p1/same-model", "p2/same-model"])
-        self.assertTrue(all(e["catalog_collision"] for e in catalog["entries"]))
-        self.assertTrue(all(e["original_codex_model_id"] == "dup/same-model" for e in catalog["entries"]))
-        self.assertTrue(any("Catalog ID collision" in item for item in catalog["route_explanation"]))
+        self.assertEqual(ids, ["dup/same-model", "dup (p2)/same-model"])
+        self.assertFalse(any(e["catalog_collision"] for e in catalog["entries"]))
+        self.assertFalse(any("Catalog ID collision" in item for item in catalog["route_explanation"]))
 
     def test_duplicate_model_not_added_twice(self):
         providers = [
@@ -272,7 +271,8 @@ class UnifiedModelCatalogTest(unittest.TestCase):
             registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
             provider = registry.import_preset("codex-api-key-mixin")
 
-        entry = UnifiedModelCatalog([provider]).find_entry("mix/auto")
+        catalog = UnifiedModelCatalog([provider]).build_catalog()
+        entry = catalog["entries"][0] if catalog["entries"] else None
 
         self.assertIsNotNone(entry)
         self.assertEqual(entry["api_format"], "openai_responses")
@@ -305,6 +305,88 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         self.assertEqual(entry["pricing"]["input_per_million"], 0.5)
         self.assertEqual(entry["pricing"]["output_per_million"], 2.0)
         self.assertTrue(entry["has_model_pricing"])
+
+    def test_focused_provider_uses_visible_names_and_other_provider_primary_only(self):
+        providers = [
+            {
+                "id": "ark-code-plan",
+                "short_alias": "arkplan",
+                "codex_visible_alias": "Ark Coding Plan",
+                "enabled": True,
+                "catalog_visibility": "hidden",
+                "models": [
+                    {
+                        "id": "ark-code-latest",
+                        "display_name": "Ark Code Latest",
+                        "codex_visible_id": "Ark Code Latest",
+                        "enabled": True,
+                        "catalog_hidden": False,
+                        "primary": True,
+                    },
+                    {
+                        "id": "hidden-model",
+                        "display_name": "Hidden Model",
+                        "enabled": True,
+                        "catalog_hidden": True,
+                    },
+                ],
+            },
+            {
+                "id": "kimi-code",
+                "short_alias": "kimi",
+                "codex_visible_alias": "Kimi Code",
+                "enabled": True,
+                "catalog_visibility": "selected_models",
+                "models": [
+                    {
+                        "id": "kimi-k2.6",
+                        "display_name": "Kimi K2.6",
+                        "enabled": True,
+                        "catalog_hidden": False,
+                        "primary": True,
+                    },
+                    {
+                        "id": "kimi-extra",
+                        "display_name": "Kimi Extra",
+                        "enabled": True,
+                        "catalog_hidden": False,
+                        "selected": True,
+                    },
+                ],
+            },
+        ]
+
+        catalog = UnifiedModelCatalog(providers, focus_provider_id="ark-code-plan").build_catalog()
+        ids = [entry["codex_model_id"] for entry in catalog["entries"]]
+
+        self.assertEqual(ids, ["Ark Coding Plan/Ark Code Latest", "Kimi Code/Kimi K2.6"])
+        self.assertNotIn("Ark Coding Plan/Hidden Model", ids)
+        self.assertTrue(catalog["entries"][0]["focused"])
+        self.assertEqual(catalog["entries"][0]["upstream_model_id"], "ark-code-latest")
+
+    def test_duplicate_visible_provider_alias_gets_stable_suffix(self):
+        providers = [
+            {
+                "id": "p1",
+                "short_alias": "a",
+                "codex_visible_alias": "Shared Provider",
+                "enabled": True,
+                "catalog_visibility": "always_visible",
+                "models": [{"id": "m1", "display_name": "Model One", "enabled": True}],
+            },
+            {
+                "id": "p2",
+                "short_alias": "b",
+                "codex_visible_alias": "Shared Provider",
+                "enabled": True,
+                "catalog_visibility": "always_visible",
+                "models": [{"id": "m2", "display_name": "Model Two", "enabled": True}],
+            },
+        ]
+
+        ids = [entry["codex_model_id"] for entry in UnifiedModelCatalog(providers).build_catalog()["entries"]]
+
+        self.assertEqual(ids, ["Shared Provider/Model One", "Shared Provider (p2)/Model Two"])
 
 
 if __name__ == "__main__":

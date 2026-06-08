@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -20,6 +22,52 @@ from providers import is_secret_key
 DEFAULT_TIMEOUT_SECONDS = 20
 DEFAULT_TTL_SECONDS = 300
 REDACTED_VALUE = "********"
+SUPPORTED_QUOTA_PROBE_TYPES = {"http_json", "script", "manual", "unsupported"}
+SCRIPT_LANGUAGES = {"javascript", "js"}
+
+
+JS_QUOTA_RUNNER = r"""
+const fs = require("fs");
+const vm = require("vm");
+
+function fail(message) {
+  process.stderr.write(String(message || "quota script failed"));
+  process.exit(2);
+}
+
+let input;
+try {
+  input = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (err) {
+  fail("invalid runner input");
+}
+
+const timeout = Math.max(1, Number(input.timeoutMs || 1000));
+const context = vm.createContext(Object.create(null));
+try {
+  context.__response = input.response === undefined ? null : input.response;
+  const source = `
+    const __factory = (${input.code || ""});
+    const __probe = typeof __factory === "function" ? __factory() : __factory;
+    if (!__probe || typeof __probe !== "object") {
+      throw new Error("quota script must return an object");
+    }
+    if (${JSON.stringify(input.phase)} === "request") {
+      JSON.stringify(__probe.request || __probe);
+    } else {
+      const __extractor = __probe.extractor;
+      const __value = typeof __extractor === "function"
+        ? __extractor(__response)
+        : (__extractor || {});
+      JSON.stringify(__value === undefined ? {} : __value);
+    }
+  `;
+  const output = new vm.Script(source).runInContext(context, { timeout });
+  process.stdout.write(String(output || "{}"));
+} catch (err) {
+  fail(err && err.message ? err.message : "quota script execution failed");
+}
+"""
 
 
 class QuotaError(Exception):
@@ -83,13 +131,19 @@ class QuotaManager:
 
 def normalize_quota_check(value: Any) -> Dict[str, Any]:
     raw = value if isinstance(value, dict) else {}
+    probe_type = _normalize_probe_type(raw)
     method = str(raw.get("method") or "GET").strip().upper()
     if method not in {"GET", "POST"}:
         method = "GET"
     timeout = _int(raw.get("timeout_seconds"), DEFAULT_TIMEOUT_SECONDS)
-    ttl = _int(raw.get("ttl_seconds"), DEFAULT_TTL_SECONDS)
+    auto_interval = _int(raw.get("auto_query_interval_minutes"), 0)
+    ttl_default = auto_interval * 60 if auto_interval > 0 else DEFAULT_TTL_SECONDS
+    ttl = _int(raw.get("ttl_seconds"), ttl_default)
+    script = normalize_quota_script(raw)
     return {
         "enabled": bool(raw.get("enabled", False)),
+        "type": probe_type,
+        "probe_type": probe_type,
         "method": method,
         "url": str(raw.get("url") or raw.get("endpoint") or "").strip(),
         "headers": raw.get("headers") if isinstance(raw.get("headers"), dict) else {},
@@ -97,7 +151,22 @@ def normalize_quota_check(value: Any) -> Dict[str, Any]:
         "json_paths": normalize_json_paths(raw.get("json_paths")),
         "timeout_seconds": max(timeout, 1),
         "ttl_seconds": max(ttl, 1),
+        "auto_query_interval_minutes": max(auto_interval, 0),
+        "script": script,
         "note": str(raw.get("note") or ""),
+    }
+
+
+def normalize_quota_script(value: Any) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    script = raw.get("script") if isinstance(raw.get("script"), dict) else {}
+    language = str(script.get("language") or raw.get("language") or "javascript").strip().lower()
+    if language not in SCRIPT_LANGUAGES:
+        language = "javascript"
+    code = str(script.get("code") or raw.get("code") or "").strip()
+    return {
+        "language": language,
+        "code": code,
     }
 
 
@@ -113,32 +182,47 @@ def normalize_json_paths(value: Any) -> Dict[str, str]:
 
 
 def run_quota_probe(provider: Dict[str, Any], quota_check: Dict[str, Any]) -> Dict[str, Any]:
+    probe_type = str(quota_check.get("type") or quota_check.get("probe_type") or "http_json")
+    if probe_type == "script":
+        return run_script_quota_probe(provider, quota_check)
+    if probe_type in {"manual", "unsupported"}:
+        provider_id = str(provider.get("id") or "")
+        return _failure_snapshot(
+            provider_id,
+            f"Quota probe type '{probe_type}' is not executable automatically.",
+            quota_check,
+        )
+    return run_http_json_quota_probe(provider, quota_check)
+
+
+def run_http_json_quota_probe(provider: Dict[str, Any], quota_check: Dict[str, Any]) -> Dict[str, Any]:
     provider_id = str(provider.get("id") or "")
-    url = quota_check.get("url") or ""
+    url = render_quota_templates(quota_check.get("url") or "", provider)
     if not url:
         return _failure_snapshot(provider_id, "Quota check URL is empty.", quota_check)
 
     headers = build_quota_headers(provider, quota_check)
-    body = None
-    if quota_check.get("body") is not None:
-        body = json.dumps(quota_check["body"], ensure_ascii=False).encode("utf-8")
-        headers["Content-Type"] = headers.get("Content-Type") or "application/json"
-
-    request = urllib.request.Request(url, data=body, headers=headers, method=quota_check.get("method", "GET"))
     try:
-        with urllib.request.urlopen(request, timeout=quota_check.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)) as resp:
-            raw_body = resp.read()
-            status = int(resp.getcode() or 200)
+        status, payload, raw_body = perform_quota_http_request(
+            url=url,
+            method=str(quota_check.get("method") or "GET"),
+            headers=headers,
+            body=render_quota_templates(quota_check.get("body"), provider),
+            timeout_seconds=quota_check.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
+        )
     except urllib.error.HTTPError as exc:
         raw_body = exc.read() if exc.fp else b""
         return _failure_snapshot(provider_id, f"HTTP {exc.code}", quota_check, status_code=exc.code, raw_body=raw_body)
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         return _failure_snapshot(provider_id, f"Quota request failed: {exc}", quota_check)
-
-    try:
-        payload = json.loads(raw_body.decode("utf-8", errors="replace")) if raw_body else {}
     except json.JSONDecodeError:
-        return _failure_snapshot(provider_id, "Quota response is not valid JSON.", quota_check, status_code=status, raw_body=raw_body)
+        return _failure_snapshot(
+            provider_id,
+            "Quota response is not valid JSON.",
+            quota_check,
+            status_code=status if "status" in locals() else 0,
+            raw_body=raw_body if "raw_body" in locals() else b"",
+        )
 
     extracted = extract_json_paths(payload, quota_check.get("json_paths") or {})
     return {
@@ -152,6 +236,162 @@ def run_quota_probe(provider: Dict[str, Any], quota_check: Dict[str, Any]) -> Di
         "raw_redacted": redact_quota_result(payload),
         "note": quota_check.get("note") or "",
     }
+
+
+def run_script_quota_probe(provider: Dict[str, Any], quota_check: Dict[str, Any]) -> Dict[str, Any]:
+    provider_id = str(provider.get("id") or "")
+    script = quota_check.get("script") if isinstance(quota_check.get("script"), dict) else {}
+    language = str(script.get("language") or "javascript").strip().lower()
+    code = str(script.get("code") or "").strip()
+    if language not in SCRIPT_LANGUAGES:
+        return _failure_snapshot(provider_id, f"Unsupported quota script language: {language}", quota_check)
+    if not code:
+        return _failure_snapshot(provider_id, "Quota script is empty.", quota_check)
+
+    try:
+        request_config = run_js_quota_script_phase(
+            code,
+            phase="request",
+            response=None,
+            timeout_seconds=quota_check.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
+        )
+    except QuotaError as exc:
+        return _failure_snapshot(provider_id, str(exc), quota_check)
+
+    if not isinstance(request_config, dict):
+        return _failure_snapshot(provider_id, "Quota script request must be an object.", quota_check)
+    url = render_quota_templates(
+        request_config.get("url") or request_config.get("endpoint") or quota_check.get("url") or "",
+        provider,
+    )
+    if not url:
+        return _failure_snapshot(provider_id, "Quota script request URL is empty.", quota_check)
+    method = str(request_config.get("method") or quota_check.get("method") or "GET").strip().upper()
+    if method not in {"GET", "POST"}:
+        method = "GET"
+
+    script_headers = request_config.get("headers") if isinstance(request_config.get("headers"), dict) else {}
+    headers = build_quota_headers(provider, {**quota_check, "headers": script_headers})
+    body = request_config.get("body") if "body" in request_config else quota_check.get("body")
+    body = render_quota_templates(body, provider)
+
+    try:
+        status, payload, raw_body = perform_quota_http_request(
+            url=url,
+            method=method,
+            headers=headers,
+            body=body,
+            timeout_seconds=quota_check.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
+        )
+    except urllib.error.HTTPError as exc:
+        raw_body = exc.read() if exc.fp else b""
+        return _failure_snapshot(provider_id, f"HTTP {exc.code}", quota_check, status_code=exc.code, raw_body=raw_body)
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        return _failure_snapshot(provider_id, f"Quota request failed: {exc}", quota_check)
+    except json.JSONDecodeError:
+        return _failure_snapshot(
+            provider_id,
+            "Quota response is not valid JSON.",
+            quota_check,
+            status_code=status if "status" in locals() else 0,
+            raw_body=raw_body if "raw_body" in locals() else b"",
+        )
+
+    try:
+        extracted = run_js_quota_script_phase(
+            code,
+            phase="extract",
+            response=payload,
+            timeout_seconds=quota_check.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
+        )
+    except QuotaError as exc:
+        return _failure_snapshot(provider_id, str(exc), quota_check, status_code=status, raw_body=raw_body)
+    if not isinstance(extracted, dict):
+        extracted = {"value": extracted}
+
+    return {
+        "success": True,
+        "provider_id": provider_id,
+        "enabled": True,
+        "type": "script",
+        "status_code": status,
+        "fetched_at": _now_iso(),
+        "ttl_seconds": quota_check.get("ttl_seconds", DEFAULT_TTL_SECONDS),
+        "values": redact_quota_result(extracted),
+        "request_redacted": redact_quota_result({"method": method, "url": url, "headers": headers}),
+        "raw_redacted": redact_quota_result(payload),
+        "note": quota_check.get("note") or "",
+    }
+
+
+def perform_quota_http_request(
+    url: str,
+    method: str,
+    headers: Dict[str, str],
+    body: Any,
+    timeout_seconds: int,
+) -> Tuple[int, Any, bytes]:
+    rendered_headers = {
+        str(key): str(value)
+        for key, value in (headers or {}).items()
+        if value is not None
+    }
+    body_bytes = None
+    if body is not None:
+        if isinstance(body, (bytes, bytearray)):
+            body_bytes = bytes(body)
+        elif isinstance(body, str):
+            body_bytes = body.encode("utf-8")
+        else:
+            body_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            rendered_headers["Content-Type"] = rendered_headers.get("Content-Type") or "application/json"
+    request = urllib.request.Request(
+        url,
+        data=body_bytes,
+        headers=rendered_headers,
+        method=str(method or "GET").upper(),
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as resp:
+        raw_body = resp.read()
+        status = int(resp.getcode() or 200)
+    payload = json.loads(raw_body.decode("utf-8", errors="replace")) if raw_body else {}
+    return status, payload, raw_body
+
+
+def run_js_quota_script_phase(
+    code: str,
+    phase: str,
+    response: Any,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+) -> Any:
+    node = shutil.which("node") or shutil.which("node.exe")
+    if not node:
+        raise QuotaError("JavaScript quota scripts require Node.js on PATH.")
+    timeout_ms = max(int(timeout_seconds or DEFAULT_TIMEOUT_SECONDS), 1) * 1000
+    payload = {
+        "code": code,
+        "phase": phase,
+        "response": response,
+        "timeoutMs": timeout_ms,
+    }
+    try:
+        completed = subprocess.run(
+            [node, "-e", JS_QUOTA_RUNNER],
+            input=json.dumps(payload, ensure_ascii=False),
+            text=True,
+            capture_output=True,
+            timeout=max(int(timeout_seconds or DEFAULT_TIMEOUT_SECONDS), 1) + 1,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise QuotaError(f"JavaScript quota script failed during {phase}: {exc}") from exc
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or "execution failed"
+        raise QuotaError(f"JavaScript quota script failed during {phase}: {_safe_error_text(message)}")
+    try:
+        return json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise QuotaError(f"JavaScript quota script returned invalid JSON during {phase}") from exc
 
 
 def refresh_provider_quota_preview(provider: Dict[str, Any]) -> Dict[str, Any]:
@@ -179,11 +419,11 @@ def build_quota_headers(provider: Dict[str, Any], quota_check: Dict[str, Any]) -
     configured = provider.get("headers") if isinstance(provider.get("headers"), dict) else {}
     for key, value in configured.items():
         if isinstance(value, str) and key.lower() not in {"authorization", "x-api-key"}:
-            headers[str(key)] = value
+            headers[str(key)] = render_quota_templates(value, provider)
     override = quota_check.get("headers") if isinstance(quota_check.get("headers"), dict) else {}
     for key, value in override.items():
         if isinstance(value, str):
-            headers[str(key)] = value
+            headers[str(key)] = render_quota_templates(value, provider)
     user_agent = str(provider.get("user_agent") or configured.get("User-Agent") or "Codex-Enhance-Manager-Quota/1.0")
     headers["User-Agent"] = headers.get("User-Agent") or user_agent
 
@@ -191,6 +431,26 @@ def build_quota_headers(provider: Dict[str, Any], quota_check: Dict[str, Any]) -
     if api_key and not _has_header(headers, "Authorization") and not _has_header(headers, "x-api-key"):
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
+
+
+def render_quota_templates(value: Any, provider: Dict[str, Any]) -> Any:
+    mapping = {
+        "providerId": str(provider.get("id") or ""),
+        "providerName": str(provider.get("display_name") or provider.get("id") or ""),
+        "baseUrl": str(provider.get("base_url") or "").rstrip("/"),
+        "apiKey": str(provider.get("secondary_usage_key") or provider.get("api_key") or ""),
+        "secondaryUsageKey": str(provider.get("secondary_usage_key") or ""),
+    }
+    if isinstance(value, str):
+        text = value
+        for key, item in mapping.items():
+            text = text.replace("{{" + key + "}}", item)
+        return text
+    if isinstance(value, dict):
+        return {key: render_quota_templates(item, provider) for key, item in value.items()}
+    if isinstance(value, list):
+        return [render_quota_templates(item, provider) for item in value]
+    return value
 
 
 def extract_json_paths(payload: Any, paths: Dict[str, str]) -> Dict[str, Any]:
@@ -234,6 +494,7 @@ def _failure_snapshot(provider_id: str, error: str, quota_check: Dict[str, Any],
         "success": False,
         "provider_id": provider_id,
         "enabled": bool(quota_check.get("enabled", False)),
+        "type": quota_check.get("type") or quota_check.get("probe_type") or "http_json",
         "status_code": status_code,
         "fetched_at": _now_iso(),
         "ttl_seconds": quota_check.get("ttl_seconds", DEFAULT_TTL_SECONDS),
@@ -280,6 +541,17 @@ def _split_path(path: str) -> list[str]:
     return [part for part in raw.replace("[", ".").replace("]", "").split(".") if part]
 
 
+def _normalize_probe_type(raw: Dict[str, Any]) -> str:
+    probe_type = str(raw.get("type") or raw.get("probe_type") or raw.get("kind") or "http_json").strip().lower()
+    if raw.get("code") or raw.get("script") or probe_type in {"js", "javascript"}:
+        probe_type = "script"
+    if probe_type in {"http", "json", "http-json"}:
+        probe_type = "http_json"
+    if probe_type not in SUPPORTED_QUOTA_PROBE_TYPES:
+        probe_type = "http_json"
+    return probe_type
+
+
 def _has_header(headers: Dict[str, str], name: str) -> bool:
     return any(str(key).lower() == name.lower() for key in headers)
 
@@ -293,3 +565,10 @@ def _int(value: Any, default: int) -> int:
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _safe_error_text(value: Any) -> str:
+    text = str(value or "")
+    if len(text) > 300:
+        text = text[:297] + "..."
+    return text.replace("\r", " ").replace("\n", " ")

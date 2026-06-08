@@ -67,6 +67,17 @@ def detect_codex_db() -> str:
     return valid[0]
 
 
+def detect_codex_desktop() -> str:
+    """Detect the Codex Desktop Electron executable, not the CLI shim."""
+    try:
+        from sync import find_codex_desktop_launchers
+
+        launchers = find_codex_desktop_launchers()
+        return launchers[0] if launchers else ""
+    except Exception:
+        return ""
+
+
 def detect_codex_cli() -> str:
     """自动检测 Codex CLI 路径"""
     # 1. 从 config.toml 的 mcp_servers.CODEX_CLI_PATH 读取
@@ -113,6 +124,11 @@ def detect_codex_cli() -> str:
             return exe
 
     return ""
+
+
+def detect_codex_launch_path() -> str:
+    """Detect the best path for launching Codex Desktop, falling back to CLI."""
+    return detect_codex_desktop() or detect_codex_cli()
 
 
 def detect_codex_plus_plus() -> str:
@@ -278,7 +294,8 @@ def detect_all() -> Dict:
     """
     return {
         "db_path": detect_codex_db(),
-        "codex_cli_path": detect_codex_cli(),
+        "codex_cli_path": detect_codex_launch_path(),
+        "codex_desktop_path": detect_codex_desktop(),
         "codex_plus_plus_path": detect_codex_plus_plus(),
         "sessions_dir": detect_sessions_dir(),
         "archived_dir": detect_archived_dir(),

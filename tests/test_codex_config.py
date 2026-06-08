@@ -177,7 +177,7 @@ class CodexConfigManagerTest(unittest.TestCase):
             self.assertEqual(config.get("model_provider"), "codex_enhance_manager")
             self.assertTrue(codex_goals_enabled_from_config(config))
             provider = config.get("model_providers", {}).get("codex_enhance_manager", {})
-            self.assertEqual(provider.get("base_url"), "http://localhost:8080/v1")
+            self.assertEqual(provider.get("base_url"), "http://127.0.0.1:51235/v1")
             self.assertEqual(provider.get("wire_api"), "responses")
             self.assertTrue(provider.get("requires_openai_auth"))
             self.assertEqual(provider.get("experimental_bearer_token"), token)

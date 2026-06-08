@@ -4,7 +4,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app import _attach_usage_source_summary, _merge_cache_usage_sources, _merge_local_proxy_request_log_usage
+from app import (
+    _attach_usage_source_summary,
+    _merge_cache_usage_sources,
+    _merge_local_proxy_request_log_usage,
+    _official_usage_visible_for_current_mode,
+    _provider_focus_is_official_login,
+)
 from codex_rollout_usage import (
     discover_rollout_paths,
     get_codex_rollout_cache_stats,
@@ -20,6 +26,53 @@ def write_jsonl(path: Path, rows):
 
 
 class CodexRolloutUsageTest(unittest.TestCase):
+    def test_provider_focus_is_official_login_for_switch_only_entry(self):
+        self.assertTrue(_provider_focus_is_official_login({
+            "focus_provider_id": "codex_official",
+            "providers": [],
+        }))
+        self.assertTrue(_provider_focus_is_official_login({
+            "focus_provider_id": "official",
+            "providers": [{
+                "id": "official",
+                "switch_only": True,
+                "codex_login": True,
+            }],
+        }))
+        self.assertFalse(_provider_focus_is_official_login({
+            "focus_provider_id": "third-party",
+            "providers": [{"id": "third-party", "switch_only": False}],
+        }))
+
+    def test_official_usage_visible_only_for_official_current_mode(self):
+        official_payload = {
+            "focus_provider_id": "codex_official",
+            "providers": [],
+        }
+        third_party_payload = {
+            "focus_provider_id": "third-party",
+            "providers": [{
+                "id": "third-party",
+                "enabled": True,
+                "base_url": "https://api.example.test/v1",
+                "api_key": "redacted",
+                "auth_mode": "provider_api_key",
+            }],
+        }
+
+        self.assertTrue(_official_usage_visible_for_current_mode("official_oauth", official_payload))
+        self.assertTrue(_official_usage_visible_for_current_mode(
+            "official_oauth",
+            {"focus_provider_id": "", "providers": []},
+            last_start_mode="official_direct",
+        ))
+        self.assertFalse(_official_usage_visible_for_current_mode("official_oauth", third_party_payload))
+        self.assertFalse(_official_usage_visible_for_current_mode(
+            "official_oauth",
+            {"focus_provider_id": "", "providers": []},
+            last_start_mode="preserve_login_proxy",
+        ))
+
     def test_reads_codex_info_last_usage_cached_input_tokens(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "rollout.jsonl"

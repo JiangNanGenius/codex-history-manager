@@ -208,6 +208,17 @@ function setStatus(text) {
 
 async function startCodexFromQuickAction() {
     try {
+        const status = await api('/api/codex/status');
+        if (status && status.running) {
+            const pids = Array.isArray(status.pids) ? status.pids.join(', ') : '';
+            if (!confirm(t('confirmRestartRunningCodex', { pids: pids || '-' }))) {
+                setStatus(t('codexStartCancelled'));
+                return;
+            }
+            setStatus(t('codexRestartRequested'));
+            await api('/api/codex/kill', { method: 'POST' });
+            await new Promise(resolve => setTimeout(resolve, 1200));
+        }
         setStatus(t('codexStartRequested'));
         const data = await startCodexWithProgress({ start_mode: 'preserve_login_proxy' });
         const ok = !data || data.success !== false;

@@ -68,7 +68,7 @@ def responses_to_anthropic_messages(
     if system_parts:
         result["system"] = "\n\n".join(part for part in system_parts if part)
 
-    for key in ("temperature", "top_p", "top_k", "stream", "metadata", "service_tier"):
+    for key in ("temperature", "top_p", "top_k", "stream", "metadata", "service_tier", "output_config"):
         if key in body:
             result[key] = body[key]
 

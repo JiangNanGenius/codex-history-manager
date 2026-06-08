@@ -1,12 +1,17 @@
 const TOKEN_ALERT_DEFAULT = 100000;
 const REFRESH_MS = 5000;
 const PROVIDER_REFRESH_MS = 15000;
-const SPEED_SAMPLE_WINDOW_MS = 60000;
-const SPEED_SAMPLE_LIMIT = 20;
+const QUOTA_REFRESH_MS = 30000;
+const SPEED_SAMPLE_WINDOW_MS = 600000;
+const SPEED_SAMPLE_LIMIT = 120;
+const BALANCE_SAMPLE_WINDOW_MS = 1800000;
+const BALANCE_SAMPLE_LIMIT = 120;
+const COST_SAMPLE_WINDOW_MS = 1800000;
+const COST_SAMPLE_LIMIT = 120;
 const MONITOR_WINDOW_WIDTH = 300;
 const MONITOR_COMPACT_MIN_HEIGHT = 92;
-const MONITOR_EXPANDED_MIN_HEIGHT = 204;
-const MONITOR_MAX_HEIGHT = 360;
+const MONITOR_EXPANDED_MIN_HEIGHT = 228;
+const MONITOR_MAX_HEIGHT = 420;
 const monitorLang = localStorage.getItem('codex_gui_lang') === 'en' ? 'en' : 'zh';
 const monitorCopy = {
     zh: {
@@ -23,10 +28,22 @@ const monitorCopy = {
         tokensPerMin: 'tokens/min',
         speedUnavailable: '速度: --',
         sampleCount: '采样点',
+        balance: '余额',
+        balanceUnavailable: '余额: --',
+        balanceDecrease: '下降',
+        estimatedCost: '预计扣费',
+        estimatedCostUnavailable: '预计扣费: --',
+        estimatedCostRate: '速率',
+        moneyPerMin: '/min',
         source: '来源',
         sourceCodex: 'Codex 记录',
+        sourceCodexDb: 'Codex DB',
+        sourceLocalProxy: '本地代理',
         sourceLocal: '本地复用记录',
         sourceOverlap: '来源可能重叠',
+        officialUsage: '官方用量',
+        usageSource: '用量来源',
+        usageSourceUnavailable: '用量来源: --',
         contextLength: '上下文长度',
         contextUsage: '上下文',
         contextUnavailable: '上下文长度: 暂未匹配模型列表',
@@ -61,10 +78,22 @@ const monitorCopy = {
         tokensPerMin: 'tokens/min',
         speedUnavailable: 'Speed: --',
         sampleCount: 'samples',
+        balance: 'Balance',
+        balanceUnavailable: 'Balance: --',
+        balanceDecrease: 'burn',
+        estimatedCost: 'Estimated cost',
+        estimatedCostUnavailable: 'Estimated cost: --',
+        estimatedCostRate: 'rate',
+        moneyPerMin: '/min',
         source: 'Source',
         sourceCodex: 'Codex records',
+        sourceCodexDb: 'Codex DB',
+        sourceLocalProxy: 'Local proxy',
         sourceLocal: 'Local reuse history',
         sourceOverlap: 'sources may overlap',
+        officialUsage: 'Official usage',
+        usageSource: 'Usage source',
+        usageSourceUnavailable: 'Usage source: --',
         contextLength: 'Context length',
         contextUsage: 'Context',
         contextUnavailable: 'Context length: model list not matched yet',
@@ -91,6 +120,10 @@ let lastAlertBucket = 0;
 let monitorSettings = null;
 let providerFocus = { providers: [], focus_provider_id: '' };
 let speedSamples = [];
+let balanceSamples = [];
+let costSamples = [];
+let providerQuotaSnapshot = null;
+let lastQuotaRefreshAt = 0;
 
 function mt(key) {
     return (monitorCopy[monitorLang] && monitorCopy[monitorLang][key]) || monitorCopy.zh[key] || key;
@@ -173,10 +206,232 @@ function monitorFields() {
         progress: true,
         threshold: true,
         speed: true,
+        balance: true,
         cache: true,
         context_window: true,
         updated_at: true,
     };
+}
+
+function focusedProviderId() {
+    const explicit = String(providerFocus.focus_provider_id || '');
+    if (explicit) return explicit;
+    const focused = (providerFocus.providers || []).find(provider => provider && provider.focused);
+    return focused ? String(focused.id || '') : '';
+}
+
+function focusedProvider() {
+    const id = focusedProviderId();
+    return (providerFocus.providers || []).find(provider => String(provider.id || '') === id) || null;
+}
+
+function isOfficialFocusProvider(provider) {
+    return Boolean(provider && (provider.switch_only || provider.codex_login || provider.id === 'codex_official'));
+}
+
+async function loadFocusedQuota(force = false) {
+    const providerId = focusedProviderId();
+    const provider = focusedProvider();
+    if (!providerId) {
+        providerQuotaSnapshot = null;
+        balanceSamples = [];
+        return null;
+    }
+    if (isOfficialFocusProvider(provider)) {
+        providerQuotaSnapshot = null;
+        balanceSamples = [];
+        costSamples = [];
+        return null;
+    }
+    const now = Date.now();
+    if (!force && providerQuotaSnapshot && now - lastQuotaRefreshAt < QUOTA_REFRESH_MS) {
+        return providerQuotaSnapshot;
+    }
+    const snapshot = await api('/api/providers/' + encodeURIComponent(providerId) + '/quota/refresh', {
+        method: 'POST',
+        body: JSON.stringify({ force: false }),
+    });
+    lastQuotaRefreshAt = now;
+    providerQuotaSnapshot = snapshot;
+    return snapshot;
+}
+
+function firstNumber(values, keys) {
+    for (const key of keys) {
+        const raw = values && values[key];
+        if (raw === undefined || raw === null || raw === '') continue;
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+}
+
+function firstText(values, keys) {
+    for (const key of keys) {
+        const raw = values && values[key];
+        if (raw === undefined || raw === null || raw === '') continue;
+        return String(raw);
+    }
+    return '';
+}
+
+function quotaBalanceSnapshot(snapshot) {
+    if (!snapshot || snapshot.success === false) return null;
+    const values = snapshot.values && typeof snapshot.values === 'object' ? snapshot.values : {};
+    const balance = firstNumber(values, [
+        'balance',
+        'remaining',
+        'remaining_balance',
+        'available_balance',
+        'available',
+        'quota_remaining',
+        'credits_remaining',
+    ]);
+    const spent = firstNumber(values, [
+        'spent',
+        'used',
+        'used_cost',
+        'consumed',
+        'total_cost',
+        'cost',
+        'charges',
+    ]);
+    const currency = firstText(values, ['currency', 'unit', 'native_currency']);
+    if (balance === null && spent === null) return null;
+    return { balance, spent, currency };
+}
+
+function rememberBalanceSample(snapshot) {
+    const parsed = quotaBalanceSnapshot(snapshot);
+    if (!parsed) return null;
+    const now = Date.now();
+    balanceSamples.push({ ts: now, ...parsed });
+    balanceSamples = balanceSamples
+        .filter(sample => now - sample.ts <= BALANCE_SAMPLE_WINDOW_MS)
+        .slice(-BALANCE_SAMPLE_LIMIT);
+    if (balanceSamples.length < 2) return { ...parsed, burn: null, samples: balanceSamples.length };
+    const compatible = balanceSamples.filter(sample => sample.currency === parsed.currency);
+    const usable = compatible.length >= 2 ? compatible : balanceSamples;
+    const first = usable[0];
+    const last = usable[usable.length - 1];
+    const elapsedMinutes = Math.max((last.ts - first.ts) / 60000, 0);
+    if (elapsedMinutes <= 0) return { ...parsed, burn: null, samples: usable.length };
+    let burn = null;
+    if (first.balance !== null && last.balance !== null) {
+        burn = Math.max((first.balance - last.balance) / elapsedMinutes, 0);
+    } else if (first.spent !== null && last.spent !== null) {
+        burn = Math.max((last.spent - first.spent) / elapsedMinutes, 0);
+    }
+    return { ...parsed, burn, samples: usable.length };
+}
+
+function currencyPrefix(currency) {
+    const code = String(currency || '').toUpperCase();
+    if (code === 'CNY' || code === 'RMB' || code === '¥') return '¥';
+    if (code === 'USD' || code === '$') return '$';
+    return code ? code + ' ' : '';
+}
+
+function formatMoney(value, currency) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--';
+    const amount = Number(value);
+    const digits = Math.abs(amount) >= 100 ? 2 : 4;
+    return currencyPrefix(currency) + amount.toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: digits,
+    });
+}
+
+function formatBalanceLine(snapshot) {
+    const sample = rememberBalanceSample(snapshot);
+    if (!sample) return mt('balanceUnavailable');
+    const primary = sample.balance !== null
+        ? `${mt('balance')}: ${formatMoney(sample.balance, sample.currency)}`
+        : `${mt('balanceDecrease')}: ${formatMoney(sample.spent, sample.currency)}`;
+    const burn = sample.burn === null || sample.burn === undefined
+        ? ''
+        : ` · ${mt('balanceDecrease')} ${formatMoney(sample.burn, sample.currency)}${mt('moneyPerMin')}`;
+    return `${primary}${burn} · ${mt('sampleCount')}: ${sample.samples}`;
+}
+
+function firstCostSnapshot(data) {
+    const summary = data && data.local_proxy_request_log && typeof data.local_proxy_request_log === 'object'
+        ? data.local_proxy_request_log
+        : {};
+    const costs = summary.effective_cost_by_currency && typeof summary.effective_cost_by_currency === 'object'
+        ? summary.effective_cost_by_currency
+        : {};
+    const preferred = ['CNY', 'RMB', 'USD'];
+    const currencies = [
+        ...preferred.filter(currency => Object.prototype.hasOwnProperty.call(costs, currency)),
+        ...Object.keys(costs).filter(currency => !preferred.includes(String(currency).toUpperCase())),
+    ];
+    for (const currency of currencies) {
+        const amount = Number(costs[currency]);
+        if (Number.isFinite(amount) && amount > 0) {
+            const counts = summary.effective_cost_source_counts && typeof summary.effective_cost_source_counts === 'object'
+                ? summary.effective_cost_source_counts
+                : {};
+            return {
+                amount,
+                currency,
+                providerReported: Number(counts.provider_reported || 0),
+                localEstimate: Number(counts.local_estimate || 0),
+            };
+        }
+    }
+    return null;
+}
+
+function rememberCostSample(data) {
+    const parsed = firstCostSnapshot(data);
+    if (!parsed) return null;
+    const now = Date.now();
+    costSamples.push({ ts: now, ...parsed });
+    costSamples = costSamples
+        .filter(sample => now - sample.ts <= COST_SAMPLE_WINDOW_MS)
+        .slice(-COST_SAMPLE_LIMIT);
+    const compatible = costSamples.filter(sample => sample.currency === parsed.currency);
+    const usable = compatible.length >= 2 ? compatible : costSamples;
+    if (usable.length < 2) return { ...parsed, burn: null, samples: usable.length };
+    const first = usable[0];
+    const last = usable[usable.length - 1];
+    const elapsedMinutes = Math.max((last.ts - first.ts) / 60000, 0);
+    if (elapsedMinutes <= 0) return { ...parsed, burn: null, samples: usable.length };
+    const burn = Math.max((last.amount - first.amount) / elapsedMinutes, 0);
+    return { ...parsed, burn, samples: usable.length };
+}
+
+function formatEstimatedCostLine(data) {
+    const sample = rememberCostSample(data);
+    if (!sample) return mt('estimatedCostUnavailable');
+    const rate = sample.burn === null || sample.burn === undefined
+        ? ''
+        : ` · ${mt('estimatedCostRate')} ${formatMoney(sample.burn, sample.currency)}${mt('moneyPerMin')}`;
+    return `${mt('estimatedCost')}: ${formatMoney(sample.amount, sample.currency)}${rate} · ${mt('sampleCount')}: ${sample.samples}`;
+}
+
+function usageSourceLabel(source) {
+    if (source === 'codex_rollout') return mt('sourceCodex');
+    if (source === 'codex_db') return mt('sourceCodexDb');
+    if (source === 'local_proxy_request_log') return mt('sourceLocalProxy');
+    return source || '';
+}
+
+function formatOfficialUsageLine(data) {
+    if (!data) return mt('usageSourceUnavailable');
+    const total = Number(data.total_tokens || 0);
+    const source = usageSourceLabel(data.data_source || '');
+    const activeBadges = Array.isArray(data.usage_source_badges)
+        ? data.usage_source_badges
+            .filter(badge => badge && badge.active)
+            .map(badge => usageSourceLabel(badge.id) || badge.label)
+            .filter(Boolean)
+        : [];
+    const labels = Array.from(new Set([source, ...activeBadges].filter(Boolean)));
+    if (!labels.length && total <= 0) return mt('usageSourceUnavailable');
+    const sourceText = labels.length ? ` · ${mt('usageSource')}: ${labels.join(' + ')}` : '';
+    return `${mt('officialUsage')}: ${formatCompact(total)}${sourceText}`;
 }
 
 function rememberSpeedSample(totalTokens) {
@@ -201,7 +456,7 @@ function rememberSpeedSample(totalTokens) {
 
 function formatSpeedLine(speed) {
     if (!speed) return mt('speedUnavailable');
-    return `${mt('speed')}: ${mt('avgSpeed')} ${formatCompact(speed.avg)} ${mt('tokensPerMin')}`;
+    return `${mt('speed')}: ${mt('avgSpeed')} ${formatCompact(speed.avg)} / ${mt('currentSpeed')} ${formatCompact(speed.instant)} ${mt('tokensPerMin')}`;
 }
 
 function oneHourQuery() {
@@ -259,10 +514,17 @@ async function refreshMonitor() {
         value = Number(data.total_tokens || 0);
     }
 
-    render(value, threshold, mode, data);
+    let quota = providerQuotaSnapshot;
+    try {
+        quota = await loadFocusedQuota(false);
+    } catch {
+        quota = providerQuotaSnapshot;
+    }
+
+    render(value, threshold, mode, data, quota);
 }
 
-function render(value, threshold, mode, data) {
+function render(value, threshold, mode, data, quota) {
     const card = document.getElementById('monitor-card');
     const valueEl = document.getElementById('monitor-value');
     const modeEl = document.getElementById('monitor-mode');
@@ -272,6 +534,7 @@ function render(value, threshold, mode, data) {
     const cacheEl = document.getElementById('monitor-cache');
     const contextEl = document.getElementById('monitor-context');
     const speedEl = document.getElementById('monitor-speed');
+    const balanceEl = document.getElementById('monitor-balance');
     const progressEl = document.querySelector('.progress');
     const fields = monitorFields();
 
@@ -295,6 +558,12 @@ function render(value, threshold, mode, data) {
         : speedEl.textContent;
     cacheEl.textContent = formatCacheLine(data);
     cacheEl.title = cacheEl.textContent;
+    const provider = focusedProvider();
+    const showOfficialUsage = isOfficialFocusProvider(provider) || data.official_usage_default;
+    balanceEl.textContent = quota
+        ? formatBalanceLine(quota)
+        : (showOfficialUsage ? formatOfficialUsageLine(data) : formatEstimatedCostLine(data));
+    balanceEl.title = balanceEl.textContent;
     const contextWindow = Number(data.current_context_window || 0);
     const contextUsed = Number(data.current_context_used_tokens || 0);
     if (contextWindow && contextUsed) {
@@ -311,6 +580,7 @@ function render(value, threshold, mode, data) {
     thresholdEl.style.display = fields.threshold ? 'inline' : 'none';
     updatedEl.style.display = fields.updated_at ? 'inline' : 'none';
     speedEl.style.display = fields.speed ? 'block' : 'none';
+    balanceEl.style.display = fields.balance ? 'block' : 'none';
     cacheEl.style.display = fields.cache ? 'block' : 'none';
     contextEl.style.display = fields.context_window ? 'block' : 'none';
 
@@ -422,7 +692,12 @@ async function switchProvider(providerId) {
             body: JSON.stringify({ provider_id: providerId }),
         });
     }
+    providerQuotaSnapshot = null;
+    balanceSamples = [];
+    costSamples = [];
+    lastQuotaRefreshAt = 0;
     await loadQuickProviders();
+    await loadFocusedQuota(true).catch(() => {});
 }
 
 async function runMenuAction(action) {

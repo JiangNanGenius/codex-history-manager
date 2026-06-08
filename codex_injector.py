@@ -21,6 +21,373 @@ DEFAULT_CDP_PORT = 51236
 DEFAULT_BACKEND_PORT = 51234
 
 
+def _renderer_enhancement_runtime() -> str:
+    return r"""
+  const cemRuntime = (() => {
+    const runtimeKey = '__codexEnhanceManagerRuntime';
+    const version = 2;
+    const previous = window[runtimeKey];
+    if (previous && typeof previous.destroy === 'function') previous.destroy();
+
+    const hiddenUsageAttr = 'data-cem-hidden-usage-alert';
+    const state = {
+      settings: {
+        pluginMarketplaceUnlock: false,
+        pluginEntryUnlock: false,
+        forcePluginInstall: false,
+        hideOfficialUsageAlert: false,
+      },
+      observer: null,
+      scanTimer: 0,
+      statusTimer: 0,
+      hiddenUsageNodes: new Set(),
+      marketplaceFilterPatched: false,
+      responseJsonPatched: false,
+      fetchPatched: false,
+      webSocketPatched: false,
+    };
+
+    function normalizeText(value) {
+      return String(value || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function elementText(node) {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return '';
+      return normalizeText(node.innerText || node.textContent || node.getAttribute('aria-label') || '');
+    }
+
+    function visibleBox(node, minWidth = 120, minHeight = 12) {
+      if (!(node instanceof HTMLElement)) return false;
+      const rect = node.getBoundingClientRect();
+      if (!rect || rect.width < minWidth || rect.height < minHeight) return false;
+      const vw = window.innerWidth || 1200;
+      const vh = window.innerHeight || 900;
+      return rect.bottom > 0 && rect.top < vh && rect.right > 0 && rect.left < vw;
+    }
+
+    function inConversationContent(node) {
+      return Boolean(node && node.closest([
+        '[data-message-author-role]',
+        '[data-testid*="message" i]',
+        '[data-test-id*="message" i]',
+        '[data-thread-find-target]',
+        'article',
+      ].join(',')));
+    }
+
+    const usageAlertText = /(Codex\s*(message|usage)?\s*(limit|quota)|message\s+limit|usage\s+limit|quota\s+will\s+reset|limit\s+will\s+reset|usage\s+remaining|remaining\s+\d+%\s+usage|消息限额|使用量|额度|下次重置|重置频率|剩余\s*\d+%\s*使用量)/i;
+    const usageActionText = /(upgrade|plus|pricing|plan|reset|continue|quota|limit|升级|重置|继续使用|限额|额度|套餐)/i;
+
+    function usageAlertRoot(node) {
+      const status = node.closest?.('[role="alert"], [role="status"], [aria-live]');
+      if (status && status !== document.body && status !== document.documentElement) return status;
+      const parent = node.parentElement;
+      if (parent && parent !== document.body && visibleBox(parent, 160, 16)) {
+        const text = elementText(parent);
+        if (text.length <= 520 && usageAlertText.test(text)) return parent;
+      }
+      return node;
+    }
+
+    function looksLikeOfficialUsageAlert(node) {
+      if (!(node instanceof HTMLElement) || inConversationContent(node) || !visibleBox(node, 160, 16)) return false;
+      const text = elementText(node);
+      if (text.length < 12 || text.length > 560) return false;
+      if (!usageAlertText.test(text)) return false;
+      const actionText = normalizeText(Array.from(node.querySelectorAll('button, a, [role="button"]'))
+        .slice(0, 8)
+        .map((item) => item.innerText || item.textContent || item.getAttribute('aria-label') || '')
+        .join(' '));
+      return usageActionText.test(text + ' ' + actionText);
+    }
+
+    function installUsageAlertStyle() {
+      if (document.getElementById('cem-hide-usage-alert-style')) return;
+      const style = document.createElement('style');
+      style.id = 'cem-hide-usage-alert-style';
+      style.textContent = [
+        '[' + hiddenUsageAttr + '="true"] { display: none !important; visibility: hidden !important; pointer-events: none !important; }',
+        '.cem-force-install-unlocked { pointer-events: auto !important; cursor: pointer !important; opacity: 1 !important; }',
+      ].join('\n');
+      document.documentElement.appendChild(style);
+    }
+
+    function restoreUsageAlerts() {
+      for (const node of state.hiddenUsageNodes) {
+        try {
+          node.removeAttribute(hiddenUsageAttr);
+          node.removeAttribute(hiddenUsageAttr + '-kind');
+        } catch {}
+      }
+      state.hiddenUsageNodes.clear();
+    }
+
+    function scanOfficialUsageAlerts() {
+      if (!state.settings.hideOfficialUsageAlert) {
+        restoreUsageAlerts();
+        return;
+      }
+      installUsageAlertStyle();
+      const root = document.body || document.documentElement;
+      if (!root) return;
+      const selectors = ['[role="alert"]', '[role="status"]', '[aria-live]', 'header', 'aside', 'section', 'div'].join(',');
+      for (const node of root.querySelectorAll(selectors)) {
+        if (node.getAttribute(hiddenUsageAttr) === 'true') continue;
+        if (!looksLikeOfficialUsageAlert(node)) continue;
+        const target = usageAlertRoot(node);
+        if (!target || target === document.body || target === document.documentElement) continue;
+        target.setAttribute(hiddenUsageAttr, 'true');
+        target.setAttribute(hiddenUsageAttr + '-kind', 'official-usage-alert');
+        state.hiddenUsageNodes.add(target);
+      }
+    }
+
+    function appServerRequestMethod(method, params) {
+      if (method === 'send-cli-request-for-host' && params && params.method) return String(params.method);
+      return String(method || '');
+    }
+
+    function patchPluginMarketplaceParams(method, params) {
+      const requestMethod = appServerRequestMethod(method, params);
+      if (requestMethod !== 'list-plugins' || !params || typeof params !== 'object') return params;
+      const next = { ...params };
+      delete next.marketplaceKinds;
+      if (next.params && typeof next.params === 'object') {
+        next.params = { ...next.params };
+        delete next.params.marketplaceKinds;
+      }
+      return next;
+    }
+
+    function patchPluginRequestObject(value, seen = new WeakSet()) {
+      if (!value || typeof value !== 'object' || seen.has(value)) return value;
+      seen.add(value);
+      const method = String(value.method || '');
+      if (method === 'list-plugins' || (method === 'send-cli-request-for-host' && value.params?.method === 'list-plugins')) {
+        if (value.params && typeof value.params === 'object') {
+          value.params = patchPluginMarketplaceParams(appServerRequestMethod(method, value.params), value.params);
+        }
+        delete value.marketplaceKinds;
+      }
+      for (const child of Object.values(value)) {
+        if (child && typeof child === 'object') patchPluginRequestObject(child, seen);
+      }
+      return value;
+    }
+
+    function parsePatchStringPayload(data) {
+      if (typeof data !== 'string' || !data.includes('list-plugins')) return data;
+      try {
+        const parsed = JSON.parse(data);
+        patchPluginRequestObject(parsed);
+        return JSON.stringify(parsed);
+      } catch {
+        return data.replace(/"marketplaceKinds"\s*:\s*\[[^\]]*\]\s*,?/g, '');
+      }
+    }
+
+    function patchPluginMarketplaceResultGraph(value, seen = new WeakSet(), depth = 0) {
+      if (!value || typeof value !== 'object' || seen.has(value) || depth > 8) return value;
+      seen.add(value);
+      if (Array.isArray(value.marketplaces)) {
+        value.marketplaces.forEach((marketplace) => {
+          if (!marketplace || typeof marketplace !== 'object') return;
+          const name = String(marketplace.name || marketplace.marketplaceName || '');
+          if (/^openai-(bundled|curated|primary-runtime)$/.test(name)) {
+            const displayName = marketplace.displayName || marketplace.title || marketplace.label || name;
+            marketplace.displayName = displayName;
+            marketplace.title = displayName;
+            marketplace.label = displayName;
+            marketplace.__cemMarketplaceUnlocked = true;
+          }
+        });
+      }
+      for (const child of Object.values(value)) patchPluginMarketplaceResultGraph(child, seen, depth + 1);
+      return value;
+    }
+
+    function installPluginMarketplaceUnlock() {
+      if (!state.settings.pluginMarketplaceUnlock) return;
+      installUsageAlertStyle();
+      if (!state.marketplaceFilterPatched) {
+        const originalFilter = Array.prototype.__cemOriginalFilter || Array.prototype.filter;
+        if (!Array.prototype.__cemOriginalFilter) {
+          Object.defineProperty(Array.prototype, '__cemOriginalFilter', { value: originalFilter, configurable: true });
+        }
+        Array.prototype.filter = function cemMarketplaceFilter(callback, thisArg) {
+          if (state.settings.pluginMarketplaceUnlock && Array.isArray(this) && this.some((item) => {
+            const name = String(item?.marketplaceName || item?.name || '');
+            return /^openai-(bundled|curated|primary-runtime)$/.test(name);
+          })) {
+            let source = '';
+            try { source = Function.prototype.toString.call(callback); } catch {}
+            if (/marketplace(Name)?/.test(source) && this.some((item) => callback.call(thisArg, item) === false)) {
+              return Array.from(this);
+            }
+          }
+          return originalFilter.call(this, callback, thisArg);
+        };
+        state.marketplaceFilterPatched = true;
+      }
+      if (!state.responseJsonPatched && window.Response?.prototype?.json) {
+        const originalJson = Response.prototype.__cemOriginalJson || Response.prototype.json;
+        Response.prototype.__cemOriginalJson = originalJson;
+        Response.prototype.json = async function cemMarketplaceJsonPatch() {
+          const result = await originalJson.call(this);
+          if (state.settings.pluginMarketplaceUnlock) patchPluginMarketplaceResultGraph(result);
+          return result;
+        };
+        state.responseJsonPatched = true;
+      }
+      if (!state.fetchPatched && window.fetch) {
+        const originalFetch = window.__cemOriginalFetch || window.fetch;
+        window.__cemOriginalFetch = originalFetch;
+        window.fetch = function cemMarketplaceFetch(input, init) {
+          if (state.settings.pluginMarketplaceUnlock && init && typeof init === 'object' && init.body) {
+            init = { ...init, body: parsePatchStringPayload(init.body) };
+          }
+          return originalFetch.call(this, input, init);
+        };
+        state.fetchPatched = true;
+      }
+      if (!state.webSocketPatched && window.WebSocket?.prototype?.send) {
+        const originalSend = WebSocket.prototype.__cemOriginalSend || WebSocket.prototype.send;
+        WebSocket.prototype.__cemOriginalSend = originalSend;
+        WebSocket.prototype.send = function cemMarketplaceWebSocketSend(data) {
+          return originalSend.call(this, state.settings.pluginMarketplaceUnlock ? parsePatchStringPayload(data) : data);
+        };
+        state.webSocketPatched = true;
+      }
+    }
+
+    function patchReactDisabledProps(element) {
+      Object.keys(element || {}).filter((key) => key.startsWith('__reactProps')).forEach((key) => {
+        const props = element[key];
+        if (!props || typeof props !== 'object') return;
+        props.disabled = false;
+        props['aria-disabled'] = false;
+        props['data-disabled'] = undefined;
+      });
+    }
+
+    function clearDisabledState(element) {
+      if (!(element instanceof HTMLElement)) return;
+      if ('disabled' in element) element.disabled = false;
+      element.removeAttribute('disabled');
+      element.removeAttribute('aria-disabled');
+      element.removeAttribute('data-disabled');
+      element.removeAttribute('inert');
+      element.classList.remove('disabled', 'cursor-not-allowed', 'pointer-events-none', 'opacity-50');
+      element.classList.add('cem-force-install-unlocked');
+      element.style.pointerEvents = 'auto';
+      element.style.cursor = 'pointer';
+      element.style.opacity = '';
+      patchReactDisabledProps(element);
+    }
+
+    function looksLikePluginInstallButton(element) {
+      const text = elementText(element);
+      const aria = normalizeText(element.getAttribute?.('aria-label') || '');
+      const combined = text + ' ' + aria;
+      return /(install|app unavailable|unavailable|安装|应用不可用|不可用)/i.test(combined)
+        && !/(uninstall|remove|delete|卸载|移除|删除)/i.test(combined);
+    }
+
+    function pluginInstallCandidates() {
+      const selectors = [
+        'button[disabled]',
+        'button[aria-disabled="true"]',
+        '[role="button"][aria-disabled="true"]',
+        '[data-disabled]',
+        '.cursor-not-allowed',
+        '.pointer-events-none',
+      ].join(',');
+      return Array.from(document.querySelectorAll(selectors))
+        .map((node) => node.closest?.('button, [role="button"]') || node)
+        .filter((node) => node instanceof HTMLElement && looksLikePluginInstallButton(node));
+    }
+
+    function unblockPluginInstallButtons() {
+      if (!state.settings.forcePluginInstall) return;
+      installUsageAlertStyle();
+      for (const button of pluginInstallCandidates()) {
+        clearDisabledState(button);
+        button.querySelectorAll?.('button, [role="button"], [disabled], [aria-disabled], [data-disabled]').forEach(clearDisabledState);
+      }
+    }
+
+    function unlockPluginEntry() {
+      if (!state.settings.pluginEntryUnlock) return;
+      const button = Array.from(document.querySelectorAll('button, [role="button"], a')).find((item) => {
+        const text = elementText(item);
+        return /^(plugins|插件)(\s|$)/i.test(text) || /plugins|插件/i.test(item.getAttribute?.('aria-label') || '');
+      });
+      if (!button) return;
+      clearDisabledState(button);
+      button.dataset.cemPluginEntryUnlocked = 'true';
+    }
+
+    function scanEnhancements() {
+      state.scanTimer = 0;
+      installPluginMarketplaceUnlock();
+      scanOfficialUsageAlerts();
+      unlockPluginEntry();
+      unblockPluginInstallButtons();
+    }
+
+    function scheduleScan(delay = 80) {
+      if (state.scanTimer) return;
+      state.scanTimer = window.setTimeout(scanEnhancements, delay);
+    }
+
+    function ensureObserver() {
+      if (state.observer) return;
+      const root = document.body || document.documentElement;
+      if (!root) {
+        document.addEventListener('DOMContentLoaded', ensureObserver, { once: true });
+        return;
+      }
+      state.observer = new MutationObserver((mutations) => {
+        if (mutations.some((mutation) => mutation.addedNodes.length || mutation.type === 'characterData' || mutation.attributeName)) {
+          scheduleScan();
+        }
+      });
+      state.observer.observe(root, { childList: true, subtree: true, characterData: true, attributes: true });
+    }
+
+    function applyStatus(data) {
+      const enabled = !data || data.enabled !== false;
+      state.settings.pluginMarketplaceUnlock = enabled && Boolean(data && (data.plugin_marketplace_unlock || data.plugin_unlock_enabled));
+      state.settings.pluginEntryUnlock = enabled && Boolean(data && (data.plugin_entry_unlock || data.plugin_unlock_enabled));
+      state.settings.forcePluginInstall = enabled && Boolean(data && (data.force_plugin_install || data.plugin_unlock_enabled));
+      state.settings.hideOfficialUsageAlert = enabled && Boolean(data && data.hide_official_usage_alert);
+      scheduleScan(0);
+    }
+
+    function destroy() {
+      if (state.scanTimer) window.clearTimeout(state.scanTimer);
+      if (state.statusTimer) window.clearInterval(state.statusTimer);
+      state.scanTimer = 0;
+      state.statusTimer = 0;
+      state.observer?.disconnect();
+      state.observer = null;
+      restoreUsageAlerts();
+      if (Array.prototype.__cemOriginalFilter) Array.prototype.filter = Array.prototype.__cemOriginalFilter;
+      if (Response?.prototype?.__cemOriginalJson) Response.prototype.json = Response.prototype.__cemOriginalJson;
+      if (window.__cemOriginalFetch) window.fetch = window.__cemOriginalFetch;
+      if (WebSocket?.prototype?.__cemOriginalSend) WebSocket.prototype.send = WebSocket.prototype.__cemOriginalSend;
+      document.getElementById('cem-hide-usage-alert-style')?.remove();
+      if (window[runtimeKey]?.version === version) delete window[runtimeKey];
+    }
+
+    ensureObserver();
+    window[runtimeKey] = { version, state, applyStatus, scheduleScan, destroy };
+    scheduleScan(0);
+    return window[runtimeKey];
+  })();
+""".strip()
+
+
 def backend_url_from_env(default_port: int = DEFAULT_BACKEND_PORT) -> str:
     port = os.environ.get("CODEX_ENHANCE_MANAGER_PORT") or str(default_port)
     try:
@@ -42,6 +409,8 @@ def build_injection_script(backend_url: str = "") -> str:
   const config = {config_json};
   if (window.__codexEnhanceManagerInjected === config.marker) return;
   window.__codexEnhanceManagerInjected = config.marker;
+
+{_renderer_enhancement_runtime()}
 
   const rootId = 'codex-enhance-manager-menu';
   const existing = document.getElementById(rootId);
@@ -69,7 +438,7 @@ def build_injection_script(backend_url: str = "") -> str:
     #${{rootId}} .cem-panel {{
       display: none;
       margin-top: 6px;
-      min-width: 188px;
+      width: 320px;
       border: 1px solid rgba(148, 163, 184, .25);
       border-radius: 8px;
       overflow: hidden;
@@ -77,16 +446,103 @@ def build_injection_script(backend_url: str = "") -> str:
       box-shadow: 0 18px 42px rgba(2, 6, 23, .45);
     }}
     #${{rootId}}.open .cem-panel {{ display: block; }}
-    #${{rootId}} a, #${{rootId}} .cem-status {{
+    #${{rootId}} .cem-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(148, 163, 184, .16);
+    }}
+    #${{rootId}} .cem-title {{ font-weight: 700; color: #f8fafc; }}
+    #${{rootId}} .cem-status {{ color: #a7f3d0; font-size: 11px; }}
+    #${{rootId}} .cem-body {{ padding: 10px 12px 12px; }}
+    #${{rootId}} .cem-section + .cem-section {{ margin-top: 12px; }}
+    #${{rootId}} .cem-section-title {{
+      margin-bottom: 6px;
+      color: #93c5fd;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }}
+    #${{rootId}} .cem-provider-list {{
+      display: grid;
+      gap: 6px;
+      max-height: 160px;
+      overflow: auto;
+      padding-right: 2px;
+    }}
+    #${{rootId}} .cem-provider {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      box-shadow: none;
+      text-align: left;
+      padding: 7px 8px;
+      background: rgba(15, 23, 42, .72);
+    }}
+    #${{rootId}} .cem-provider.active {{
+      border-color: rgba(56, 189, 248, .76);
+      background: rgba(14, 116, 144, .32);
+    }}
+    #${{rootId}} .cem-provider small {{
+      color: #94a3b8;
+      font-size: 10px;
+      margin-left: 6px;
+    }}
+    #${{rootId}} .cem-toggle {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 7px 0;
+      color: #dbeafe;
+      border-top: 1px solid rgba(148, 163, 184, .10);
+    }}
+    #${{rootId}} .cem-switch {{
+      position: relative;
+      width: 34px;
+      height: 20px;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      background: #334155;
+      border: 1px solid rgba(148, 163, 184, .35);
+    }}
+    #${{rootId}} .cem-switch::after {{
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      transition: transform .14s ease, background .14s ease;
+    }}
+    #${{rootId}} .cem-switch.on {{ background: #0891b2; }}
+    #${{rootId}} .cem-switch.on::after {{ transform: translateX(14px); background: #ffffff; }}
+    #${{rootId}} .cem-actions {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 8px;
+    }}
+    #${{rootId}} a, #${{rootId}} .cem-link {{
       display: block;
       padding: 8px 10px;
       color: #dbeafe;
       text-decoration: none;
-      border-top: 1px solid rgba(148, 163, 184, .14);
+      border: 1px solid rgba(148, 163, 184, .18);
+      border-radius: 8px;
       white-space: nowrap;
+      text-align: center;
+      background: rgba(15, 23, 42, .72);
     }}
-    #${{rootId}} a:hover {{ background: rgba(59, 130, 246, .18); }}
-    #${{rootId}} .cem-status {{ color: #a7f3d0; }}
+    #${{rootId}} a:hover, #${{rootId}} .cem-link:hover {{ background: rgba(59, 130, 246, .18); }}
+    #${{rootId}} .cem-muted {{ color: #94a3b8; }}
+    #${{rootId}} .cem-error {{ color: #fca5a5; }}
   `;
   document.documentElement.appendChild(style);
 
@@ -95,26 +551,623 @@ def build_injection_script(backend_url: str = "") -> str:
   root.innerHTML = `
     <button type="button" aria-label="Codex Enhance Manager">Codex Enhance</button>
     <div class="cem-panel">
-      <div class="cem-status">Checking backend...</div>
-      <a href="${{config.backend}}/#codex-integration" target="_blank" rel="noreferrer">Connection</a>
-      <a href="${{config.backend}}/#providers" target="_blank" rel="noreferrer">Providers</a>
-      <a href="${{config.backend}}/#stats" target="_blank" rel="noreferrer">Usage</a>
-      <a href="${{config.backend}}/#diagnostics" target="_blank" rel="noreferrer">Diagnostics</a>
+      <div class="cem-head">
+        <div class="cem-title">Quick Settings</div>
+        <div class="cem-status">Checking backend...</div>
+      </div>
+      <div class="cem-body">
+        <div class="cem-section">
+          <div class="cem-section-title">Route</div>
+          <div class="cem-provider-list" data-cem-providers>
+            <div class="cem-muted">Loading providers...</div>
+          </div>
+        </div>
+        <div class="cem-section">
+          <div class="cem-section-title">Hot Settings</div>
+          <label class="cem-toggle">
+            <span>Floating monitor</span>
+            <input type="checkbox" data-cem-toggle="desktop_monitor_enabled" hidden>
+            <span class="cem-switch" data-cem-switch="desktop_monitor_enabled"></span>
+          </label>
+          <label class="cem-toggle">
+            <span>Enhancement injection</span>
+            <input type="checkbox" data-cem-toggle="codex_injection_enabled" hidden>
+            <span class="cem-switch" data-cem-switch="codex_injection_enabled"></span>
+          </label>
+          <label class="cem-toggle">
+            <span>Plugin unlock</span>
+            <input type="checkbox" data-cem-toggle="plugin_unlock_enabled" hidden>
+            <span class="cem-switch" data-cem-switch="plugin_unlock_enabled"></span>
+          </label>
+        </div>
+        <div class="cem-actions">
+          <a href="${{config.backend}}/#providers" target="_blank" rel="noreferrer">Providers</a>
+          <a href="${{config.backend}}/#amr" target="_blank" rel="noreferrer">Smart Routing</a>
+          <a href="${{config.backend}}/#stats" target="_blank" rel="noreferrer">Usage</a>
+          <a href="${{config.backend}}/#codex-integration" target="_blank" rel="noreferrer">Connection</a>
+        </div>
+      </div>
     </div>
   `;
-  root.querySelector('button').addEventListener('click', () => root.classList.toggle('open'));
-  document.documentElement.appendChild(root);
-
-  fetch(`${{config.backend}}/api/codex-injection/status`, {{ cache: 'no-store' }})
+  const cemEscapeHtml = (value) => String(value || '').replace(/[&<>"']/g, (ch) => ({{
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }}[ch]));
+  const cemSetStatus = (message, error = false) => {{
+    const status = root.querySelector('.cem-status');
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle('cem-error', Boolean(error));
+  }};
+  let cemQuickSettings = null;
+  const cemRenderQuickSettings = (data) => {{
+    cemQuickSettings = data || cemQuickSettings;
+    const settings = (cemQuickSettings && cemQuickSettings.settings) || {{}};
+    root.querySelectorAll('[data-cem-toggle]').forEach((input) => {{
+      const key = input.getAttribute('data-cem-toggle');
+      const value = settings[key] !== false;
+      input.checked = value;
+      const sw = root.querySelector(`[data-cem-switch="${{key}}"]`);
+      if (sw) sw.classList.toggle('on', value);
+    }});
+    const list = root.querySelector('[data-cem-providers]');
+    if (!list) return;
+    const providers = Array.isArray(cemQuickSettings && cemQuickSettings.providers) ? cemQuickSettings.providers : [];
+    const focus = String((cemQuickSettings && cemQuickSettings.focus_provider_id) || '');
+    const autoActive = !focus;
+    const autoButton = `<button type="button" class="cem-provider ${{autoActive ? 'active' : ''}}" data-cem-provider-id="">
+      <span>${{autoActive ? '✓ ' : ''}}Auto provider</span><small>hot</small>
+    </button>`;
+    list.innerHTML = autoButton + providers.map((provider) => {{
+      const id = String(provider.id || '');
+      const label = provider.display_name || id;
+      const alias = provider.short_alias ? ` / ${{provider.short_alias}}` : '';
+      const active = id === focus || provider.focused;
+      const badge = provider.switch_only || provider.codex_login ? 'official' : (provider.local_proxy_routing === false ? 'direct' : 'proxy');
+      return `<button type="button" class="cem-provider ${{active ? 'active' : ''}}" data-cem-provider-id="${{cemEscapeHtml(id)}}">
+        <span>${{active ? '✓ ' : ''}}${{cemEscapeHtml(label)}}<small>${{cemEscapeHtml(alias)}}</small></span><small>${{cemEscapeHtml(badge)}}</small>
+      </button>`;
+    }}).join('');
+  }};
+  const cemLoadQuickSettings = () => fetch(`${{config.backend}}/api/codex-injection/quick-settings`, {{ cache: 'no-store' }})
     .then((response) => response.json())
     .then((data) => {{
-      const status = root.querySelector('.cem-status');
-      if (status) status.textContent = data && data.success ? 'Backend connected' : 'Backend unavailable';
-    }})
-    .catch(() => {{
-      const status = root.querySelector('.cem-status');
-      if (status) status.textContent = 'Backend unavailable';
+      if (!data || data.success === false) throw new Error((data && data.error) || 'Quick settings unavailable');
+      cemRenderQuickSettings(data);
+      return data;
     }});
+  const cemPostQuickSettings = (patch) => fetch(`${{config.backend}}/api/codex-injection/quick-settings`, {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify(patch || {{}}),
+  }}).then((response) => response.json()).then((data) => {{
+    if (!data || data.success === false) throw new Error((data && data.error) || 'Quick settings failed');
+    cemRenderQuickSettings(data);
+    return data;
+  }});
+  root.querySelector('button').addEventListener('click', () => {{
+    root.classList.toggle('open');
+    if (root.classList.contains('open')) {{
+      cemSetStatus('Loading...');
+      cemLoadQuickSettings()
+        .then(() => cemSetStatus('Ready'))
+        .catch((error) => cemSetStatus(error.message || 'Backend unavailable', true));
+    }}
+  }});
+  root.addEventListener('click', (event) => {{
+    const providerButton = event.target.closest?.('[data-cem-provider-id]');
+    if (providerButton) {{
+      event.preventDefault();
+      const providerId = providerButton.getAttribute('data-cem-provider-id') || '';
+      cemSetStatus('Switching...');
+      cemPostQuickSettings({{ provider_id: providerId }})
+        .then(() => refreshCemBackendStatus())
+        .then(() => cemSetStatus('Route updated'))
+        .catch((error) => cemSetStatus(error.message || 'Switch failed', true));
+    }}
+  }});
+  root.addEventListener('change', (event) => {{
+    const input = event.target.closest?.('[data-cem-toggle]');
+    if (!input) return;
+    const key = input.getAttribute('data-cem-toggle');
+    if (!key) return;
+    cemSetStatus('Saving...');
+    cemPostQuickSettings({{ [key]: input.checked }})
+      .then(() => refreshCemBackendStatus())
+      .then(() => cemSetStatus('Saved'))
+      .catch((error) => {{
+        input.checked = !input.checked;
+        cemRenderQuickSettings(cemQuickSettings);
+        cemSetStatus(error.message || 'Save failed', true);
+      }});
+  }});
+  document.documentElement.appendChild(root);
+
+  const refreshCemBackendStatus = () => {{
+    fetch(`${{config.backend}}/api/codex-injection/status`, {{ cache: 'no-store' }})
+      .then((response) => response.json())
+      .then((data) => {{
+        cemRuntime.applyStatus(data);
+        const status = root.querySelector('.cem-status');
+        if (status) status.textContent = data && data.success ? 'Backend connected' : 'Backend unavailable';
+      }})
+      .catch(() => {{
+        cemRuntime.applyStatus({{ enabled: false }});
+        const status = root.querySelector('.cem-status');
+        if (status) status.textContent = 'Backend unavailable';
+      }});
+  }};
+  refreshCemBackendStatus();
+  if (window.__cemBackendStatusInterval) window.clearInterval(window.__cemBackendStatusInterval);
+  window.__cemBackendStatusInterval = window.setInterval(refreshCemBackendStatus, 15000);
+}})();
+""".strip()
+
+
+def build_injection_script(backend_url: str = "") -> str:
+    backend = (backend_url or backend_url_from_env()).rstrip("/")
+    payload = {
+        "backend": backend,
+        "marker": "codex-enhance-manager-v2",
+    }
+    config_json = json.dumps(payload, ensure_ascii=False)
+    return f"""
+(() => {{
+  const config = {config_json};
+  if (window.__codexEnhanceManagerInjected === config.marker) return;
+  window.__codexEnhanceManagerInjected = config.marker;
+
+{_renderer_enhancement_runtime()}
+
+  const rootId = 'codex-enhance-manager-menu';
+  document.getElementById(rootId)?.remove();
+
+  const style = document.createElement('style');
+  style.textContent = `
+    #${{rootId}} {{
+      position: fixed;
+      top: 12px;
+      right: 14px;
+      z-index: 2147483647;
+      font: 12px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #e5e7eb;
+    }}
+    #${{rootId}} button, #${{rootId}} a {{ font: inherit; }}
+    #${{rootId}} > .cem-launch {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid rgba(148, 163, 184, .35);
+      background: linear-gradient(135deg, rgba(15, 23, 42, .96), rgba(8, 47, 73, .94));
+      color: #f8fafc;
+      border-radius: 999px;
+      padding: 7px 11px;
+      cursor: pointer;
+      box-shadow: 0 10px 32px rgba(2, 6, 23, .32);
+    }}
+    #${{rootId}} .cem-dot {{
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #22c55e;
+      box-shadow: 0 0 0 4px rgba(34, 197, 94, .14);
+    }}
+    #${{rootId}} .cem-panel {{
+      display: none;
+      margin-top: 8px;
+      width: 374px;
+      border: 1px solid rgba(148, 163, 184, .25);
+      border-radius: 10px;
+      overflow: hidden;
+      background: linear-gradient(180deg, rgba(8, 13, 28, .98), rgba(2, 6, 23, .98));
+      box-shadow: 0 22px 52px rgba(2, 6, 23, .52);
+      backdrop-filter: blur(16px);
+    }}
+    #${{rootId}}.open .cem-panel {{ display: block; }}
+    #${{rootId}} .cem-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 13px 14px 11px;
+      border-bottom: 1px solid rgba(148, 163, 184, .16);
+    }}
+    #${{rootId}} .cem-title {{ font-size: 14px; font-weight: 750; color: #f8fafc; }}
+    #${{rootId}} .cem-subtitle {{ margin-top: 2px; color: #94a3b8; font-size: 11px; }}
+    #${{rootId}} .cem-status {{ color: #a7f3d0; font-size: 11px; }}
+    #${{rootId}} .cem-body {{ padding: 12px 14px 14px; }}
+    #${{rootId}} .cem-route-card {{
+      border: 1px solid rgba(56, 189, 248, .22);
+      border-radius: 8px;
+      padding: 10px;
+      background: rgba(15, 23, 42, .66);
+    }}
+    #${{rootId}} .cem-route-top {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }}
+    #${{rootId}} .cem-route-label {{ color: #93c5fd; font-size: 11px; }}
+    #${{rootId}} .cem-route-value {{
+      margin-top: 2px;
+      color: #f8fafc;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }}
+    #${{rootId}} .cem-pill {{
+      flex: 0 0 auto;
+      padding: 3px 7px;
+      border-radius: 999px;
+      color: #bae6fd;
+      background: rgba(14, 116, 144, .28);
+      border: 1px solid rgba(56, 189, 248, .24);
+      font-size: 10px;
+    }}
+    #${{rootId}} .cem-metrics {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }}
+    #${{rootId}} .cem-metric {{
+      min-width: 0;
+      border: 1px solid rgba(148, 163, 184, .16);
+      border-radius: 8px;
+      padding: 9px;
+      background: rgba(15, 23, 42, .52);
+    }}
+    #${{rootId}} .cem-metric span {{
+      display: block;
+      color: #94a3b8;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }}
+    #${{rootId}} .cem-metric strong {{
+      display: block;
+      margin-top: 3px;
+      color: #f8fafc;
+      font-size: 17px;
+      line-height: 1.15;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    #${{rootId}} .cem-metric small {{
+      display: block;
+      margin-top: 4px;
+      color: #94a3b8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    #${{rootId}} .cem-balance {{
+      margin-top: 8px;
+      border: 1px solid rgba(20, 184, 166, .20);
+      border-radius: 8px;
+      padding: 8px 9px;
+      color: #ccfbf1;
+      background: rgba(6, 78, 59, .17);
+      overflow-wrap: anywhere;
+    }}
+    #${{rootId}} .cem-section {{ margin-top: 12px; }}
+    #${{rootId}} .cem-section-title {{
+      margin-bottom: 6px;
+      color: #93c5fd;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }}
+    #${{rootId}} .cem-provider-list {{
+      display: grid;
+      gap: 6px;
+      max-height: 150px;
+      overflow: auto;
+      padding-right: 2px;
+    }}
+    #${{rootId}} .cem-provider {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      box-shadow: none;
+      text-align: left;
+      padding: 7px 8px;
+      background: rgba(15, 23, 42, .72);
+      border: 1px solid rgba(148, 163, 184, .20);
+      border-radius: 8px;
+      color: #f8fafc;
+      cursor: pointer;
+    }}
+    #${{rootId}} .cem-provider.active {{
+      border-color: rgba(56, 189, 248, .76);
+      background: rgba(14, 116, 144, .32);
+    }}
+    #${{rootId}} .cem-provider:hover {{ background: rgba(30, 41, 59, .88); }}
+    #${{rootId}} .cem-provider small {{
+      color: #94a3b8;
+      font-size: 10px;
+      margin-left: 6px;
+    }}
+    #${{rootId}} .cem-actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 12px;
+    }}
+    #${{rootId}} a, #${{rootId}} .cem-link {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 30px;
+      padding: 6px 9px;
+      color: #dbeafe;
+      text-decoration: none;
+      border: 1px solid rgba(148, 163, 184, .18);
+      border-radius: 8px;
+      white-space: nowrap;
+      text-align: center;
+      background: rgba(15, 23, 42, .72);
+      cursor: pointer;
+    }}
+    #${{rootId}} a:hover, #${{rootId}} .cem-link:hover {{ background: rgba(59, 130, 246, .18); }}
+    #${{rootId}} .cem-muted {{ color: #94a3b8; }}
+    #${{rootId}} .cem-error {{ color: #fca5a5; }}
+  `;
+  document.documentElement.appendChild(style);
+
+  const root = document.createElement('div');
+  root.id = rootId;
+  root.innerHTML = `
+    <button type="button" class="cem-launch" aria-label="Codex Enhance Manager"><span class="cem-dot"></span><span>Codex Enhance</span></button>
+    <div class="cem-panel">
+      <div class="cem-head">
+        <div>
+          <div class="cem-title">Usage Panel</div>
+          <div class="cem-subtitle">Route, tokens, cost and balance</div>
+        </div>
+        <div class="cem-status">Checking backend...</div>
+      </div>
+      <div class="cem-body">
+        <div class="cem-route-card">
+          <div class="cem-route-top">
+            <div>
+              <div class="cem-route-label">Current route</div>
+              <div class="cem-route-value" data-cem-route>Loading...</div>
+            </div>
+            <div class="cem-pill" data-cem-route-mode>--</div>
+          </div>
+          <div class="cem-metrics">
+            <div class="cem-metric"><span>Tokens</span><strong data-cem-stat="tokens">--</strong><small data-cem-stat="token-speed">--</small></div>
+            <div class="cem-metric"><span>Requests</span><strong data-cem-stat="requests">--</strong><small data-cem-stat="request-health">--</small></div>
+            <div class="cem-metric"><span>Cost</span><strong data-cem-stat="cost">--</strong><small data-cem-stat="cost-speed">--</small></div>
+            <div class="cem-metric"><span>Context</span><strong data-cem-stat="context">--</strong><small data-cem-stat="context-note">window</small></div>
+          </div>
+          <div class="cem-balance" data-cem-balance>Waiting for usage data...</div>
+        </div>
+        <div class="cem-section">
+          <div class="cem-section-title">Fast Route Switch</div>
+          <div class="cem-provider-list" data-cem-providers><div class="cem-muted">Loading providers...</div></div>
+        </div>
+        <div class="cem-actions">
+          <button type="button" class="cem-link" data-cem-refresh>Refresh</button>
+          <a href="${{config.backend}}/#providers" target="_blank" rel="noreferrer">Providers</a>
+          <a href="${{config.backend}}/#amr" target="_blank" rel="noreferrer">Smart Routing</a>
+          <a href="${{config.backend}}/#stats" target="_blank" rel="noreferrer">Usage</a>
+          <a href="${{config.backend}}/#codex-integration" target="_blank" rel="noreferrer">Connection</a>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const cemEscapeHtml = (value) => String(value || '').replace(/[&<>"']/g, (ch) => ({{
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }}[ch]));
+  const cemSetStatus = (message, error = false) => {{
+    const status = root.querySelector('.cem-status');
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle('cem-error', Boolean(error));
+  }};
+  const cemFormatNumber = (value) => {{
+    const number = Number(value || 0);
+    if (!Number.isFinite(number) || number <= 0) return '--';
+    if (Math.abs(number) >= 1000000000) return `${{(number / 1000000000).toFixed(2).replace(/\\.00$/, '')}}B`;
+    if (Math.abs(number) >= 1000000) return `${{(number / 1000000).toFixed(2).replace(/\\.00$/, '')}}M`;
+    if (Math.abs(number) >= 1000) return `${{(number / 1000).toFixed(1).replace(/\\.0$/, '')}}K`;
+    return Math.round(number).toLocaleString();
+  }};
+  const cemFormatMoney = (amount, currency = '') => {{
+    const value = Number(amount || 0);
+    if (!Number.isFinite(value) || value <= 0) return '--';
+    const text = value >= 10 ? value.toFixed(2) : value.toFixed(4).replace(/0+$/, '').replace(/\\.$/, '');
+    return `${{currency || ''}} ${{text}}`.trim();
+  }};
+  const cemFirstNumber = (object, keys) => {{
+    if (!object || typeof object !== 'object') return null;
+    for (const key of keys) {{
+      const value = Number(object[key]);
+      if (Number.isFinite(value)) return value;
+    }}
+    return null;
+  }};
+  const cemPrimaryCost = (summary) => {{
+    const costs = summary && summary.effective_cost_by_currency && typeof summary.effective_cost_by_currency === 'object'
+      ? summary.effective_cost_by_currency
+      : {{}};
+    const entries = Object.entries(costs)
+      .map(([currency, value]) => [currency, Number(value || 0)])
+      .filter(([, value]) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => b[1] - a[1]);
+    return entries.length ? {{ currency: entries[0][0], amount: entries[0][1] }} : null;
+  }};
+  const cemSamples = {{ tokens: [], costs: [] }};
+  const cemSampleRate = (samples, value, extra = {{}}) => {{
+    const number = Number(value || 0);
+    if (!Number.isFinite(number)) return null;
+    const now = Date.now();
+    samples.push({{ ts: now, value: number, ...extra }});
+    while (samples.length > 96) samples.shift();
+    const cutoff = now - 30 * 60 * 1000;
+    while (samples.length > 2 && samples[0].ts < cutoff) samples.shift();
+    if (samples.length < 2) return null;
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    const minutes = Math.max((last.ts - first.ts) / 60000, 0.001);
+    return Math.max((last.value - first.value) / minutes, 0);
+  }};
+
+  let cemQuickSettings = null;
+  const cemRenderQuickSettings = (data) => {{
+    cemQuickSettings = data || cemQuickSettings;
+    const usage = (cemQuickSettings && cemQuickSettings.usage) || {{}};
+    const summary = usage.request_log_summary || {{}};
+    const providers = Array.isArray(cemQuickSettings && cemQuickSettings.providers) ? cemQuickSettings.providers : [];
+    const focus = String((cemQuickSettings && cemQuickSettings.focus_provider_id) || '');
+    const activeProvider = providers.find((provider) => String(provider.id || '') === focus || provider.focused) || null;
+    const activeLabel = activeProvider ? (activeProvider.display_name || activeProvider.id || 'Selected provider') : 'Smart routing';
+    const activeBadge = activeProvider
+      ? (activeProvider.switch_only || activeProvider.codex_login ? 'official' : (activeProvider.local_proxy_routing === false ? 'direct' : 'proxy'))
+      : 'auto';
+    const routeEl = root.querySelector('[data-cem-route]');
+    const modeEl = root.querySelector('[data-cem-route-mode]');
+    if (routeEl) routeEl.textContent = activeLabel;
+    if (modeEl) modeEl.textContent = activeBadge;
+
+    const totalTokens = Number(usage.current_total_tokens || usage.total_tokens || (summary.tokens && summary.tokens.total_tokens) || 0);
+    const tokenRate = cemSampleRate(cemSamples.tokens, totalTokens);
+    root.querySelector('[data-cem-stat="tokens"]').textContent = cemFormatNumber(totalTokens);
+    root.querySelector('[data-cem-stat="token-speed"]').textContent = tokenRate === null ? 'collecting samples' : `${{cemFormatNumber(tokenRate)}} tokens/min`;
+
+    const requestCount = Number(summary.count || 0);
+    const successCount = Number(summary.success_count || 0);
+    const errorCount = Number(summary.error_count || 0);
+    root.querySelector('[data-cem-stat="requests"]').textContent = requestCount ? requestCount.toLocaleString() : '--';
+    root.querySelector('[data-cem-stat="request-health"]').textContent = requestCount ? `${{successCount}} ok / ${{errorCount}} err` : 'no proxy log yet';
+
+    const primaryCost = cemPrimaryCost(summary);
+    root.querySelector('[data-cem-stat="cost"]').textContent = primaryCost ? cemFormatMoney(primaryCost.amount, primaryCost.currency) : '--';
+    const costRate = primaryCost ? cemSampleRate(cemSamples.costs, primaryCost.amount, {{ currency: primaryCost.currency }}) : null;
+    root.querySelector('[data-cem-stat="cost-speed"]').textContent = primaryCost && costRate !== null
+      ? `${{cemFormatMoney(costRate, primaryCost.currency)}}/min`
+      : (primaryCost ? 'collecting samples' : 'estimated from proxy');
+
+    const contextWindow = Number(usage.current_context_window || 0);
+    const contextUsed = Number(usage.current_context_used_tokens || 0);
+    root.querySelector('[data-cem-stat="context"]').textContent = contextWindow > 0 ? cemFormatNumber(contextWindow) : '--';
+    root.querySelector('[data-cem-stat="context-note"]').textContent = contextUsed > 0 ? `${{cemFormatNumber(contextUsed)}} used` : 'window';
+
+    const quota = usage.quota || {{}};
+    const values = quota.values || quota.snapshot || {{}};
+    const balance = cemFirstNumber(values, ['balance', 'remaining_balance', 'available_balance', 'credit', 'remaining']);
+    const spent = cemFirstNumber(values, ['spent', 'used', 'used_amount', 'total_spent']);
+    const currency = String(values.currency || values.unit || values.balance_currency || (primaryCost && primaryCost.currency) || '');
+    const balanceEl = root.querySelector('[data-cem-balance]');
+    if (usage.official_usage_hidden_by_provider) {{
+      balanceEl.textContent = 'Official account usage hidden while a third-party route is active.';
+    }} else if (usage.official_usage_default) {{
+      balanceEl.textContent = 'Official login route is active. Official usage remains visible.';
+    }} else if (quota.success && balance !== null) {{
+      balanceEl.textContent = `Balance ${{cemFormatMoney(balance, currency)}}${{spent !== null ? ` - spent ${{cemFormatMoney(spent, currency)}}` : ''}}`;
+    }} else if (primaryCost) {{
+      balanceEl.textContent = `No live balance snapshot - estimated burn ${{cemFormatMoney(primaryCost.amount, primaryCost.currency)}} total`;
+    }} else {{
+      balanceEl.textContent = 'No balance or cost data yet.';
+    }}
+
+    const list = root.querySelector('[data-cem-providers]');
+    if (!list) return;
+    const autoActive = !focus;
+    const autoButton = `<button type="button" class="cem-provider ${{autoActive ? 'active' : ''}}" data-cem-provider-id="">
+      <span>${{autoActive ? '* ' : ''}}Smart routing</span><small>auto</small>
+    </button>`;
+    list.innerHTML = autoButton + providers.map((provider) => {{
+      const id = String(provider.id || '');
+      const label = provider.display_name || id;
+      const alias = provider.short_alias ? ` / ${{provider.short_alias}}` : '';
+      const active = id === focus || provider.focused;
+      const badge = provider.switch_only || provider.codex_login ? 'official' : (provider.local_proxy_routing === false ? 'direct' : 'proxy');
+      return `<button type="button" class="cem-provider ${{active ? 'active' : ''}}" data-cem-provider-id="${{cemEscapeHtml(id)}}">
+        <span>${{active ? '* ' : ''}}${{cemEscapeHtml(label)}}<small>${{cemEscapeHtml(alias)}}</small></span><small>${{cemEscapeHtml(badge)}}</small>
+      </button>`;
+    }}).join('');
+  }};
+
+  const cemLoadQuickSettings = () => fetch(`${{config.backend}}/api/codex-injection/quick-settings`, {{ cache: 'no-store' }})
+    .then((response) => response.json())
+    .then((data) => {{
+      if (!data || data.success === false) throw new Error((data && data.error) || 'Usage panel unavailable');
+      cemRenderQuickSettings(data);
+      return data;
+    }});
+  const cemPostQuickSettings = (patch) => fetch(`${{config.backend}}/api/codex-injection/quick-settings`, {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify(patch || {{}}),
+  }}).then((response) => response.json()).then((data) => {{
+    if (!data || data.success === false) throw new Error((data && data.error) || 'Route switch failed');
+    cemRenderQuickSettings(data);
+    return data;
+  }});
+
+  root.querySelector('.cem-launch').addEventListener('click', () => {{
+    root.classList.toggle('open');
+    if (root.classList.contains('open')) {{
+      cemSetStatus('Loading...');
+      cemLoadQuickSettings()
+        .then(() => cemSetStatus('Ready'))
+        .catch((error) => cemSetStatus(error.message || 'Backend unavailable', true));
+    }}
+  }});
+  root.addEventListener('click', (event) => {{
+    const refreshButton = event.target.closest?.('[data-cem-refresh]');
+    if (refreshButton) {{
+      event.preventDefault();
+      cemSetStatus('Refreshing...');
+      cemLoadQuickSettings()
+        .then(() => cemSetStatus('Ready'))
+        .catch((error) => cemSetStatus(error.message || 'Refresh failed', true));
+      return;
+    }}
+    const providerButton = event.target.closest?.('[data-cem-provider-id]');
+    if (!providerButton) return;
+    event.preventDefault();
+    const providerId = providerButton.getAttribute('data-cem-provider-id') || '';
+    cemSetStatus('Switching...');
+    cemPostQuickSettings({{ provider_id: providerId }})
+      .then(() => refreshCemBackendStatus())
+      .then(() => cemSetStatus('Route updated'))
+      .catch((error) => cemSetStatus(error.message || 'Switch failed', true));
+  }});
+  document.documentElement.appendChild(root);
+
+  const refreshCemBackendStatus = () => {{
+    fetch(`${{config.backend}}/api/codex-injection/status`, {{ cache: 'no-store' }})
+      .then((response) => response.json())
+      .then((data) => {{
+        cemRuntime.applyStatus(data);
+        if (!root.classList.contains('open')) {{
+          const status = root.querySelector('.cem-status');
+          if (status) status.textContent = data && data.success ? 'Backend connected' : 'Backend unavailable';
+        }}
+      }})
+      .catch(() => {{
+        cemRuntime.applyStatus({{ enabled: false }});
+        if (!root.classList.contains('open')) cemSetStatus('Backend unavailable', true);
+      }});
+  }};
+  refreshCemBackendStatus();
+  if (window.__cemBackendStatusInterval) window.clearInterval(window.__cemBackendStatusInterval);
+  window.__cemBackendStatusInterval = window.setInterval(refreshCemBackendStatus, 15000);
 }})();
 """.strip()
 

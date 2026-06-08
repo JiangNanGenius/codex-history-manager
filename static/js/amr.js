@@ -1,8 +1,8 @@
-const AMR_CAPABILITIES = ['text', 'vision', 'tools', 'custom_tools', 'reasoning', 'images', 'videos'];
+const AMR_CAPABILITIES = ['text', 'vision', 'custom_tools', 'reasoning', 'images'];
 const AMR_CAPABILITY_DEFAULTS = {
     text: true,
     vision: false,
-    tools: false,
+    tools: true,
     custom_tools: false,
     reasoning: false,
     streaming: true,
@@ -39,9 +39,8 @@ function effectiveProviderCapabilities(provider) {
     if (apiFormat === 'openai_images' || profile.default_image_provider || Object.keys(profile.image_model_overrides || {}).length) {
         capabilities.images = true;
     }
-    if (apiFormat === 'openai_videos' || profile.default_video_provider || Object.keys(profile.video_model_overrides || {}).length) {
-        capabilities.videos = true;
-    }
+    capabilities.tools = true;
+    capabilities.streaming = true;
     return capabilities;
 }
 
@@ -338,11 +337,9 @@ function amrCapabilityLabel(capability) {
     const labels = {
         text: t('textCapability'),
         vision: t('visionInputCapability'),
-        tools: t('toolsCapability'),
         custom_tools: t('customToolsCapability'),
         reasoning: t('reasoningCapability'),
         images: t('imagesCapability'),
-        videos: t('videosCapability'),
     };
     return labels[capability] || capability;
 }
@@ -473,6 +470,8 @@ function readAmrGroupForm(existing) {
         AMR_CAPABILITIES.forEach(capability => {
             capabilities[capability] = Boolean(row.querySelector(`[data-amr-capability="${capability}"]`)?.checked);
         });
+        capabilities.tools = true;
+        capabilities.streaming = true;
         return {
             id: row.querySelector('[data-amr-field="id"]')?.value || '',
             provider_id: row.querySelector('[data-amr-field="provider_id"]')?.value || '',
@@ -522,11 +521,11 @@ async function runAmrRoutePreview() {
 function getAmrGroupSummary(group) {
     const candidates = group && Array.isArray(group.candidates) ? group.candidates : [];
     const enabled = candidates.filter(candidate => candidate.enabled !== false);
-    const contexts = enabled.map(candidate => Number(candidate.context_window || 0)).filter(value => value > 0);
+    const contexts = enabled
+        .map(candidate => Number(candidate.context_window || 0))
+        .filter(value => Number.isFinite(value) && value >= 0);
     const effectiveContext = contexts.length ? Math.min(...contexts) : 0;
-    const limiting = effectiveContext
-        ? enabled.find(candidate => Number(candidate.context_window || 0) === effectiveContext)
-        : null;
+    const limiting = enabled.find(candidate => Number(candidate.context_window || 0) === effectiveContext) || null;
     return {
         totalCount: candidates.length,
         enabledCount: enabled.length,

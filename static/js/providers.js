@@ -46,6 +46,7 @@ let providerState = {
     quotaPreview: null,
     healthPreview: null,
     requestPreview: null,
+    modelFetchPreview: null,
     focus_provider_id: '',
 };
 
@@ -62,6 +63,23 @@ const PROVIDER_API_FORMATS = new Set([
     'custom',
 ]);
 
+const VISIBLE_PROVIDER_API_FORMATS = [
+    'openai_responses',
+    'openai_chat',
+    'openai_images',
+    'openai_compatible',
+    'anthropic',
+    'custom',
+];
+
+const MODEL_DETAIL_CAPABILITIES = [
+    ['text', 'textCapability'],
+    ['vision', 'visionInputCapability'],
+    ['custom_tools', 'customToolsCapability'],
+    ['reasoning', 'reasoningCapability'],
+    ['images', 'imagesCapability'],
+];
+
 const NATIVE_LOCKED_CAPABILITIES = {
     text: true,
     vision: true,
@@ -71,7 +89,7 @@ const NATIVE_LOCKED_CAPABILITIES = {
     streaming: true,
     compact: true,
     images: true,
-    videos: true,
+    videos: false,
     embeddings: true,
     models: true,
     balance: false,
@@ -211,7 +229,7 @@ function renderEnhanceOverview() {
     const enabledCount = providers.filter(p => p.enabled).length;
     const alwaysVisible = providers.filter(p => p.catalog_visibility === 'always_visible').length;
     const selectedModels = providers.reduce((sum, p) => sum + (p.models || []).filter(m => m.selected).length, 0);
-    const mediaProviders = providers.filter(p => p.media_profile && (p.media_profile.default_image_provider || p.media_profile.default_video_provider)).length;
+    const mediaProviders = providers.filter(p => p.media_profile && p.media_profile.default_image_provider).length;
 
     root.innerHTML = `
         <div class="animate-in">
@@ -326,7 +344,7 @@ function quickSetupSummary() {
     ), 0);
     const mediaFallbacks = providers.filter(provider => {
         const profile = provider.media_profile || {};
-        return profile.default_image_provider || profile.default_video_provider;
+        return profile.default_image_provider;
     }).length;
     const connectionReady = Boolean(selected && selected.base_url && ((selected.auth_mode === 'no_auth') || selected.api_key || Object.keys(selected.headers || {}).length));
     return {
@@ -607,12 +625,12 @@ function renderProviderResponsibilityStrip() {
     return `
         <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-5">
             ${renderProviderResponsibilityTile(t('providerScopeConnection'), t('providerScopeConnectionDesc'))}
-            ${renderProviderResponsibilityTile(t('providerScopeModels'), t('providerScopeModelsDesc'))}
-            ${renderProviderResponsibilityTile(t('providerScopeMediaQuota'), t('providerScopeMediaQuotaDesc'))}
-            <div class="rounded-lg border border-amber-700/40 bg-amber-950/20 p-3">
+                ${renderProviderResponsibilityTile(t('providerScopeModels'), t('providerScopeModelsDesc'))}
+                ${renderProviderResponsibilityTile(t('providerScopeMediaQuota'), t('providerScopeMediaQuotaDesc'))}
+                <div class="rounded-lg border border-amber-700/40 bg-amber-950/20 p-3">
                 <div class="text-xs font-semibold text-amber-200">${escapeHtml(t('providerScopeRouting'))}</div>
                 <div class="text-xs text-amber-100/80 mt-1">${escapeHtml(t('providerScopeRoutingDesc'))}</div>
-                <button onclick="navigateTo('amr')" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('openModelRotation'))}</button>
+                <button onclick="navigateTo('amr')" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('openSmartRouting'))}</button>
             </div>
         </div>
     `;
@@ -636,7 +654,7 @@ function renderProviderScopeCard() {
                 <div>${escapeHtml(t('providerScopeMoveToAmr'))}</div>
                 <div>${escapeHtml(t('providerScopeCodexApply'))}</div>
             </div>
-            <button onclick="navigateTo('amr')" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('openModelRotation'))}</button>
+            <button onclick="navigateTo('amr')" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('openSmartRouting'))}</button>
         </div>
     `;
 }
@@ -651,8 +669,9 @@ function renderProviderListItem(provider) {
      *   - 若 provider.status.last_error 存在，在列表项底部显示红色错误摘要，
      *     帮助用户一眼定位问题 provider。
      *   - visibility 下拉选择支持快捷切换，点击时阻止事件冒泡避免触发选中。
-     */
+    */
     const active = provider.id === providerState.selectedProviderId;
+    const focused = provider.id === providerState.focus_provider_id;
     const error = provider.status && provider.status.last_error;
     const visOptions = [
         { value: 'hidden', label: t('catalogVisibilityHidden') },
@@ -680,6 +699,7 @@ function renderProviderListItem(provider) {
                     </div>
                     <span class="status-dot ${provider.enabled ? 'bg-emerald-500' : 'bg-dark-500'}"></span>
                 </div>
+                ${focused ? `<div class="mt-2">${renderMiniBadge(t('currentSwitchProvider'))}</div>` : ''}
             </div>
             <div class="flex items-center justify-between gap-2 mt-2">
                 ${error ? `<div class="text-xs text-red-300 truncate flex-1">${escapeHtml(error)}</div>` : '<div></div>'}
@@ -723,6 +743,10 @@ function renderProviderEditor(provider) {
     const capabilityLocked = isNativeCapabilityLocked(provider);
     const capabilitySource = capabilityLocked ? nativeLockedCapabilities(provider.capabilities || {}) : (provider.capabilities || {});
 
+    if (providerReadOnly) {
+        return renderCodexOfficialProviderViewer(provider);
+    }
+
     return `
         <div class="card">
             <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
@@ -730,26 +754,21 @@ function renderProviderEditor(provider) {
                     <h3 class="card-title">${escapeHtml(t('editProvider'))}</h3>
                     <div class="text-xs text-dark-500 font-mono">${escapeHtml(provider.id)}</div>
                 </div>
-                ${renderProviderStatusStrip(provider)}
+                <div class="flex flex-wrap items-center gap-2">
+                    <button onclick="switchSelectedProvider('${escapeAttr(provider.id)}')" class="btn btn-primary text-xs">${escapeHtml(t('switchToThisProvider'))}</button>
+                    ${renderProviderStatusStrip(provider)}
+                </div>
             </div>
 
             <div id="provider-form-error" class="hidden mt-3 text-sm text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-3"></div>
-            ${providerReadOnly ? `<div class="mt-3 text-xs text-amber-200 bg-amber-950/25 border border-amber-700/50 rounded-lg p-3">${escapeHtml(t('codexLoginProviderReadOnly'))}</div>` : ''}
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                 ${renderInput('provider-display-name', t('displayName'), provider.display_name, 'text', providerReadOnly)}
-                ${renderInput('provider-short-alias', t('shortAlias'), provider.short_alias, 'text', providerReadOnly)}
+                ${renderInput('provider-codex-visible-alias', t('providerVisibleAlias'), provider.codex_visible_alias || provider.display_name || provider.short_alias || provider.id, 'text', providerReadOnly)}
+                ${renderInput('provider-short-alias', t('internalShortAlias'), provider.short_alias, 'text', true)}
                 ${renderInput('provider-base-url', t('baseUrl'), provider.base_url, 'text', providerReadOnly)}
                 ${renderInput('provider-api-key', t('apiKey'), provider.api_key || '', 'password', providerReadOnly)}
-                ${renderSelect('provider-api-format', t('apiFormat'), provider.api_format, [
-                    'openai_responses',
-                    'openai_chat',
-                    'openai_images',
-                    'openai_videos',
-                    'openai_compatible',
-                    'anthropic',
-                    'custom',
-                ], 'syncResponsesModeControls(true); syncMediaModeControls(true)', providerReadOnly)}
+                ${renderSelect('provider-api-format', t('apiFormat'), provider.api_format, visibleApiFormatOptions(provider.api_format), 'syncResponsesModeControls(true); syncMediaModeControls(true)', providerReadOnly)}
                 ${renderSelect('provider-auth-mode', t('authMode'), provider.auth_mode, [
                     'provider_api_key',
                     'global_auth_json',
@@ -774,6 +793,8 @@ function renderProviderEditor(provider) {
                 </label>
                 <div class="text-xs text-dark-500">${escapeHtml(t('providerFallbackMoved'))}</div>
             </div>
+
+            ${renderProviderModelDetails(provider, providerReadOnly)}
 
             <details class="advanced-box mt-4">
                 <summary>${escapeHtml(t('providerDetailedProfile'))}</summary>
@@ -806,14 +827,13 @@ function renderProviderEditor(provider) {
                 </div>
                 <div id="bulk-action-error" class="hidden mt-2 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2"></div>
                 ${renderProviderSectionHeading(t('providerCapabilities'), t('providerCapabilitiesDesc'))}
+                <div class="mt-3 text-xs text-emerald-200 bg-emerald-950/20 border border-emerald-700/40 rounded-lg p-3">${escapeHtml(t('providerCoreCapabilitiesLocked'))}</div>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
                     ${renderCapabilityToggle('cap-text', t('textCapability'), capabilitySource.text, '', capabilityLocked || providerReadOnly)}
                     ${renderCapabilityToggle('cap-vision', t('visionInputCapability'), capabilitySource.vision, '', capabilityLocked || providerReadOnly)}
-                    ${renderCapabilityToggle('cap-tools', t('toolsCapability'), capabilitySource.tools, '', capabilityLocked || providerReadOnly)}
                     ${renderCapabilityToggle('cap-custom-tools', t('customToolsCapability'), capabilitySource.custom_tools, '', capabilityLocked || providerReadOnly)}
                     ${renderCapabilityToggle('cap-reasoning', t('reasoningCapability'), capabilitySource.reasoning, '', capabilityLocked || providerReadOnly)}
                     ${renderCapabilityToggle('cap-images', t('imagesCapability'), capabilitySource.images, 'syncMediaModeControls(true)', capabilityLocked || providerReadOnly)}
-                    ${renderCapabilityToggle('cap-videos', t('videosCapability'), capabilitySource.videos, 'syncMediaModeControls(true)', capabilityLocked || providerReadOnly)}
                 </div>
                 ${capabilityLocked ? `<div id="native-capability-lock-note" class="mt-3 text-xs text-emerald-200 bg-emerald-950/20 border border-emerald-700/40 rounded-lg p-3">${escapeHtml(t('nativeCapabilitiesLocked'))}</div>` : ''}
                 ${renderResponsesModeSegment(provider, providerReadOnly)}
@@ -847,7 +867,6 @@ function renderProviderEditor(provider) {
                 ${renderProviderSectionHeading(t('providerMediaQuota'), t('providerMediaQuotaDesc'))}
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4">
                     ${renderCapabilityToggle('media-default-image', t('defaultImageProvider'), mediaProfile.default_image_provider, 'syncMediaModeControls(true)')}
-                    ${renderCapabilityToggle('media-default-video', t('defaultVideoProvider'), mediaProfile.default_video_provider, 'syncMediaModeControls(true)')}
                 </div>
                 ${renderMediaModeSegment(mediaProfile)}
                 ${renderMediaRoutingHint(provider)}
@@ -858,10 +877,10 @@ function renderProviderEditor(provider) {
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                     ${renderTextarea('media-image-overrides-json', t('imageOverridesJson'), JSON.stringify(mediaProfile.image_model_overrides || {}, null, 2), 5)}
-                    ${renderTextarea('media-video-overrides-json', t('videoOverridesJson'), JSON.stringify(mediaProfile.video_model_overrides || {}, null, 2), 5)}
                 </div>
-                <div class="mt-4">
-                    ${renderTextarea('provider-quota-json', t('quotaCheckJson'), JSON.stringify(provider.quota_check || {}, null, 2), 8)}
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                    ${renderTextarea('provider-quota-json', t('quotaCheckJson'), JSON.stringify(provider.quota_check || {}, null, 2), 8, t('quotaCheckJsonDesc'), providerReadOnly)}
+                    ${renderTextarea('provider-quota-script-js', t('quotaScriptJs'), providerQuotaScriptCode(provider), 8, t('quotaScriptJsDesc'), providerReadOnly)}
                 </div>
             </details>
 
@@ -881,6 +900,162 @@ function renderProviderEditor(provider) {
 
         <div id="provider-preview-panels-root" class="space-y-4">
             ${renderProviderPreviewPanels()}
+        </div>
+    `;
+}
+
+function renderCodexOfficialProviderViewer(provider) {
+    const focused = providerState.focusProviderId === provider.id;
+    const loginStatus = provider.official_oauth_detected || provider.auth_mode === 'official_oauth'
+        ? t('officialLoginDetected')
+        : t('officialLoginStatusUnknown');
+    return `
+        <div class="card">
+            <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
+                <div>
+                    <h3 class="card-title">${escapeHtml(t('codexOfficialProviderTitle'))}</h3>
+                    <div class="text-xs text-dark-500 font-mono">${escapeHtml(provider.id || 'codex_official')}</div>
+                    <p class="text-sm text-dark-400 mt-2 max-w-2xl">${escapeHtml(t('codexOfficialProviderDesc'))}</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    ${focused ? `<span class="badge bg-emerald-900/40 text-emerald-200 border-emerald-700/50">${escapeHtml(t('currentSwitchProvider'))}</span>` : ''}
+                    <button onclick="switchSelectedProvider('${escapeAttr(provider.id)}')" class="btn btn-primary text-xs">${escapeHtml(t('switchToThisProvider'))}</button>
+                    <button onclick="startOfficialCodex()" class="btn btn-secondary text-xs">${escapeHtml(t('startOfficialCodex'))}</button>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mt-5">
+                ${renderReadonlyKV(t('authMode'), providerOptionLabel(provider.auth_mode || 'official_oauth'))}
+                ${renderReadonlyKV(t('loginStatus'), loginStatus)}
+                ${renderReadonlyKV(t('routingModeLabel'), t('officialProviderSwitchOnly'))}
+                ${renderReadonlyKV(t('modelCapabilities'), t('officialManagedCapabilities'))}
+            </div>
+            <div class="mt-4 text-xs text-amber-200 bg-amber-950/20 border border-amber-700/40 rounded-lg p-3">
+                ${escapeHtml(t('officialAmrRiskNotice'))}
+            </div>
+        </div>
+    `;
+}
+
+function renderProviderModelDetails(provider, disabled = false) {
+    const models = Array.isArray(provider.models) && provider.models.length
+        ? provider.models
+        : [{ id: '', display_name: '', context_window: 0, selected: true, enabled: true, capabilities: {} }];
+    return `
+        <div class="provider-model-details mt-5 rounded-xl border border-dark-800 bg-dark-950/45 p-4">
+            <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                <div>
+                    <h4 class="text-sm font-semibold text-white">${escapeHtml(t('providerModelDetailsTitle'))}</h4>
+                    <p class="text-xs text-dark-500 mt-1">${escapeHtml(t('providerModelDetailsDesc'))}</p>
+                </div>
+                ${disabled ? '' : `
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" onclick="fetchProviderModels()" class="btn btn-secondary text-xs">${escapeHtml(t('fetchModelList'))}</button>
+                        <button type="button" onclick="addProviderModelDetail()" class="btn btn-secondary text-xs">${escapeHtml(t('addModel'))}</button>
+                    </div>
+                `}
+            </div>
+            <div id="provider-model-detail-list" class="space-y-3 mt-4">
+                ${models.map((model, index) => renderProviderModelDetailRow(provider, model, index, disabled)).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderProviderModelDetailRow(provider, model, index, disabled = false) {
+    const effectiveCaps = {
+        ...(provider && provider.capabilities ? provider.capabilities : {}),
+        ...(model && model.capabilities ? model.capabilities : {}),
+        ...(model && model.capability_overrides ? model.capability_overrides : {}),
+    };
+    const disabledAttr = disabled ? ' disabled' : '';
+    const apiFormat = model && model.api_format ? model.api_format : '';
+    const reasoningProfile = model && model.reasoning_effort_profile && typeof model.reasoning_effort_profile === 'object'
+        ? model.reasoning_effort_profile
+        : {};
+    const hidden = Boolean(model && model.catalog_hidden);
+    const selected = model ? (!hidden && model.selected !== false) : true;
+    const enabled = !model || model.enabled !== false;
+    return `
+        <div class="provider-model-row rounded-lg border border-dark-800 bg-dark-900/55 p-3" data-provider-model-row="${index}" data-original-model-id="${escapeAttr(model.id || '')}">
+            <div class="grid grid-cols-1 xl:grid-cols-[minmax(160px,1fr)_minmax(150px,1fr)_minmax(160px,1fr)_120px_150px] gap-3">
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('modelId'))}</label>
+                    <input data-model-field="id" class="input mt-1 w-full font-mono" value="${escapeAttr(model.id || '')}" placeholder="gpt-5.5"${disabledAttr}>
+                </div>
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('modelDisplayName'))}</label>
+                    <input data-model-field="display_name" class="input mt-1 w-full" value="${escapeAttr(model.display_name || model.id || '')}" placeholder="${escapeAttr(t('displayName'))}"${disabledAttr}>
+                </div>
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('codexVisibleModelName'))}</label>
+                    <input data-model-field="codex_visible_id" class="input mt-1 w-full" value="${escapeAttr(model.codex_visible_id || '')}" placeholder="${escapeAttr(model.display_name || model.id || '')}"${disabledAttr}>
+                </div>
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('contextWindow'))}</label>
+                    <input data-model-field="context_window" type="number" min="0" step="1000" class="input mt-1 w-full" value="${escapeAttr(model.context_window || 0)}"${disabledAttr}>
+                </div>
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('modelInterface'))}</label>
+                    <select data-model-field="api_format" class="input mt-1 w-full"${disabledAttr}>
+                        <option value="" ${apiFormat ? '' : 'selected'}>${escapeHtml(t('inheritProvider'))}</option>
+                        ${visibleApiFormatOptions(apiFormat).map(format => `
+                            <option value="${escapeAttr(format)}" ${apiFormat === format ? 'selected' : ''}>${escapeHtml(providerOptionLabel(format))}</option>
+                        `).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('reasoningEffortParameter'))}</label>
+                    <select data-model-field="reasoning_effort_parameter" class="input mt-1 w-full"${disabledAttr}>
+                        ${['auto', 'disabled', 'reasoning.effort', 'reasoning_effort', 'output_config.effort', 'thinking'].map(value => `
+                            <option value="${escapeAttr(value)}" ${String(reasoningProfile.parameter || 'auto') === value ? 'selected' : ''}>${escapeHtml(reasoningEffortParameterLabel(value))}</option>
+                        `).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('reasoningEfforts'))}</label>
+                    <input data-model-field="reasoning_efforts" class="input mt-1 w-full" value="${escapeAttr((reasoningProfile.supported_efforts || model.reasoning_efforts || []).join(', '))}" placeholder="low, medium, high"${disabledAttr}>
+                </div>
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('reasoningEffortDefault'))}</label>
+                    <input data-model-field="reasoning_effort_default" class="input mt-1 w-full" value="${escapeAttr(reasoningProfile.default_effort || model.reasoning_effort_default || '')}" placeholder="medium"${disabledAttr}>
+                </div>
+            </div>
+            <div class="flex flex-wrap gap-3 mt-3">
+                <label class="flex items-center gap-2 text-xs text-dark-300">
+                    <input data-model-field="enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${enabled ? 'checked' : ''}${disabledAttr}>
+                    <span>${escapeHtml(t('enabledLabel'))}</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs text-dark-300">
+                    <input data-model-field="selected" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${selected ? 'checked' : ''}${disabledAttr}>
+                    <span>${escapeHtml(t('selectedModel'))}</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs text-dark-300">
+                    <input data-model-field="catalog_hidden" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${hidden ? 'checked' : ''}${disabledAttr}>
+                    <span>${escapeHtml(t('hideFromCodex'))}</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs text-dark-300">
+                    <input data-model-field="primary" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${model.primary ? 'checked' : ''}${disabledAttr}>
+                    <span>${escapeHtml(t('primaryModel'))}</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs text-dark-300">
+                    <input data-model-field="native_approval" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${model.native_approval ? 'checked' : ''}${disabledAttr}>
+                    <span>${escapeHtml(t('nativeApprovalCapability'))}</span>
+                </label>
+                ${disabled ? '' : `<button type="button" onclick="removeProviderModelDetail(this)" class="text-xs text-red-300 hover:text-red-200">${escapeHtml(t('removeModel'))}</button>`}
+            </div>
+            <div class="mt-3">
+                <div class="text-xs text-dark-500 mb-2">${escapeHtml(t('modelCapabilities'))}</div>
+                <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
+                    ${MODEL_DETAIL_CAPABILITIES.map(([capability, labelKey]) => `
+                        <label class="flex items-center gap-2 text-xs rounded-md border border-dark-800 bg-dark-950/45 px-2 py-1.5 ${disabled ? 'opacity-70' : ''}">
+                            <input data-model-capability="${escapeAttr(capability)}" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${effectiveCaps[capability] ? 'checked' : ''}${disabledAttr}>
+                            <span>${escapeHtml(t(labelKey))}</span>
+                        </label>
+                    `).join('')}
+                </div>
+            </div>
         </div>
     `;
 }
@@ -937,6 +1112,13 @@ function renderProviderPreviewPanels() {
             <p class="text-xs text-dark-400 mt-1">${escapeHtml(t('requestPreviewDesc'))}</p>
             ${renderProviderRequestPreviewResult(providerState.requestPreview)}
             <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.requestPreview || {}, null, 2))}</pre>
+        </div>
+
+        <div id="provider-model-fetch-preview" class="card ${providerState.modelFetchPreview ? '' : 'hidden'}">
+            <h3 class="card-title">${escapeHtml(t('modelFetchPreview'))}</h3>
+            <p class="text-xs text-dark-400 mt-1">${escapeHtml(t('modelFetchPreviewDesc'))}</p>
+            ${renderProviderModelFetchResult(providerState.modelFetchPreview)}
+            <pre class="preview-code mt-3">${escapeHtml(JSON.stringify(providerState.modelFetchPreview || {}, null, 2))}</pre>
         </div>
     `;
 }
@@ -1018,6 +1200,31 @@ function renderProviderRequestPreviewResult(result) {
     `;
 }
 
+function renderProviderModelFetchResult(result) {
+    if (!result) return '';
+    if (result.success === false) {
+        return `
+            <div class="enhance-status-strip mt-3">
+                ${renderStatusPill('status', result.status_code ? `HTTP ${result.status_code}` : t('failed'), 'red')}
+                ${renderStatusPill('mode', t('previewOnly'), 'emerald')}
+            </div>
+            <div class="text-xs text-red-300 mt-2 break-all">${escapeHtml(result.error || t('unknownError'))}</div>
+            ${result.url ? `<div class="text-xs text-dark-500 mt-2 break-all">${escapeHtml(result.url)}</div>` : ''}
+        `;
+    }
+    return `
+        <div class="enhance-status-strip mt-3">
+            ${renderStatusPill('fetched', String(result.fetched_count || 0), 'accent')}
+            ${renderStatusPill('added', String(result.added_count || 0), result.added_count ? 'emerald' : 'dark')}
+            ${renderStatusPill('updated', String(result.updated_count || 0), result.updated_count ? 'amber' : 'dark')}
+            ${renderStatusPill('default', `${result.default_context_window || 200000}`, 'dark')}
+            ${renderStatusPill('mode', t('previewOnly'), 'emerald')}
+        </div>
+        <div class="text-xs text-dark-400 mt-2 break-all">${escapeHtml(result.url || '')}</div>
+        <div class="text-xs text-amber-200 mt-2">${escapeHtml(t('modelFetchUnsavedNotice'))}</div>
+    `;
+}
+
 function renderProviderRequestRouteExplanation(result) {
     const lines = Array.isArray(result.route_explanation) ? result.route_explanation : [];
     if (!lines.length) return '';
@@ -1069,7 +1276,9 @@ function renderProviderMediaAdapterResult(result) {
 
 function renderProviderMediaRouteResult(result) {
     if (!result) return '';
-    const checks = Array.isArray(result.checks) ? result.checks : [];
+    const checks = Array.isArray(result.checks)
+        ? result.checks.filter(item => String(item && item.media_kind || '') !== 'video')
+        : [];
     const guidanceKeys = Array.isArray(result.guidance_keys) ? result.guidance_keys.filter(Boolean) : [];
     const actionKeys = Array.isArray(result.action_keys) ? result.action_keys.filter(Boolean) : [];
     return `
@@ -1260,7 +1469,7 @@ function renderCatalogFilters(entries, filteredEntries) {
         return alias && name && alias !== name ? `${alias} / ${name}` : (name || alias);
     });
     const currencyOptions = uniqueCatalogOptions(entries, entry => entry.native_currency, entry => entry.native_currency);
-    const capabilityOptions = ['text', 'vision', 'tools', 'custom_tools', 'reasoning', 'images', 'videos']
+    const capabilityOptions = ['text', 'vision', 'custom_tools', 'reasoning', 'images']
         .filter(capability => entries.some(entry => catalogHasCapability(entry, capability)))
         .map(capability => ({ value: capability, label: capability }));
     const countLabel = t('visibleCount', { shown: filteredEntries.length, total: entries.length });
@@ -1384,8 +1593,6 @@ function catalogMediaPriceBadges(entry) {
     const pricing = entry && entry.pricing && typeof entry.pricing === 'object' ? entry.pricing : {};
     const mediaPrices = [
         [t('mediaPriceImage'), ['per_image', 'image', 'image_per_unit', 'image_per_generation']],
-        [t('mediaPriceVideoJob'), ['per_video_job', 'video_job', 'video_per_job', 'video_generation']],
-        [t('mediaPriceVideoSecond'), ['per_video_second', 'video_second', 'video_per_second', 'video_sec']],
         [t('mediaPriceMinimum'), ['request_minimum', 'minimum', 'min_charge']],
     ];
     return mediaPrices
@@ -1464,11 +1671,9 @@ function renderRouteSimulatorShell() {
             <div class="grid grid-cols-2 gap-2 mt-3">
                 ${renderRouteCapabilityToggle('route-sim-cap-text', 'text', true)}
                 ${renderRouteCapabilityToggle('route-sim-cap-vision', 'vision', false)}
-                ${renderRouteCapabilityToggle('route-sim-cap-tools', 'tools', false)}
                 ${renderRouteCapabilityToggle('route-sim-cap-custom-tools', 'custom_tools', false)}
                 ${renderRouteCapabilityToggle('route-sim-cap-reasoning', 'reasoning', false)}
                 ${renderRouteCapabilityToggle('route-sim-cap-images', 'images', false)}
-                ${renderRouteCapabilityToggle('route-sim-cap-videos', 'videos', false)}
             </div>
             <div class="grid grid-cols-1 gap-3 mt-3">
                 <input id="route-sim-model" class="input" list="route-sim-model-options" placeholder="${escapeAttr(t('optionalModelPlaceholder'))}">
@@ -1541,6 +1746,7 @@ async function importPreset(presetId) {
         providerState.selectedProviderId = result.provider.id;
         providerState.mediaRoutePreview = null;
         providerState.healthPreview = null;
+        providerState.modelFetchPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
         showToast(t('providerPresetImported'), 'success');
@@ -1572,6 +1778,7 @@ async function createBlankProvider() {
         providerState.mediaRoutePreview = null;
         providerState.mediaAdapterPreview = null;
         providerState.healthPreview = null;
+        providerState.modelFetchPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
         if (currentPage === 'quick-setup') {
@@ -1594,9 +1801,41 @@ async function selectProvider(providerId) {
     providerState.quotaPreview = null;
     providerState.healthPreview = null;
     providerState.requestPreview = null;
+    providerState.modelFetchPreview = null;
     renderProvidersPage();
     await refreshSelectedQuotaCache();
     renderProvidersPage();
+}
+
+function addProviderModelDetail() {
+    const provider = getSelectedProvider();
+    if (!provider || isCodexLoginProvider(provider)) return;
+    const draft = readProviderForm(provider);
+    if (!draft) return;
+    draft.models = Array.isArray(draft.models) ? draft.models : [];
+    draft.models.push({
+        id: 'model-id',
+        display_name: 'Model',
+        codex_visible_id: '',
+        selected: true,
+        catalog_hidden: false,
+        primary: false,
+        enabled: true,
+        context_window: 128000,
+        api_format: '',
+        capabilities: { text: true },
+        capability_overrides: { text: true },
+    });
+    providerState.providers = (providerState.providers || []).map(item => (
+        item.id === provider.id ? { ...provider, ...draft } : item
+    ));
+    renderProvidersPage();
+}
+
+function removeProviderModelDetail(button) {
+    const row = button && button.closest ? button.closest('[data-provider-model-row]') : null;
+    if (!row) return;
+    row.remove();
 }
 
 async function saveSelectedProvider() {
@@ -1619,6 +1858,7 @@ async function saveSelectedProvider() {
         providerState.quotaPreview = null;
         providerState.healthPreview = null;
         providerState.requestPreview = null;
+        providerState.modelFetchPreview = null;
         await ensureProviderData();
         await refreshCatalogPreview();
         renderProvidersPage();
@@ -1687,6 +1927,36 @@ async function previewProviderRequest() {
         }
     } catch (err) {
         showProviderFormError(err.message);
+    }
+}
+
+async function fetchProviderModels() {
+    const provider = getSelectedProvider();
+    if (!provider || isCodexLoginProvider(provider)) return;
+    const draft = readProviderForm(provider);
+    if (!draft) return;
+    const buttons = Array.from(document.querySelectorAll('button')).filter(button => button.getAttribute('onclick') === 'fetchProviderModels()');
+    buttons.forEach(button => { button.disabled = true; });
+    try {
+        const result = await api('/api/providers/' + encodeURIComponent(provider.id) + '/models/fetch-draft', {
+            method: 'POST',
+            body: JSON.stringify({ provider: draft }),
+        });
+        providerState.modelFetchPreview = result;
+        if (result && result.success && Array.isArray(result.merged_models)) {
+            providerState.providers = (providerState.providers || []).map(item => (
+                item.id === provider.id ? { ...provider, ...draft, models: result.merged_models } : item
+            ));
+        }
+        renderProvidersPage();
+        if (result && result.success) {
+            showToast(t('modelFetchMerged'), 'success');
+        } else {
+            showToast(t('modelFetchFailed'), 'warning');
+        }
+    } catch (err) {
+        showProviderFormError(err.message);
+        buttons.forEach(button => { button.disabled = false; });
     }
 }
 
@@ -1798,6 +2068,34 @@ async function deleteSelectedProvider() {
     }
 }
 
+async function switchSelectedProvider(providerId = '') {
+    const provider = providerId
+        ? (providerState.providers || []).find(item => item.id === providerId)
+        : getSelectedProvider();
+    if (!provider) return;
+    try {
+        const result = await api('/api/providers/focus', {
+            method: 'POST',
+            body: JSON.stringify({ provider_id: provider.id }),
+        });
+        providerState.focusProviderId = result.focus_provider_id || provider.id;
+        await ensureProviderData();
+        await refreshCatalogPreview(providerState.focusProviderId);
+        await refreshProxyStatus();
+        renderProvidersPage();
+        const proxy = result.proxy || {};
+        if (proxy.success && proxy.status && proxy.status.base_url) {
+            showToast(t('providerSwitchUpdatedWithProxy', { url: proxy.status.base_url }), 'success');
+        } else if (result.switch_only) {
+            showToast(t('officialProviderSwitchOnlyToast'), 'success');
+        } else {
+            showToast(t('providerSwitchUpdated'), 'success');
+        }
+    } catch (err) {
+        showToast(t('providerSwitchFailed') + err.message, 'error');
+    }
+}
+
 async function previewWithSelectedFocus() {
     const provider = getSelectedProvider();
     if (provider) {
@@ -1894,15 +2192,89 @@ function getSelectedProvider() {
     return (providerState.providers || []).find(p => p.id === providerState.selectedProviderId) || null;
 }
 
+function readProviderModelsFromDetails(existingModels = [], provider = {}) {
+    const rows = Array.from(document.querySelectorAll('[data-provider-model-row]'));
+    if (!rows.length) return null;
+    const existingByOriginalId = new Map();
+    (existingModels || []).forEach(model => {
+        if (!model || !model.id) return;
+        existingByOriginalId.set(String(model.id), model);
+    });
+    return rows.map((row, index) => {
+        const modelId = String(row.querySelector('[data-model-field="id"]')?.value || '').trim();
+        if (!modelId) return null;
+        const originalId = String(row.getAttribute('data-original-model-id') || '').trim();
+        const existing = existingByOriginalId.get(originalId) || existingByOriginalId.get(modelId) || {};
+        const capabilities = {};
+        row.querySelectorAll('[data-model-capability]').forEach(input => {
+            capabilities[input.getAttribute('data-model-capability')] = Boolean(input.checked);
+        });
+        capabilities.tools = true;
+        capabilities.streaming = true;
+        const nativeApproval = Boolean(row.querySelector('[data-model-field="native_approval"]')?.checked);
+        const apiFormat = String(row.querySelector('[data-model-field="api_format"]')?.value || '').trim();
+        const displayName = String(row.querySelector('[data-model-field="display_name"]')?.value || '').trim();
+        const codexVisibleId = String(row.querySelector('[data-model-field="codex_visible_id"]')?.value || '').trim();
+        const hidden = Boolean(row.querySelector('[data-model-field="catalog_hidden"]')?.checked);
+        const primary = !hidden && Boolean(row.querySelector('[data-model-field="primary"]')?.checked);
+        const selected = !hidden && (Boolean(row.querySelector('[data-model-field="selected"]')?.checked) || primary);
+        const reasoningParameter = String(row.querySelector('[data-model-field="reasoning_effort_parameter"]')?.value || 'auto').trim();
+        const reasoningEfforts = String(row.querySelector('[data-model-field="reasoning_efforts"]')?.value || '')
+            .split(',')
+            .map(item => item.trim())
+            .filter(Boolean);
+        const reasoningDefault = String(row.querySelector('[data-model-field="reasoning_effort_default"]')?.value || '').trim();
+        const capabilityOverrides = {
+            ...(existing.capability_overrides || {}),
+            ...capabilities,
+            native_approval: nativeApproval,
+        };
+        delete capabilityOverrides.tools;
+        delete capabilityOverrides.streaming;
+        return {
+            ...existing,
+            id: modelId,
+            display_name: displayName || modelId,
+            codex_visible_id: codexVisibleId,
+            context_window: parseInt(row.querySelector('[data-model-field="context_window"]')?.value || '0', 10) || 0,
+            selected,
+            catalog_hidden: hidden,
+            primary,
+            enabled: Boolean(row.querySelector('[data-model-field="enabled"]')?.checked),
+            api_format: PROVIDER_API_FORMATS.has(apiFormat) ? apiFormat : '',
+            native_approval: nativeApproval,
+            capabilities,
+            capability_overrides: capabilityOverrides,
+            reasoning_effort_profile: {
+                ...(existing.reasoning_effort_profile || {}),
+                parameter: reasoningParameter,
+                supported_efforts: reasoningEfforts,
+                default_effort: reasoningDefault,
+            },
+            display_order: Number.isFinite(Number(existing.display_order)) ? existing.display_order : index,
+        };
+    }).filter(Boolean);
+}
+
 function readProviderForm(existing) {
     try {
         const headers = JSON.parse(document.getElementById('provider-headers-json')?.value || '{}');
         const imageModelOverrides = JSON.parse(document.getElementById('media-image-overrides-json')?.value || '{}');
-        const videoModelOverrides = JSON.parse(document.getElementById('media-video-overrides-json')?.value || '{}');
         const quotaCheck = JSON.parse(document.getElementById('provider-quota-json')?.value || '{}');
+        const quotaScriptCode = String(document.getElementById('provider-quota-script-js')?.value || '').trim();
+        if (quotaScriptCode) {
+            quotaCheck.enabled = quotaCheck.enabled !== false;
+            quotaCheck.type = 'script';
+            quotaCheck.script = {
+                ...(quotaCheck.script && typeof quotaCheck.script === 'object' ? quotaCheck.script : {}),
+                language: 'javascript',
+                code: quotaScriptCode,
+            };
+        }
         const aliases = JSON.parse(document.getElementById('provider-aliases-json')?.value || '{}');
         const aliasPatterns = JSON.parse(document.getElementById('provider-alias-patterns-json')?.value || '[]');
-        const models = parseModelsText(document.getElementById('provider-models-text')?.value || '', existing.models || []);
+        const models = readProviderModelsFromDetails(existing.models || [], existing)
+            || parseModelsText(document.getElementById('provider-models-text')?.value || '', existing.models || []);
         const approvalMode = getSelectedApprovalMode();
         const mediaMode = getSelectedMediaMode();
         const mediaAsyncVisible = !document.getElementById('media-async-fields')?.classList.contains('hidden');
@@ -1912,6 +2284,7 @@ function readProviderForm(existing) {
         return {
             ...existing,
             display_name: document.getElementById('provider-display-name')?.value || '',
+            codex_visible_alias: document.getElementById('provider-codex-visible-alias')?.value || '',
             short_alias: document.getElementById('provider-short-alias')?.value || '',
             base_url: document.getElementById('provider-base-url')?.value || '',
             api_format: apiFormat,
@@ -1934,11 +2307,12 @@ function readProviderForm(existing) {
                 ...existing.capabilities,
                 text: document.getElementById('cap-text')?.checked || false,
                 vision: document.getElementById('cap-vision')?.checked || false,
-                tools: document.getElementById('cap-tools')?.checked || false,
+                tools: true,
+                streaming: true,
                 custom_tools: document.getElementById('cap-custom-tools')?.checked || false,
                 reasoning: document.getElementById('cap-reasoning')?.checked || false,
                 images: document.getElementById('cap-images')?.checked || false,
-                videos: document.getElementById('cap-videos')?.checked || false,
+                videos: false,
             },
             approval_profile: {
                 ...(existing.approval_profile || {}),
@@ -1967,14 +2341,14 @@ function readProviderForm(existing) {
             media_profile: {
                 ...existing.media_profile,
                 default_image_provider: document.getElementById('media-default-image')?.checked || false,
-                default_video_provider: document.getElementById('media-default-video')?.checked || false,
+                default_video_provider: false,
                 openai_compatible_media: mediaMode === 'openai_compatible',
                 adapter_required: mediaMode === 'adapter_required',
                 async_submit: mediaAsyncVisible && (document.getElementById('media-async-submit')?.checked || false),
                 poll_required: mediaAsyncVisible && (document.getElementById('media-poll-required')?.checked || false),
                 cancel_supported: mediaAsyncVisible && (document.getElementById('media-cancel-supported')?.checked || false),
                 image_model_overrides: imageModelOverrides,
-                video_model_overrides: videoModelOverrides,
+                video_model_overrides: {},
             },
             responses_profile: {
                 ...(existing.responses_profile || {}),
@@ -2021,6 +2395,8 @@ function parseModelsText(text, existingModels = []) {
             const nativeApproval = hasNativeApprovalToken
                 ? ['1', 'true', 'yes', 'on', 'native_approval', 'supports_native_approval'].includes(nativeApprovalToken)
                 : Boolean(existing.native_approval);
+            const selected = parts[3] === 'selected' || parts[3] === 'true';
+            const catalogHidden = selected ? false : Boolean(existing.catalog_hidden);
             const capabilityOverrides = {
                 ...(existing.capability_overrides || {}),
                 ...(hasNativeApprovalToken ? { native_approval: nativeApproval } : {}),
@@ -2029,8 +2405,11 @@ function parseModelsText(text, existingModels = []) {
                 ...existing,
                 id: parts[0] || 'model-id',
                 display_name: parts[1] || parts[0] || 'Model',
+                codex_visible_id: existing.codex_visible_id || '',
                 context_window: parseInt(parts[2], 10) || 0,
-                selected: parts[3] === 'selected' || parts[3] === 'true',
+                selected,
+                catalog_hidden: catalogHidden,
+                primary: Boolean(existing.primary) && !catalogHidden,
                 api_format: apiFormat,
                 native_approval: nativeApproval,
                 capability_overrides: capabilityOverrides,
@@ -2087,6 +2466,17 @@ function isNativeCapabilityLocked(provider) {
 
 function nativeLockedCapabilities(existing = {}) {
     return { ...(existing || {}), ...NATIVE_LOCKED_CAPABILITIES };
+}
+
+function providerQuotaScriptCode(provider = {}) {
+    const quota = provider && provider.quota_check && typeof provider.quota_check === 'object'
+        ? provider.quota_check
+        : {};
+    if (quota.script && typeof quota.script === 'object' && quota.script.code) {
+        return String(quota.script.code || '');
+    }
+    if (quota.code) return String(quota.code || '');
+    return '';
 }
 
 function renderInput(id, label, value, type = 'text', disabled = false, onchange = '') {
@@ -2151,6 +2541,26 @@ function providerOptionLabel(value) {
         preserve_login_proxy: t('startModePreserveLoginProxy'),
         official_direct: t('startModeOfficialDirect'),
         proxy_injection: t('startModeProxyInjection'),
+    };
+    return labels[value] || value;
+}
+
+function visibleApiFormatOptions(current = '') {
+    const options = VISIBLE_PROVIDER_API_FORMATS.slice();
+    if (current && PROVIDER_API_FORMATS.has(current) && !options.includes(current)) {
+        options.push(current);
+    }
+    return options;
+}
+
+function reasoningEffortParameterLabel(value) {
+    const labels = {
+        auto: t('reasoningEffortAuto'),
+        disabled: t('reasoningEffortDisabled'),
+        'reasoning.effort': t('reasoningEffortResponses'),
+        reasoning_effort: t('reasoningEffortChat'),
+        'output_config.effort': t('reasoningEffortAnthropic'),
+        thinking: t('reasoningEffortThinking'),
     };
     return labels[value] || value;
 }
@@ -2277,7 +2687,6 @@ function mediaModeFromProfile(profile) {
 function shouldShowMediaAsyncFields(profile, apiFormat) {
     const mode = mediaModeFromProfile(profile || {});
     return mode === 'adapter_required'
-        || String(apiFormat || '') === 'openai_videos'
         || Boolean(profile && (profile.async_submit || profile.poll_required || profile.cancel_supported));
 }
 
@@ -2285,17 +2694,16 @@ function providerMediaRoutingHint(provider) {
     const profile = provider && provider.media_profile ? provider.media_profile : {};
     const caps = provider && provider.capabilities ? provider.capabilities : {};
     const apiFormat = String(provider && provider.api_format ? provider.api_format : '');
-    const wantsMedia = Boolean(caps.images || caps.videos || profile.default_image_provider || profile.default_video_provider);
+    const wantsMedia = Boolean(caps.images || profile.default_image_provider);
     const hasMediaRoute = Boolean(
         profile.openai_compatible_media
         || profile.adapter_required
         || apiFormat === 'openai_images'
-        || apiFormat === 'openai_videos'
     );
     if (wantsMedia && !hasMediaRoute) {
         return t('mediaCapabilityHint');
     }
-    if (hasMediaRoute && !wantsMedia && apiFormat !== 'openai_images' && apiFormat !== 'openai_videos') {
+    if (hasMediaRoute && !wantsMedia && apiFormat !== 'openai_images') {
         return t('mediaModeEnabledWithoutCapability');
     }
     return '';
@@ -2355,7 +2763,6 @@ function syncMediaModeControls(clearHiddenAsync = false) {
     const hasExistingAsync = ['media-async-submit', 'media-poll-required', 'media-cancel-supported']
         .some(id => document.getElementById(id)?.checked);
     const showAsync = selectedMode === 'adapter_required'
-        || apiFormat === 'openai_videos'
         || (!clearHiddenAsync && hasExistingAsync);
     if (asyncFields) asyncFields.classList.toggle('hidden', !showAsync);
     if (asyncFields && !showAsync) {
@@ -2374,15 +2781,13 @@ function syncMediaRoutingHint() {
     const selectedMode = getSelectedMediaMode();
     const wantsMedia = Boolean(
         document.getElementById('cap-images')?.checked
-        || document.getElementById('cap-videos')?.checked
         || document.getElementById('media-default-image')?.checked
-        || document.getElementById('media-default-video')?.checked
     );
-    const hasMediaRoute = selectedMode !== 'disabled' || apiFormat === 'openai_images' || apiFormat === 'openai_videos';
+    const hasMediaRoute = selectedMode !== 'disabled' || apiFormat === 'openai_images';
     let message = '';
     if (wantsMedia && !hasMediaRoute) {
         message = t('mediaCapabilityHint');
-    } else if (hasMediaRoute && !wantsMedia && apiFormat !== 'openai_images' && apiFormat !== 'openai_videos') {
+    } else if (hasMediaRoute && !wantsMedia && apiFormat !== 'openai_images') {
         message = t('mediaModeEnabledWithoutCapability');
     }
     hint.textContent = message;
@@ -2445,7 +2850,7 @@ function renderMiniBadge(label) {
 
 function capabilityBadges(capabilities) {
     const caps = capabilities || {};
-    return ['text', 'vision', 'tools', 'custom_tools', 'reasoning', 'images', 'videos', 'native_approval']
+    return ['text', 'vision', 'custom_tools', 'reasoning', 'images', 'native_approval']
         .filter(key => caps[key])
         .map(key => renderMiniBadge(providerCapabilityLabel(key)));
 }
@@ -2817,7 +3222,7 @@ function getCodexIntegrationProxyBaseUrl() {
     if (status.default_proxy_base_url) return status.default_proxy_base_url;
     if (proxyStatus.base_url) return proxyStatus.base_url;
     if (proxyStatus.port) return `http://127.0.0.1:${proxyStatus.port}/v1`;
-    return 'http://127.0.0.1:8080/v1';
+    return 'http://127.0.0.1:51235/v1';
 }
 
 /**
@@ -2932,6 +3337,23 @@ async function previewCodexPermissions() {
     }
 }
 
+async function repairCodexSandboxPermissions() {
+    const manual = requestCodexMutationConfirmation(t('repairCodexSandboxPermissionsAction'));
+    if (!manual) return;
+    try {
+        const result = await api('/api/codex-integration/permissions-repair', {
+            method: 'POST',
+            body: JSON.stringify(manual),
+        });
+        showToast(result.message || t('repairCodexSandboxPermissionsCompleted'), result.success ? 'success' : 'error');
+        await refreshCodexIntegrationStatus();
+        await refreshCodexIntegrationBackups();
+        renderCodexIntegrationPage();
+    } catch (err) {
+        showToast(t('repairCodexSandboxPermissionsFailed') + err.message, 'error');
+    }
+}
+
 function defaultCodexApprovalBridgeMessage() {
     return {
         jsonrpc: '2.0',
@@ -2991,7 +3413,7 @@ async function applyCodexIntegration() {
             }),
         });
         if (result.success) {
-            showToast(t('applySuccessRestart'), 'success');
+            showToast(result.deferred_until_codex_start ? t('applyDeferredUntilStart') : t('applySuccessRestart'), 'success');
         } else {
             showToast(t('applyFailed') + (result.errors || []).join('; '), 'error');
         }
@@ -3303,6 +3725,96 @@ function renderCodexStartProgressCard() {
     `;
 }
 
+function setCodexStartMode(mode) {
+    const input = document.getElementById('ci-start-mode');
+    if (input) input.value = mode;
+    if (mode === 'official_direct') {
+        const preserve = document.getElementById('ci-preserve-auth');
+        if (preserve) preserve.checked = true;
+    }
+    document.querySelectorAll('[data-codex-start-mode-card]').forEach(card => {
+        card.classList.toggle('ring-2', card.getAttribute('data-codex-start-mode-card') === mode);
+        card.classList.toggle('ring-accent-500', card.getAttribute('data-codex-start-mode-card') === mode);
+    });
+    scheduleCodexConnectionCheck();
+}
+
+function renderCodexConnectionModeCard(formStartMode, formProxyBaseUrl, formProxyModel, formPreserveAuth, proxyBackoffNote) {
+    const modes = [
+        {
+            value: 'official_direct',
+            title: t('modeOfficialDirectTitle'),
+            desc: t('modeOfficialDirectDesc'),
+            action: t('modeOfficialDirectAction'),
+            tone: 'emerald',
+            onclick: "setCodexStartMode('official_direct'); startOfficialCodex();",
+        },
+        {
+            value: 'preserve_login_proxy',
+            title: t('modePreserveProxyTitle'),
+            desc: t('modePreserveProxyDesc'),
+            action: t('modePreserveProxyAction'),
+            tone: 'accent',
+            onclick: "setCodexStartMode('preserve_login_proxy'); startCodexWithSelectedMode();",
+        },
+        {
+            value: 'proxy_injection',
+            title: t('modeProxyInjectionTitle'),
+            desc: t('modeProxyInjectionDesc'),
+            action: t('modeProxyInjectionAction'),
+            tone: 'amber',
+            onclick: "setCodexStartMode('proxy_injection'); startCodexWithSelectedMode();",
+        },
+    ];
+    return `
+        <div class="card">
+            <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                <div>
+                    <h3 class="card-title">${escapeHtml(t('codexConnectionModeTitle'))}</h3>
+                    <p class="text-xs text-dark-500 mt-1">${escapeHtml(t('codexConnectionModeDesc'))}</p>
+                </div>
+                ${renderStatusPill('mode', providerOptionLabel(formStartMode), 'accent')}
+            </div>
+            <input id="ci-start-mode" type="hidden" value="${escapeAttr(formStartMode)}">
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-3 mt-4">
+                ${modes.map(mode => {
+                    const active = formStartMode === mode.value;
+                    const toneClass = mode.tone === 'emerald'
+                        ? 'border-emerald-600/50 bg-emerald-950/15'
+                        : mode.tone === 'amber'
+                            ? 'border-amber-600/50 bg-amber-950/15'
+                            : 'border-accent-600/50 bg-accent-950/15';
+                    return `
+                        <div
+                            data-codex-start-mode-card="${escapeAttr(mode.value)}"
+                            class="rounded-xl border ${active ? toneClass + ' ring-2 ring-accent-500' : 'border-dark-800 bg-dark-950/45'} p-4 transition-all"
+                        >
+                            <div class="text-sm font-semibold text-white">${escapeHtml(mode.title)}</div>
+                            <p class="text-xs text-dark-400 mt-2 min-h-[48px]">${escapeHtml(mode.desc)}</p>
+                            <button onclick="${escapeAttr(mode.onclick)}" class="btn ${active ? 'btn-primary' : 'btn-secondary'} text-xs mt-4 w-full">${escapeHtml(mode.action)}</button>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+            <div class="grid grid-cols-1 gap-4 mt-4">
+                ${renderInput('ci-proxy-base-url', t('proxyBaseUrl'), formProxyBaseUrl, 'text', false, 'scheduleCodexConnectionCheck()')}
+                ${renderInput('ci-proxy-model', t('proxyModel'), formProxyModel, 'text', false, 'scheduleCodexConnectionCheck()')}
+                <label class="flex items-center gap-2 text-sm cursor-pointer">
+                    <input id="ci-preserve-auth" type="checkbox" onchange="scheduleCodexConnectionCheck()" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${formPreserveAuth ? 'checked' : ''}>
+                    <span>${escapeHtml(t('preserveOfficialOAuth'))}</span>
+                </label>
+            </div>
+            ${proxyBackoffNote}
+            <div class="flex flex-wrap gap-2 mt-4">
+                <button onclick="startCodexWithSelectedMode()" class="btn btn-warning">${escapeHtml(t('manualApplyCodexConfig'))}</button>
+                <button onclick="previewCodexIntegration()" class="btn btn-secondary">${escapeHtml(t('refreshPreview'))}</button>
+            </div>
+            <div class="mt-3">${renderCodexStartProgressCard()}</div>
+            <p class="text-xs text-dark-500 mt-3">${escapeHtml(t('officialCodexStartDesc'))}</p>
+        </div>
+    `;
+}
+
 /**
  * 渲染 Codex Integration 页面（状态查看 / Diff 预览 / 回滚）。
  * 该页卡片为静态 HTML 结构（无 .stagger-item），因此依赖 app.js 中
@@ -3364,31 +3876,7 @@ function renderCodexIntegrationPage() {
                 ${renderCodexEnhancementModeCard(status)}
                 ${renderCodexInjectionCard(status)}
 
-                <div class="card">
-                    <h3 class="card-title">${escapeHtml(t('localProxySettings'))}</h3>
-                    <div class="grid grid-cols-1 gap-4 mt-3">
-                        ${renderSelect('ci-start-mode', t('codexStartMode'), formStartMode, [
-                            'preserve_login_proxy',
-                            'official_direct',
-                            'proxy_injection',
-                        ], 'scheduleCodexConnectionCheck()')}
-                        <p class="text-xs text-dark-500 -mt-2">${escapeHtml(t('codexStartModeDesc'))}</p>
-                        ${renderInput('ci-proxy-base-url', t('proxyBaseUrl'), formProxyBaseUrl, 'text', false, 'scheduleCodexConnectionCheck()')}
-                        ${renderInput('ci-proxy-model', t('proxyModel'), formProxyModel, 'text', false, 'scheduleCodexConnectionCheck()')}
-                        <label class="flex items-center gap-2 text-sm cursor-pointer">
-                            <input id="ci-preserve-auth" type="checkbox" onchange="scheduleCodexConnectionCheck()" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${formPreserveAuth ? 'checked' : ''}>
-                            <span>${escapeHtml(t('preserveOfficialOAuth'))}</span>
-                        </label>
-                    </div>
-                    ${proxyBackoffNote}
-                    <div class="flex flex-wrap gap-2 mt-4">
-                        <button onclick="applyCodexIntegration()" class="btn btn-warning">${escapeHtml(t('manualApplyCodexConfig'))}</button>
-                        <button onclick="startCodexWithSelectedMode()" class="btn btn-primary">${escapeHtml(t('startCodexSelectedMode'))}</button>
-                        <button onclick="startOfficialCodex()" class="btn btn-secondary">${escapeHtml(t('startOfficialCodex'))}</button>
-                    </div>
-                    <div class="mt-3">${renderCodexStartProgressCard()}</div>
-                    <p class="text-xs text-dark-500 mt-3">${escapeHtml(t('officialCodexStartDesc'))}</p>
-                </div>
+                ${renderCodexConnectionModeCard(formStartMode, formProxyBaseUrl, formProxyModel, formPreserveAuth, proxyBackoffNote)}
 
                 ${renderPermissionsAudit(status.permissions || {}, codexIntegrationState.permissionsPreview)}
             </div>
@@ -3659,7 +4147,10 @@ function renderPermissionsAudit(current, preview) {
                         <span>${escapeHtml(t('excludeSlashTmp'))}</span>
                     </label>
                 </div>
-                <button onclick="previewCodexPermissions()" class="btn btn-secondary mt-3">${escapeHtml(t('previewSandboxDiff'))}</button>
+                <div class="flex flex-wrap gap-2 mt-3">
+                    <button onclick="previewCodexPermissions()" class="btn btn-secondary">${escapeHtml(t('previewSandboxDiff'))}</button>
+                    <button onclick="repairCodexSandboxPermissions()" class="btn btn-warning">${escapeHtml(t('repairCodexSandboxPermissions'))}</button>
+                </div>
                 ${preview ? renderPermissionsPreviewResult(preview, desired, previewHasChanges) : `<div class="text-xs text-dark-500 mt-3">${escapeHtml(t('previewOnlyNoConfigWrite'))}</div>`}
             </details>
             <details class="advanced-box mt-3">

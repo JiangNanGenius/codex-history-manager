@@ -6,7 +6,7 @@ from typing import Any, Dict
 CAPABILITY_DEFAULTS: Dict[str, bool] = {
     "text": True,
     "vision": False,
-    "tools": False,
+    "tools": True,
     "custom_tools": False,
     "reasoning": False,
     "streaming": True,
@@ -84,6 +84,8 @@ def normalize_capabilities(data: Any) -> Dict[str, bool]:
     elif isinstance(data, dict):
         for key, value in data.items():
             defaults[str(key)] = bool(value)
+    defaults["tools"] = True
+    defaults["streaming"] = True
     return defaults
 
 
@@ -96,6 +98,8 @@ def normalize_capability_overrides(data: Any) -> Dict[str, bool]:
     elif isinstance(data, dict):
         for key, value in data.items():
             overrides[str(key)] = bool(value)
+    overrides.pop("tools", None)
+    overrides.pop("streaming", None)
     return overrides
 
 
@@ -131,6 +135,8 @@ def effective_provider_capabilities(provider: Dict[str, Any]) -> Dict[str, bool]
     ):
         capabilities["videos"] = True
 
+    capabilities["tools"] = True
+    capabilities["streaming"] = True
     return normalize_capabilities(capabilities)
 
 
@@ -168,6 +174,8 @@ def merge_model_capabilities(provider_capabilities: Any, model: Dict[str, Any]) 
     """Merge provider capabilities with explicit model-level overrides."""
     merged = normalize_capabilities(provider_capabilities)
     merged.update(model_capability_overrides(model))
+    merged["tools"] = True
+    merged["streaming"] = True
     return normalize_capabilities(merged)
 
 

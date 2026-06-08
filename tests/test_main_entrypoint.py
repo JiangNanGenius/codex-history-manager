@@ -39,6 +39,20 @@ class MainEntrypointTest(unittest.TestCase):
             main._set_backend_port(original_port)
             main.URL = original_url
 
+    def test_launch_action_arg_overrides_config(self):
+        self.assertEqual(
+            main._launch_action_from_args(["app", main.START_CODEX_ARG]),
+            main.DESKTOP_LAUNCH_ACTION_START_CODEX,
+        )
+
+    def test_existing_instance_start_codex_action_posts_to_backend(self):
+        with patch.object(main, "_desktop_backend_port_candidates", return_value=[51234]), \
+                patch.object(main, "_desktop_backend_health", return_value={"desktop_mode": True}), \
+                patch.object(main, "_request_existing_desktop_start_codex", return_value={"success": True}) as start_request:
+            self.assertTrue(main._existing_instance_responds(main.DESKTOP_LAUNCH_ACTION_START_CODEX))
+
+        start_request.assert_called_once_with(51234)
+
     def test_monitor_window_uses_stable_non_white_background_and_auto_shows(self):
         original_windows = list(webview.windows)
         try:
@@ -236,6 +250,29 @@ class MainEntrypointTest(unittest.TestCase):
             self.assertTrue(main._on_webview_started())
 
         self.assertEqual(calls, [("timer", 2.5, main._show_monitor, True)])
+
+    def test_webview_started_schedules_start_codex_launch_action(self):
+        calls = []
+        original_action = main.pending_launch_action
+
+        class FakeTimer:
+            def __init__(self, delay, callback):
+                self.delay = delay
+                self.callback = callback
+                self.daemon = False
+
+            def start(self):
+                calls.append((self.delay, self.callback, self.daemon))
+
+        try:
+            main.pending_launch_action = main.DESKTOP_LAUNCH_ACTION_START_CODEX
+            with patch.object(main, "_monitor_auto_show_enabled", return_value=False), \
+                    patch.object(main.threading, "Timer", FakeTimer):
+                self.assertTrue(main._on_webview_started())
+        finally:
+            main.pending_launch_action = original_action
+
+        self.assertEqual(calls, [(0.8, main._start_codex_from_desktop, True)])
 
     def test_start_codex_from_desktop_returns_immediately(self):
         calls = []

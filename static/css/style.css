@@ -1052,6 +1052,29 @@ tbody tr:hover::before {
   background: rgba(2, 6, 23, 0.32);
 }
 
+.settings-wizard-current {
+  padding: 1rem;
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  border-radius: 1rem;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.settings-wizard-progress-track {
+  height: 0.55rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(51, 65, 85, 0.72);
+}
+
+.settings-wizard-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #22c55e, #3b82f6);
+  box-shadow: 0 0 18px rgba(59, 130, 246, 0.25);
+  transition: width var(--transition-base);
+}
+
 .settings-wizard-checklist {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));

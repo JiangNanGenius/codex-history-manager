@@ -30,6 +30,9 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert "setting-auto-approval-system-prompt" in html
     assert "settings-wizard-checklist" in html
     assert "settings-wizard-advisor" in html
+    assert "settings-wizard-progress-bar" in html
+    assert "settings-wizard-current-title" in html
+    assert "settings-wizard-current-detail" in html
     assert "settings-provider-wizard-summary" in html
     assert "settings-routing-wizard-summary" in html
     assert "settings-alerts-wizard-summary" in html
@@ -43,6 +46,10 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert "setting-update-check-enabled" in html
     assert "setting-update-include-prerelease" in html
     assert "setting-plugin-unlock-enabled" in html
+    assert "setting-codex-sandbox-auto-repair-enabled" in html
+    assert "setting-desktop-launch-action" in html
+    assert "createDesktopShortcut('normal')" in html
+    assert "createDesktopShortcut('start_codex')" in html
     assert 'href="/favicon.ico"' in html
     assert 'src="/app-icon.png"' in html
     assert "app-logo-shell" in html
@@ -52,6 +59,9 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert "/api/updates/check" in js
     assert "/api/updates/download" in js
     assert "plugin_unlock_enabled" in js
+    assert "codex_sandbox_auto_repair_enabled" in js
+    assert "desktop_launch_action" in js
+    assert "/api/desktop-shortcuts/create" in js
     assert "renderStartupPreviewResult" in js
     assert "https://github.com/JiangNanGenius/Codex-Enhance-Manager" in html
     assert "restoreAutoApprovalPromptDefault" in js
@@ -74,6 +84,8 @@ def test_monitor_context_menu_exposes_desktop_actions():
     assert 'id="setting-desktop-monitor-enabled" type="checkbox" checked' in index
     assert "showFloatingMonitorNow" in index
     assert "startCodexFromQuickAction" in app_js
+    assert "/api/codex/status" in app_js
+    assert "confirmRestartRunningCodex" in app_js
     assert 'id="menu-btn"' in html
     assert 'data-action="start"' in html
     assert 'data-action="main"' in html
@@ -91,11 +103,16 @@ def test_monitor_context_menu_exposes_desktop_actions():
 
 def test_provider_request_preview_ui_is_wired():
     js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
 
     assert "previewProviderRequest" in js
     assert "/request-preview-draft" in js
     assert "provider-request-preview" in js
     assert "requestHeadersRedacted" in js
+    assert "renderProviderModelDetails" in js
+    assert "readProviderModelsFromDetails" in js
+    assert "providerModelDetailsTitle" in i18n
+    assert "上下文窗口" in i18n
 
 
 def test_native_responses_and_codex_login_provider_locks_are_wired():
@@ -133,7 +150,7 @@ def test_user_facing_preview_copy_is_reframed_as_checks():
 
     assert "历史用量来源" in i18n
     assert "请求路径检查" in i18n
-    assert "图片/视频生成能力检查" in i18n
+    assert "图片生成能力检查" in i18n
     assert "审批规则测试" in i18n
     assert "将保存的 Codex 连接" in i18n
     assert "模型列表预览" not in i18n
@@ -144,6 +161,8 @@ def test_user_facing_preview_copy_is_reframed_as_checks():
     assert "scheduleCodexConnectionCheck" in providers_js
     assert "renderAmrBoundaryCard" in amr_js
     assert "amrBoundaryProvider" in i18n
+    assert "智能路由" in i18n
+    assert "模型轮换" not in i18n
 
 
 def test_official_login_start_keeps_safe_enhancement_copy_wired():
@@ -153,6 +172,10 @@ def test_official_login_start_keeps_safe_enhancement_copy_wired():
 
     assert "startOfficialCodex" in js
     assert "startCodexWithSelectedMode" in js
+    assert "renderCodexOfficialProviderViewer" in js
+    assert "switchSelectedProvider" in js
+    assert "renderCodexConnectionModeCard" in js
+    assert "setCodexStartMode" in js
     assert "renderCodexEnhancementModeCard" in js
     assert "/api/codex/start" in app_js
     assert "ci-start-mode" in js
@@ -163,13 +186,44 @@ def test_official_login_start_keeps_safe_enhancement_copy_wired():
     assert "startModePreserveLoginProxy" in i18n
     assert "startModeOfficialDirect" in i18n
     assert "检测到 Codex 登录" in i18n
-    assert "AMR 和模型轮换会关闭" in i18n
+    assert "智能路由会关闭" in i18n
+    assert "modeOfficialDirectTitle" in i18n
+    assert "切回官方并启动" in i18n
     assert "officialEnhancementModeDesc" in i18n
     assert "repairCodexConfigTemplate" in js
+    assert "repairCodexSandboxPermissions" in js
+    assert "/api/codex-integration/permissions-repair" in js
     assert "resetCodexForOfficialLogin" in js
     assert "codexStartStage" in i18n
+    assert "officialAmrRiskNotice" in i18n
+    assert "providerCoreCapabilitiesLocked" in i18n
+    assert "cap-tools" not in js
+    assert "cap-videos" not in js
+    assert "media-default-video" not in js
+    assert "route-sim-cap-tools" not in js
+    assert "route-sim-cap-videos" not in js
     assert "setting-codex-goals-enabled" in (ROOT / "static" / "index.html").read_text(encoding="utf-8")
     assert "features.goals" in i18n
+
+
+def test_amr_frontend_context_window_keeps_unknown_zero_as_limiter():
+    amr_js = (ROOT / "static" / "js" / "amr.js").read_text(encoding="utf-8")
+
+    assert "Number.isFinite(value) && value >= 0" in amr_js
+    assert "value > 0" not in amr_js
+
+
+def test_monitor_uses_dense_sampling_and_official_usage_fallback():
+    monitor_js = (ROOT / "static" / "js" / "monitor.js").read_text(encoding="utf-8")
+
+    assert "const SPEED_SAMPLE_WINDOW_MS = 600000;" in monitor_js
+    assert "const SPEED_SAMPLE_LIMIT = 120;" in monitor_js
+    assert "const COST_SAMPLE_WINDOW_MS = 1800000;" in monitor_js
+    assert "function isOfficialFocusProvider" in monitor_js
+    assert "formatOfficialUsageLine(data)" in monitor_js
+    assert "formatEstimatedCostLine(data)" in monitor_js
+    assert "effective_cost_by_currency" in monitor_js
+    assert "data.official_usage_default" in monitor_js
 
 
 def test_readme_omits_external_project_body_references():

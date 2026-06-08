@@ -77,6 +77,24 @@ function updateSettingsWizardProgress() {
             total: SETTINGS_WIZARD_STEP_COUNT,
         });
     }
+    const currentStep = state.steps[settingsWizardStep] || state.steps[0] || {};
+    const progressBar = document.getElementById('settings-wizard-progress-bar');
+    if (progressBar) {
+        progressBar.style.width = `${Math.round(((settingsWizardStep + 1) / SETTINGS_WIZARD_STEP_COUNT) * 100)}%`;
+    }
+    const currentTitle = document.getElementById('settings-wizard-current-title');
+    if (currentTitle) currentTitle.textContent = currentStep.label || '';
+    const currentDetail = document.getElementById('settings-wizard-current-detail');
+    if (currentDetail) currentDetail.textContent = currentStep.detail || '';
+    const currentBadge = document.getElementById('settings-wizard-current-badge');
+    if (currentBadge) {
+        const stateLabel = currentStep.state === 'ready'
+            ? t('wizardReady')
+            : currentStep.state === 'warn'
+                ? t('wizardNeedsInput')
+                : t('wizardOptional');
+        currentBadge.textContent = `${settingsWizardStep + 1} / ${SETTINGS_WIZARD_STEP_COUNT} · ${stateLabel}`;
+    }
     document.querySelectorAll('[data-settings-step-button]').forEach(button => {
         const index = Number(button.dataset.settingsStepButton);
         const step = state.steps[index] || {};
@@ -99,6 +117,7 @@ function readSettingsWizardDraft() {
         provider_store_path: document.getElementById('setting-provider-store-path')?.value || latestSettings.provider_store_path || '',
         request_log_path: document.getElementById('setting-request-log-path')?.value || latestSettings.request_log_path || '',
         close_button_action: document.getElementById('setting-close-button-action')?.value || latestSettings.close_button_action || 'ask',
+        desktop_launch_action: document.getElementById('setting-desktop-launch-action')?.value || latestSettings.desktop_launch_action || 'show_window',
         desktop_monitor_enabled: document.getElementById('setting-desktop-monitor-enabled')?.checked ?? latestSettings.desktop_monitor_enabled ?? true,
         desktop_monitor_opacity: parseInt(document.getElementById('setting-desktop-monitor-opacity')?.value, 10) || latestSettings.desktop_monitor_opacity || 88,
     };
@@ -123,7 +142,7 @@ function settingsWizardProviderMetrics() {
     ), 0);
     const mediaFallbacks = providers.filter(provider => {
         const profile = provider.media_profile || {};
-        return profile.default_image_provider || profile.default_video_provider;
+        return profile.default_image_provider;
     }).length;
     const nativeApprovalModels = providers.reduce((sum, provider) => (
         sum + (provider.models || []).filter(model => model && model.native_approval === true).length
@@ -470,6 +489,7 @@ function populateSettingsForm(data) {
         'setting-request-log-retention-days': 'request_log_retention_days',
         'setting-request-log-max-mb': 'request_log_max_mb',
         'setting-close-button-action': 'close_button_action',
+        'setting-desktop-launch-action': 'desktop_launch_action',
         'setting-desktop-monitor-opacity': 'desktop_monitor_opacity',
         'setting-proxy-upstream-timeout': 'proxy_upstream_timeout_seconds',
         'setting-proxy-retry-attempts': 'proxy_retry_attempts',
@@ -510,6 +530,7 @@ function populateSettingsForm(data) {
         'setting-update-include-prerelease': 'update_include_prerelease',
         'setting-plugin-unlock-enabled': 'plugin_unlock_enabled',
         'setting-codex-goals-enabled': 'codex_goals_enabled',
+        'setting-codex-sandbox-auto-repair-enabled': 'codex_sandbox_auto_repair_enabled',
     };
     for (const [elId, key] of Object.entries(checkboxFields)) {
         const el = document.getElementById(elId);
@@ -826,6 +847,25 @@ async function removeStartupSettings() {
     }
 }
 
+async function createDesktopShortcut(kind = '') {
+    const resultEl = document.getElementById('startup-preview-result');
+    try {
+        const payload = kind ? { kind } : { normal: true, start_codex: true };
+        const result = await api('/api/desktop-shortcuts/create', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        const shortcuts = (result.shortcuts || [])
+            .map(item => `${item.success ? 'OK' : 'ERR'} ${item.kind}: ${item.path || ''}`)
+            .join('\n');
+        if (resultEl) resultEl.textContent = shortcuts || JSON.stringify(result, null, 2);
+        showToast(t('desktopShortcutCreated'), 'success');
+    } catch (err) {
+        if (resultEl) resultEl.textContent = t('desktopShortcutFailed') + err.message;
+        showToast(t('desktopShortcutFailed') + err.message, 'error');
+    }
+}
+
 function renderStartupStatus(data) {
     const strip = document.getElementById('startup-status-strip');
     if (!strip) return;
@@ -978,12 +1018,14 @@ async function saveSettings() {
         request_log_retention_days: parseInt(document.getElementById('setting-request-log-retention-days')?.value, 10) || 30,
         request_log_max_mb: parseFloat(document.getElementById('setting-request-log-max-mb')?.value) || 50,
         close_button_action: document.getElementById('setting-close-button-action')?.value || 'ask',
+        desktop_launch_action: document.getElementById('setting-desktop-launch-action')?.value || 'show_window',
         desktop_monitor_enabled: document.getElementById('setting-desktop-monitor-enabled')?.checked ?? true,
         desktop_monitor_opacity: parseInt(document.getElementById('setting-desktop-monitor-opacity')?.value, 10) || 88,
         update_check_enabled: document.getElementById('setting-update-check-enabled')?.checked ?? true,
         update_include_prerelease: document.getElementById('setting-update-include-prerelease')?.checked ?? false,
         plugin_unlock_enabled: document.getElementById('setting-plugin-unlock-enabled')?.checked || false,
         codex_goals_enabled: document.getElementById('setting-codex-goals-enabled')?.checked !== false,
+        codex_sandbox_auto_repair_enabled: document.getElementById('setting-codex-sandbox-auto-repair-enabled')?.checked || false,
         proxy_upstream_timeout_seconds: parseInt(document.getElementById('setting-proxy-upstream-timeout')?.value, 10) || 120,
         proxy_retry_attempts: parseInt(document.getElementById('setting-proxy-retry-attempts')?.value, 10) || 0,
         proxy_retry_backoff_ms: parseInt(document.getElementById('setting-proxy-retry-backoff-ms')?.value, 10) || 250,

@@ -23,6 +23,7 @@ Windows 平台特殊性：
     自动处理，无需手动替换。
 """
 import os
+import copy
 import json
 import re
 import shutil
@@ -30,6 +31,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -45,7 +48,7 @@ from sync import full_sync, is_codex_running, kill_codex, start_codex, resolve_c
 from auto_detect import detect_all
 from token_stats import TokenStats
 from codex_rollout_usage import get_codex_rollout_cache_stats
-from providers import ProviderRegistry, DEFAULT_STORE_PATH, merge_provider_update
+from providers import ProviderRegistry, DEFAULT_STORE_PATH, merge_provider_update, normalize_model
 from amr_registry import AMRRegistry
 from codex_config import (
     CodexConfigManager,
@@ -55,11 +58,13 @@ from codex_config import (
     is_official_oauth,
     merge_codex_goals_feature,
     redact_auth_for_preview,
+    restore_file,
     save_config_toml,
     load_config_toml as _load_config_toml,
 )
 from codex_official_provider import build_official_login_provider, resolve_effective_codex_settings
 from proxy_server import (
+    DEFAULT_PROXY_PORT,
     LocalProxyServer,
     _build_upstream_headers,
     _extract_model_id_for_upstream,
@@ -84,6 +89,7 @@ from costing import estimate_request_cost, pricing_preview_payload
 from quota import QuotaManager, refresh_provider_quota_preview
 from request_logs import RequestLogStore
 from startup_manager import STARTUP_CONFIG_KEYS, StartupManager
+from desktop_shortcuts import DesktopShortcutManager
 from auto_approval_runtime import AutoApprovalModelReviewer
 from capabilities import merge_provider_model_capabilities
 from media_adapters import build_media_adapter_preview_bundle
@@ -94,6 +100,7 @@ from updater import UpdateManager
 from codex_injector import DEFAULT_CDP_PORT, backend_url_from_env, inject_codex_enhancements
 from provider_routing import provider_allows_local_routing
 from local_proxy_auth import preserve_redacted_local_proxy_token, redact_local_proxy_token
+from responses_adapter import models_url
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -145,6 +152,8 @@ CONFIG_TEMPLATE_SCALAR_KEYS = [
 ]
 VALID_WINDOWS_SANDBOXES = {"elevated", "unelevated"}
 VALID_CLI_AUTH_STORES = {"file", "keyring", "auto"}
+FETCHED_MODEL_DEFAULT_CONTEXT_WINDOW = 200000
+MODEL_LIST_FETCH_TIMEOUT_SECONDS = 30
 
 
 def _normalize_codex_start_mode(body: Dict[str, Any], login_defaults: Dict[str, Any]) -> str:
@@ -225,6 +234,68 @@ def _effective_codex_settings(config_data: Dict[str, Any], auth_data: Dict[str, 
     settings = resolve_effective_codex_settings(config_data if isinstance(config_data, dict) else {}, auth_mode)
     settings["auth_mode"] = auth_mode
     return settings
+
+
+def _provider_focus_is_official_login(payload: Dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    focus_provider_id = str(payload.get("focus_provider_id") or "").strip()
+    if focus_provider_id == "codex_official":
+        return True
+    if not focus_provider_id:
+        return False
+    providers = payload.get("providers") if isinstance(payload.get("providers"), list) else []
+    for provider in providers:
+        if not isinstance(provider, dict) or str(provider.get("id") or "") != focus_provider_id:
+            continue
+        return bool(
+            provider.get("codex_login")
+            or provider.get("switch_only")
+            or provider.get("auth_mode") == "official_oauth"
+            or provider.get("kind") == "codex_official_login"
+        )
+    return False
+
+
+def _focused_provider_from_payload(payload: Dict[str, Any]) -> tuple[str, Dict[str, Any] | None]:
+    if not isinstance(payload, dict):
+        return "", None
+    focus_provider_id = str(payload.get("focus_provider_id") or "").strip()
+    if not focus_provider_id:
+        return "", None
+    providers = payload.get("providers") if isinstance(payload.get("providers"), list) else []
+    for provider in providers:
+        if isinstance(provider, dict) and str(provider.get("id") or "") == focus_provider_id:
+            return focus_provider_id, provider
+    return focus_provider_id, None
+
+
+def _provider_focus_uses_other_api(payload: Dict[str, Any]) -> bool:
+    focus_provider_id, provider = _focused_provider_from_payload(payload)
+    if not focus_provider_id or _provider_focus_is_official_login(payload):
+        return False
+    if provider is None:
+        return False
+    return provider_allows_local_routing(provider)
+
+
+def _official_usage_visible_for_current_mode(
+    auth_mode: str,
+    payload: Dict[str, Any],
+    last_start_mode: str = "",
+) -> bool:
+    if _provider_focus_is_official_login(payload):
+        return True
+    if _provider_focus_uses_other_api(payload):
+        return False
+    if last_start_mode in {START_MODE_PROXY_INJECTION, START_MODE_PRESERVE_LOGIN_PROXY}:
+        return False
+    if last_start_mode == START_MODE_OFFICIAL_DIRECT:
+        return auth_mode == "official_oauth"
+    focus_provider_id, _provider = _focused_provider_from_payload(payload)
+    if focus_provider_id:
+        return False
+    return auth_mode == "official_oauth"
 
 
 def _config_goals_enabled(config_obj: Config) -> bool:
@@ -877,6 +948,60 @@ def repair_codex_config_template(
     return result
 
 
+def build_codex_sandbox_repair_state(config_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a full-access sandbox/approval repair state.
+
+    This is an explicit repair option for users who already chose Codex full
+    access but got stuck in repeated approval/sandbox prompts after external
+    switchers rewrote config.toml. It normalizes only permission-related fields.
+    """
+    next_config = copy.deepcopy(config_data if isinstance(config_data, dict) else {})
+    next_config["approval_policy"] = "never"
+    next_config["sandbox_mode"] = "danger-full-access"
+    next_config["default_permissions"] = ":danger-full-access"
+    next_config.pop("sandbox_workspace_write", None)
+    if os.name == "nt":
+        windows = next_config.get("windows") if isinstance(next_config.get("windows"), dict) else {}
+        windows = dict(windows)
+        current_sandbox = str(windows.get("sandbox") or "").strip().lower()
+        windows["sandbox"] = current_sandbox if current_sandbox in VALID_WINDOWS_SANDBOXES else "elevated"
+        next_config["windows"] = windows
+    return next_config
+
+
+def repair_codex_sandbox_permissions(mgr: CodexConfigManager) -> Dict[str, Any]:
+    """Back up config.toml and normalize approval/sandbox keys only."""
+    current_config = mgr.read_config()
+    next_config = build_codex_sandbox_repair_state(current_config)
+    before = mgr.inspect_permissions()
+    backup_path = ""
+    if mgr.config_path.exists():
+        backup_path = backup_file(str(mgr.config_path), mgr.backup_dir)
+    try:
+        save_config_toml(str(mgr.config_path), next_config)
+    except Exception as exc:
+        if backup_path:
+            restore_file(str(mgr.config_path), backup_path)
+        return {
+            "success": False,
+            "changed": False,
+            "restart_required": True,
+            "backup_path": backup_path,
+            "error": f"config.toml write failed: {exc}",
+        }
+    after = mgr.inspect_permissions()
+    return {
+        "success": True,
+        "changed": next_config != current_config,
+        "restart_required": True,
+        "config_path": str(mgr.config_path),
+        "backup_path": backup_path,
+        "before": before,
+        "after": after,
+        "message": "Codex sandbox/approval config repaired. Restart Codex for the change to take effect.",
+    }
+
+
 def reset_codex_for_official_login(
     mgr: CodexConfigManager,
     *,
@@ -984,7 +1109,7 @@ def create_app() -> Flask:
         lambda: config.get("auto_approval_system_prompt", DEFAULT_CONFIG["auto_approval_system_prompt"]),
     )
     proxy_server = LocalProxyServer(
-        port=config.get("proxy_port", 8080),
+        port=config.get("proxy_port", DEFAULT_PROXY_PORT),
         provider_store_path=config.get("provider_store_path", ""),
         request_log_path=config.get("request_log_path", ""),
         request_log_retention_days=config.get("request_log_retention_days", 30),
@@ -999,6 +1124,7 @@ def create_app() -> Flask:
     amr_registry = AMRRegistry()
     quota_manager = QuotaManager(lambda: provider_registry.list_providers(include_secrets=True).get("providers", []))
     startup_manager = StartupManager()
+    desktop_shortcut_manager = DesktopShortcutManager()
     update_manager = UpdateManager(current_version=APP_VERSION, repository_url=APP_REPOSITORY_URL)
 
     diagnostics_collector = DiagnosticsCollector(
@@ -1061,19 +1187,65 @@ def create_app() -> Flask:
         status = proxy_server.status()
         if status.get("base_url"):
             return status["base_url"]
-        port = status.get("port") or config.get("proxy_port", 8080)
+        port = status.get("port") or config.get("proxy_port", DEFAULT_PROXY_PORT)
         try:
             port_int = int(port)
         except (TypeError, ValueError):
-            port_int = 8080
+            port_int = DEFAULT_PROXY_PORT
         if port_int < 1 or port_int > 65535:
-            port_int = 8080
+            port_int = DEFAULT_PROXY_PORT
         return f"http://127.0.0.1:{port_int}/v1"
 
     def _current_backend_url() -> str:
         if has_request_context():
             return str(request.host_url or "").rstrip("/") or backend_url_from_env()
         return backend_url_from_env()
+
+    def _sync_codex_proxy_provider_config(
+        proxy_base_url: str = "",
+        proxy_model: str = "auto",
+        preserve_official_auth: Any = None,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        if os.environ.get("CODEX_ENHANCE_MANAGER_DISABLE_CODEX_AUTOWRITE") == "1":
+            return {"success": True, "changed": False, "skipped": True, "reason": "disabled_by_env"}
+        if reason == "app_start" and os.environ.get("PYTEST_CURRENT_TEST"):
+            return {"success": True, "changed": False, "skipped": True, "reason": "pytest_app_start_skip"}
+        mgr = CodexConfigManager()
+        login_defaults = _official_login_defaults(mgr)
+        preserve_auth = (
+            login_defaults["default_preserve_official_auth"]
+            if preserve_official_auth is None
+            else _coerce_bool(preserve_official_auth, login_defaults["default_preserve_official_auth"])
+        )
+        base_url = str(proxy_base_url or _current_proxy_base_url())
+        preview = mgr.preview_write_provider(
+            proxy_base_url=base_url,
+            proxy_model=proxy_model or "auto",
+            goals_enabled=_config_goals_enabled(config),
+            local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
+        )
+        if not preview.get("will_write_config") and not preview.get("will_write_auth"):
+            return {
+                "success": True,
+                "changed": False,
+                "skipped": True,
+                "message": "Codex 本地代理配置已是最新。",
+                "proxy_base_url": base_url,
+                "reason": reason,
+            }
+        result = mgr.write_provider_config(
+            proxy_base_url=base_url,
+            proxy_model=proxy_model or "auto",
+            preserve_official_auth=preserve_auth,
+            goals_enabled=_config_goals_enabled(config),
+            local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
+        )
+        result["changed"] = bool(result.get("success"))
+        result["proxy_base_url"] = base_url
+        result["reason"] = reason
+        result.update(login_defaults)
+        return result
 
     def _ensure_local_proxy_started() -> Dict[str, Any]:
         _sync_proxy_request_log_config()
@@ -1090,6 +1262,44 @@ def create_app() -> Flask:
             "status": status,
             "error": "未能在配置端口及后续端口中找到可用代理端口",
         }
+
+    def _focused_or_enabled_provider_needs_proxy() -> bool:
+        try:
+            payload = _provider_payload(include_secrets=False)
+        except Exception:
+            return False
+        providers = [p for p in payload.get("providers", []) if isinstance(p, dict)]
+        focus_provider_id = str(payload.get("focus_provider_id") or "").strip()
+        if focus_provider_id:
+            focused = next((p for p in providers if str(p.get("id") or "") == focus_provider_id), None)
+            return bool(focused and provider_allows_local_routing(focused))
+        return any(provider_allows_local_routing(p) for p in providers)
+
+    def _ensure_proxy_for_current_provider(reason: str = "startup", sync_codex_config: bool = False) -> Dict[str, Any]:
+        if not _focused_or_enabled_provider_needs_proxy():
+            return {
+                "success": True,
+                "started": False,
+                "skipped": True,
+                "reason": "official_or_no_local_provider",
+                "status": proxy_server.status(),
+            }
+        result = _ensure_local_proxy_started()
+        result["reason"] = reason
+        status = result.get("status") if isinstance(result.get("status"), dict) else {}
+        if result.get("success") and sync_codex_config and status.get("base_url"):
+            result["provider_config"] = _sync_codex_proxy_provider_config(
+                proxy_base_url=str(status.get("base_url") or ""),
+                reason=reason,
+            )
+        return result
+
+    try:
+        auto_proxy = _ensure_proxy_for_current_provider("app_start", sync_codex_config=False)
+        if not auto_proxy.get("success"):
+            diagnostics_collector.record_error("proxy.auto_start", auto_proxy.get("error") or "Local proxy auto-start failed")
+    except Exception as exc:
+        diagnostics_collector.record_error("proxy.auto_start", str(exc))
 
     def _sync_paths_from_config() -> Dict[str, str]:
         return {
@@ -1151,6 +1361,18 @@ def create_app() -> Flask:
         login_defaults = _official_login_defaults(mgr)
         start_mode = _normalize_codex_start_mode(body, login_defaults)
         official_mode = start_mode == START_MODE_OFFICIAL_DIRECT
+        sandbox_repair_payload = {"success": True, "skipped": True, "reason": "disabled"}
+        if _coerce_bool(config.get("codex_sandbox_auto_repair_enabled", False), False):
+            _set_codex_start_progress(job_id, "sandbox_repair", 8, "姝ｅ湪淇 Codex sandbox/approval 閰嶇疆...")
+            sandbox_repair_payload = repair_codex_sandbox_permissions(mgr)
+            if not sandbox_repair_payload.get("success"):
+                result = {
+                    "success": False,
+                    "error": sandbox_repair_payload.get("error") or "Codex sandbox/approval repair failed",
+                    "sandbox_repair": sandbox_repair_payload,
+                }
+                _set_codex_start_progress(job_id, "sandbox_repair_failed", 100, result["error"], result=result)
+                return result
         preserve_official_auth = bool(body.get(
             "preserve_official_auth",
             start_mode == START_MODE_PRESERVE_LOGIN_PROXY
@@ -1190,36 +1412,21 @@ def create_app() -> Flask:
             proxy_status = proxy_payload.get("status") or {}
             proxy_base_url = str(body.get("proxy_base_url") or proxy_status.get("base_url") or _current_proxy_base_url())
             _set_codex_start_progress(job_id, "provider_config", 16, "正在确认 Codex 本地代理配置...")
-            provider_preview = mgr.preview_write_provider(
+            provider_write = _sync_codex_proxy_provider_config(
                 proxy_base_url=proxy_base_url,
                 proxy_model=body.get("proxy_model", "auto"),
-                goals_enabled=_config_goals_enabled(config),
-                local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
+                preserve_official_auth=preserve_official_auth,
+                reason="codex_start",
             )
-            provider_write = {
-                "success": True,
-                "changed": False,
-                "skipped": True,
-                "message": "Codex 本地代理配置已是最新。",
-            }
-            if provider_preview.get("will_write_config") or provider_preview.get("will_write_auth"):
-                provider_write = mgr.write_provider_config(
-                    proxy_base_url=proxy_base_url,
-                    proxy_model=body.get("proxy_model", "auto"),
-                    preserve_official_auth=preserve_official_auth,
-                    goals_enabled=_config_goals_enabled(config),
-                    local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
-                )
-                provider_write["changed"] = bool(provider_write.get("success"))
-                if not provider_write.get("success"):
-                    result = {
-                        "success": False,
-                        "error": "Codex 本地代理配置写入失败",
-                        "provider_config": provider_write,
-                        "proxy": proxy_payload,
-                    }
-                    _set_codex_start_progress(job_id, "provider_config_failed", 100, result["error"], result=result)
-                    return result
+            if not provider_write.get("success"):
+                result = {
+                    "success": False,
+                    "error": "Codex 本地代理配置写入失败",
+                    "provider_config": provider_write,
+                    "proxy": proxy_payload,
+                }
+                _set_codex_start_progress(job_id, "provider_config_failed", 100, result["error"], result=result)
+                return result
             backup_before = _coerce_bool(body.get("backup_before_sync"), False)
             _set_codex_start_progress(
                 job_id,
@@ -1254,6 +1461,11 @@ def create_app() -> Flask:
             cdp_port=injection_settings["cdp_port"],
             backend_url=body.get("_backend_url") or body.get("backend_url") or _current_backend_url(),
         )
+        if ok:
+            try:
+                config.set("codex_last_start_mode", start_mode)
+            except Exception as exc:
+                diagnostics_collector.record_error("codex.start_mode_persist", str(exc))
         result = {
             "success": ok,
             "message": msg,
@@ -1265,6 +1477,7 @@ def create_app() -> Flask:
             "official_mode_changes": official_payload,
             "proxy": proxy_payload if not official_mode else {},
             "provider_config": provider_write if not official_mode else {},
+            "sandbox_repair": sandbox_repair_payload,
             "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
             "codex_injection_enabled": injection_settings["requested_enabled"],
             "codex_cdp_port": injection_settings["cdp_port"],
@@ -1514,7 +1727,20 @@ def create_app() -> Flask:
                 auth_mode = CodexConfigManager().get_auth_mode()
             except Exception:
                 pass
-            official_usage_default = auth_mode == "official_oauth"
+            provider_payload: Dict[str, Any] = {}
+            try:
+                provider_payload = _provider_payload(include_secrets=False)
+            except Exception:
+                provider_payload = {}
+            focus_provider_id, _focused_provider = _focused_provider_from_payload(provider_payload)
+            official_focus_provider = _provider_focus_is_official_login(provider_payload)
+            third_party_focus_provider = _provider_focus_uses_other_api(provider_payload)
+            last_start_mode = str(config.get("codex_last_start_mode", "") or "")
+            official_usage_default = _official_usage_visible_for_current_mode(
+                auth_mode,
+                provider_payload,
+                last_start_mode=last_start_mode,
+            )
             rollout_scan_fallback = str(
                 request.args.get("rollout_scan_fallback", "1" if official_usage_default else "")
             ).lower() in {"1", "true", "yes"}
@@ -1544,6 +1770,15 @@ def create_app() -> Flask:
             data["codex_rollout_total_source_requested"] = rollout_total_source
             data["auth_mode"] = auth_mode
             data["official_usage_default"] = official_usage_default
+            data["official_focus_provider"] = official_focus_provider
+            data["official_usage_hidden_by_provider"] = bool(
+                auth_mode == "official_oauth"
+                and not official_usage_default
+                and (third_party_focus_provider or last_start_mode in {START_MODE_PROXY_INJECTION, START_MODE_PRESERVE_LOGIN_PROXY})
+            )
+            data["focused_provider_id"] = focus_provider_id
+            data["third_party_focus_provider"] = third_party_focus_provider
+            data["codex_last_start_mode"] = last_start_mode
             cc_switch_db_path = config.get("cc_switch_db_path", "")
             data["cc_switch_db_configured"] = bool(cc_switch_db_path)
             data["cc_switch_db_path"] = cc_switch_db_path
@@ -1559,7 +1794,9 @@ def create_app() -> Flask:
                     "未配置代理缓存数据库；缓存统计需要请求经过代理数据源，官方 API 和自定义 API 都可被统计。"
                 )
             _merge_cache_usage_sources(data, rollout_cache_data, cc_cache_data, use_rollout_total=rollout_total_source)
-            request_log_summary = _request_log_store().summary()
+            request_log_provider_filter = focus_provider_id if third_party_focus_provider else ""
+            request_log_summary = _request_log_store().summary(provider_id=request_log_provider_filter)
+            data["request_log_summary_scope"] = "focused_provider" if request_log_provider_filter else "all"
             _merge_local_proxy_request_log_usage(data, request_log_summary)
             _attach_usage_source_summary(data, proxy_server.status(), request_log_summary)
             data.update(_resolve_current_context_window(config, provider_registry))
@@ -1849,7 +2086,12 @@ def create_app() -> Flask:
             _sync_proxy_request_log_config()
             goals_sync = None
             if "codex_goals_enabled" in data:
-                goals_sync = CodexConfigManager().write_goals_feature(_config_goals_enabled(config))
+                goals_sync = {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "deferred_until_codex_start",
+                    "message": "Codex goals setting saved locally and will be written when Codex is started from this app.",
+                }
 
             # 重新连接数据库（路径可能变了）
             if "db_path" in data:
@@ -2018,6 +2260,29 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/desktop-shortcuts/create", methods=["POST"])
+    def create_desktop_shortcuts():
+        """Create optional desktop .lnk shortcuts for the portable app."""
+        try:
+            body = request.get_json(silent=True) or {}
+            kind = str(body.get("kind") or "").strip()
+            normal = bool(body.get("normal", False))
+            start_codex_shortcut = bool(body.get("start_codex", False))
+            if kind == "normal":
+                normal = True
+            elif kind == "start_codex":
+                start_codex_shortcut = True
+            if not normal and not start_codex_shortcut:
+                normal = True
+                start_codex_shortcut = True
+            result = desktop_shortcut_manager.create_shortcuts(
+                normal=normal,
+                start_codex=start_codex_shortcut,
+            )
+            return jsonify(result), 200 if result.get("success") else 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/currency/settings")
     def currency_settings():
         """返回成本/币种设置，默认脱敏。"""
@@ -2121,7 +2386,18 @@ def create_app() -> Flask:
     def request_logs_summary():
         """Read local proxy request-log aggregates without network calls."""
         try:
-            return jsonify(_request_log_store().summary())
+            success_raw = str(request.args.get("success", "") or "").strip().lower()
+            success_filter = None
+            if success_raw:
+                success_filter = success_raw in {"1", "true", "yes", "ok", "success"}
+            return jsonify(_request_log_store().summary(
+                provider_id=request.args.get("provider_id", ""),
+                endpoint=request.args.get("endpoint", ""),
+                media_kind=request.args.get("media_kind", ""),
+                error_type=request.args.get("error_type", ""),
+                since=request.args.get("since", ""),
+                success=success_filter,
+            ))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -2475,6 +2751,11 @@ def create_app() -> Flask:
                         "short_alias": p.get("short_alias", ""),
                         "enabled": p.get("enabled", True),
                         "catalog_visibility": p.get("catalog_visibility", "focused_only"),
+                        "switch_only": bool(p.get("switch_only")),
+                        "amr_excluded": bool(p.get("amr_excluded")),
+                        "local_proxy_routing": p.get("local_proxy_routing", True),
+                        "routing_mode": p.get("routing_mode", ""),
+                        "codex_login": bool(p.get("codex_login")),
                         "focused": p.get("id") == focus_provider_id,
                     }
                     for p in payload.get("providers", [])
@@ -2486,13 +2767,141 @@ def create_app() -> Flask:
                     "providers": providers,
                 })
             body = request.get_json(silent=True) or {}
+            provider_id = str(body.get("provider_id", "") or "")
             result = provider_registry.set_focus_provider(
-                body.get("provider_id", ""),
+                provider_id,
                 extra_providers=_current_official_provider_extra(),
             )
             if not result.get("success"):
                 return jsonify(result), 404
+            selected_provider = None
+            if provider_id:
+                payload = _provider_payload(include_secrets=False)
+                selected_provider = next(
+                    (p for p in payload.get("providers", []) if isinstance(p, dict) and p.get("id") == provider_id),
+                    None,
+                )
+            result["proxy"] = {"started": False, "skipped": True}
+            if selected_provider and provider_allows_local_routing(selected_provider):
+                result["proxy"] = _ensure_proxy_for_current_provider("provider_focus")
+            elif selected_provider:
+                result["routing_mode"] = selected_provider.get("routing_mode") or "official_direct"
+                result["switch_only"] = bool(selected_provider.get("switch_only"))
             return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/codex-injection/quick-settings", methods=["GET", "POST"])
+    def codex_injection_quick_settings():
+        """Small hot-settings surface for the injected Codex quick panel."""
+        try:
+            if request.method == "POST":
+                body = request.get_json(silent=True) or {}
+                provider_id = str(body.get("provider_id", body.get("focus_provider_id", "")) or "")
+                if "provider_id" in body or "focus_provider_id" in body:
+                    focus_result = provider_registry.set_focus_provider(
+                        provider_id,
+                        extra_providers=_current_official_provider_extra(),
+                    )
+                    if not focus_result.get("success"):
+                        return jsonify(focus_result), 404
+                    if provider_id:
+                        selected_payload = _provider_payload(include_secrets=False)
+                        selected_provider = next(
+                            (
+                                p for p in selected_payload.get("providers", [])
+                                if isinstance(p, dict) and p.get("id") == provider_id
+                            ),
+                            None,
+                        )
+                        if selected_provider and provider_allows_local_routing(selected_provider):
+                            _ensure_proxy_for_current_provider("injected_quick_settings")
+                updates: Dict[str, Any] = {}
+                allowed = {
+                    "desktop_monitor_enabled",
+                    "codex_injection_enabled",
+                    "plugin_unlock_enabled",
+                }
+                for key in allowed:
+                    if key in body:
+                        updates[key] = _coerce_bool(body.get(key), bool(config.get(key, DEFAULT_CONFIG.get(key))))
+                if updates:
+                    config.update(updates)
+            providers_payload = _provider_payload(include_secrets=False)
+            focus_provider_id = str(providers_payload.get("focus_provider_id") or "")
+            focus_id, _focused_provider = _focused_provider_from_payload(providers_payload)
+            auth_mode = "unknown"
+            try:
+                auth_mode = CodexConfigManager().get_auth_mode()
+            except Exception:
+                pass
+            last_start_mode = str(config.get("codex_last_start_mode", "") or "")
+            official_usage_default = _official_usage_visible_for_current_mode(
+                auth_mode,
+                providers_payload,
+                last_start_mode=last_start_mode,
+            )
+            third_party_focus_provider = _provider_focus_uses_other_api(providers_payload)
+            request_log_provider_filter = focus_id if third_party_focus_provider else ""
+            request_log_summary = _request_log_store().summary(provider_id=request_log_provider_filter)
+            token_snapshot: Dict[str, Any] = {}
+            try:
+                token_stats.db_path = config.get("db_path")
+                token_snapshot = token_stats.get_current_stats(granularity="total")
+            except Exception as exc:
+                token_snapshot = {"error": str(exc)}
+            quota_snapshot: Dict[str, Any] = {}
+            if focus_id and third_party_focus_provider:
+                try:
+                    quota_snapshot = quota_manager.cached_provider_quota(focus_id)
+                except Exception as exc:
+                    quota_snapshot = {"success": False, "provider_id": focus_id, "error": str(exc)}
+            usage = {
+                "auth_mode": auth_mode,
+                "official_usage_default": official_usage_default,
+                "official_usage_hidden_by_provider": bool(
+                    auth_mode == "official_oauth"
+                    and not official_usage_default
+                    and (third_party_focus_provider or last_start_mode in {START_MODE_PROXY_INJECTION, START_MODE_PRESERVE_LOGIN_PROXY})
+                ),
+                "third_party_focus_provider": third_party_focus_provider,
+                "focused_provider_id": focus_id,
+                "codex_last_start_mode": last_start_mode,
+                "total_tokens": _safe_int(token_snapshot.get("total_tokens") or token_snapshot.get("current_total_tokens")),
+                "current_total_tokens": _safe_int(token_snapshot.get("current_total_tokens") or token_snapshot.get("total_tokens")),
+                "current_context_used_tokens": _safe_int(token_snapshot.get("current_context_used_tokens")),
+                "current_context_window": _safe_int(token_snapshot.get("current_context_window")),
+                "request_log_summary_scope": "focused_provider" if request_log_provider_filter else "all",
+                "request_log_summary": request_log_summary,
+                "quota": quota_snapshot,
+            }
+            providers = [
+                {
+                    "id": p.get("id", ""),
+                    "display_name": p.get("display_name") or p.get("id", ""),
+                    "short_alias": p.get("short_alias", ""),
+                    "enabled": p.get("enabled", True),
+                    "switch_only": bool(p.get("switch_only")),
+                    "codex_login": bool(p.get("codex_login")),
+                    "local_proxy_routing": p.get("local_proxy_routing", True),
+                    "focused": p.get("id") == focus_provider_id,
+                }
+                for p in providers_payload.get("providers", [])
+                if isinstance(p, dict)
+            ]
+            settings = {
+                "desktop_monitor_enabled": _coerce_bool(config.get("desktop_monitor_enabled", True), True),
+                "codex_injection_enabled": _coerce_bool(config.get("codex_injection_enabled", True), True),
+                "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
+                "codex_last_start_mode": str(config.get("codex_last_start_mode", "") or ""),
+            }
+            return jsonify({
+                "success": True,
+                "settings": settings,
+                "focus_provider_id": focus_provider_id,
+                "providers": providers,
+                "usage": usage,
+            })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -2876,6 +3285,20 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/codex-integration/permissions-repair", methods=["POST"])
+    def codex_integration_permissions_repair():
+        """Apply the recommended approval/sandbox repair after explicit confirmation."""
+        try:
+            body = request.get_json(silent=True) or {}
+            denied = _require_codex_mutation_confirmation(body, "repair_codex_sandbox_permissions")
+            if denied:
+                return denied
+            mgr = CodexConfigManager()
+            result = repair_codex_sandbox_permissions(mgr)
+            return jsonify(result), 200 if result.get("success") else 500
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/codex-integration/approval-bridge-preview", methods=["POST"])
     def codex_integration_approval_bridge_preview():
         """Preview Codex app-server approval JSON-RPC bridge mapping without replying to Codex."""
@@ -2895,7 +3318,7 @@ def create_app() -> Flask:
 
     @app.route("/api/codex-integration/apply", methods=["POST"])
     def codex_integration_apply():
-        """应用 local proxy provider 配置到 Codex config.toml。保留官方登录态。"""
+        """Preview local proxy provider config; actual Codex writes happen only in the start flow."""
         try:
             body = request.get_json(silent=True) or {}
             denied = _require_codex_mutation_confirmation(body, "apply_codex_provider_config")
@@ -2903,15 +3326,18 @@ def create_app() -> Flask:
                 return denied
             mgr = CodexConfigManager()
             login_defaults = _official_login_defaults(mgr)
-            result = mgr.write_provider_config(
+            result = mgr.preview_write_provider(
                 proxy_base_url=body.get("proxy_base_url") or _current_proxy_base_url(),
                 proxy_model=body.get("proxy_model", "auto"),
-                preserve_official_auth=body.get("preserve_official_auth", login_defaults["default_preserve_official_auth"]),
                 goals_enabled=_config_goals_enabled(config),
                 local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
             )
             result.update(login_defaults)
             result["start_mode"] = START_MODE_PRESERVE_LOGIN_PROXY
+            result["success"] = True
+            result["applied"] = False
+            result["deferred_until_codex_start"] = True
+            result["message"] = "Codex config changes are deferred. Click Start Codex to write config.toml and launch Codex."
             return jsonify(result)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -3109,7 +3535,16 @@ def create_app() -> Flask:
             if ok:
                 status = proxy_server.status()
                 config.set("proxy_port", status.get("port", proxy_server.port))
-                return jsonify({"success": True, "status": status})
+                return jsonify({
+                    "success": True,
+                    "status": status,
+                    "provider_config": {
+                        "success": True,
+                        "skipped": True,
+                        "reason": "deferred_until_codex_start",
+                        "message": "Local proxy started. Codex config will be written only when Codex is started from this app.",
+                    },
+                })
             return jsonify({
                 "error": "未能在配置端口及后续端口中找到可用代理端口",
                 "status": proxy_server.status(),
@@ -3129,10 +3564,36 @@ def create_app() -> Flask:
     @app.route("/api/codex-injection/status")
     def codex_injection_status():
         """Status endpoint consumed by the injected Codex renderer menu."""
+        auth_mode = "unknown"
+        provider_payload: Dict[str, Any] = {}
+        try:
+            auth_mode = CodexConfigManager().get_auth_mode()
+        except Exception:
+            pass
+        try:
+            provider_payload = _provider_payload(include_secrets=False)
+        except Exception:
+            provider_payload = {}
+        official_usage_visible = _official_usage_visible_for_current_mode(
+            auth_mode,
+            provider_payload,
+            last_start_mode=str(config.get("codex_last_start_mode", "") or ""),
+        )
+        plugin_unlock = bool(config.get("plugin_unlock_enabled", False))
         return jsonify({
             "success": True,
             "enabled": _coerce_bool(config.get("codex_injection_enabled", True), True),
-            "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
+            "plugin_unlock_enabled": plugin_unlock,
+            "plugin_marketplace_unlock": plugin_unlock,
+            "plugin_entry_unlock": plugin_unlock,
+            "force_plugin_install": plugin_unlock,
+            "auth_mode": auth_mode,
+            "official_usage_visible": official_usage_visible,
+            "hide_official_usage_alert": not official_usage_visible,
+            "official_focus_provider": _provider_focus_is_official_login(provider_payload),
+            "third_party_focus_provider": _provider_focus_uses_other_api(provider_payload),
+            "focused_provider_id": str(provider_payload.get("focus_provider_id") or "") if isinstance(provider_payload, dict) else "",
+            "codex_last_start_mode": str(config.get("codex_last_start_mode", "") or ""),
             "cdp_port": _coerce_port(config.get("codex_cdp_port", DEFAULT_CDP_PORT)),
             "backend_url": _current_backend_url(),
         })
@@ -3378,6 +3839,20 @@ def create_app() -> Flask:
             "route_explanation": _request_preview_route_explanation(requested_model, upstream_model, provider),
         }
 
+    def _provider_draft_models_fetch(provider_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        _refresh_provider_registry_path()
+        existing = provider_registry.get_provider(provider_id, include_secrets=True)
+        if not existing:
+            return {
+                "success": False,
+                "provider_id": provider_id,
+                "error": f"Provider not found: {provider_id}",
+                "preview": True,
+            }
+        draft = body.get("provider") if isinstance(body.get("provider"), dict) else body
+        provider = merge_provider_update(existing, draft if isinstance(draft, dict) else {})
+        return fetch_provider_models_preview(provider)
+
     @app.route("/api/providers/<provider_id>/health-check", methods=["POST"])
     def provider_health_check(provider_id):
         """
@@ -3413,6 +3888,16 @@ def create_app() -> Flask:
             diagnostics_collector.record_error("api.providers.request_preview_draft", str(e))
             return jsonify({"success": False, "provider_id": provider_id, "preview": True, "error": str(e)}), 500
 
+    @app.route("/api/providers/<provider_id>/models/fetch-draft", methods=["POST"])
+    def provider_models_fetch_draft(provider_id):
+        """Fetch an OpenAI-compatible /models list from the current provider form draft without saving."""
+        try:
+            body = request.get_json(silent=True) or {}
+            return jsonify(_provider_draft_models_fetch(provider_id, body))
+        except Exception as e:
+            diagnostics_collector.record_error("api.providers.models_fetch_draft", str(e))
+            return jsonify({"success": False, "provider_id": provider_id, "preview": True, "error": str(e)}), 500
+
     @app.route("/api/diagnostics/test-provider/<provider_id>", methods=["POST"])
     def test_provider_connectivity(provider_id):
         """
@@ -3440,6 +3925,311 @@ def create_app() -> Flask:
             return jsonify({"error": str(e)}), 500
 
     return app
+
+
+def fetch_provider_models_preview(provider: Dict[str, Any]) -> Dict[str, Any]:
+    """Fetch and merge an OpenAI-compatible model list without saving provider state."""
+    provider_id = str(provider.get("id") or "").strip()
+    base_url = str(provider.get("base_url") or "").strip()
+    if not base_url:
+        return {
+            "success": False,
+            "preview": True,
+            "provider_id": provider_id,
+            "error": "Provider base_url is empty.",
+        }
+
+    url = models_url(base_url)
+    headers = _build_upstream_headers(provider)
+    headers.setdefault("Accept", "application/json")
+    request_obj = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request_obj, timeout=MODEL_LIST_FETCH_TIMEOUT_SECONDS) as response:
+            raw_body = response.read()
+            status_code = int(response.getcode() or 200)
+    except urllib.error.HTTPError as exc:
+        raw_body = exc.read() if hasattr(exc, "read") else b""
+        return {
+            "success": False,
+            "preview": True,
+            "provider_id": provider_id,
+            "url": url,
+            "status_code": int(exc.code or 0),
+            "error": f"HTTP {exc.code}",
+            "body_preview": _body_preview(raw_body),
+        }
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        return {
+            "success": False,
+            "preview": True,
+            "provider_id": provider_id,
+            "url": url,
+            "error": f"Model list request failed: {exc}",
+        }
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8", errors="replace") or "{}")
+    except json.JSONDecodeError as exc:
+        return {
+            "success": False,
+            "preview": True,
+            "provider_id": provider_id,
+            "url": url,
+            "status_code": status_code,
+            "error": f"Model list response is not JSON: {exc}",
+            "body_preview": _body_preview(raw_body),
+        }
+
+    fetched_models = parse_openai_compatible_model_list(payload)
+    if not fetched_models:
+        return {
+            "success": False,
+            "preview": True,
+            "provider_id": provider_id,
+            "url": url,
+            "status_code": status_code,
+            "error": "No model ids were found in the response.",
+            "response_shape": _model_list_response_shape(payload),
+        }
+
+    merged_models, added_count, updated_count = merge_fetched_provider_models(
+        provider.get("models") if isinstance(provider.get("models"), list) else [],
+        fetched_models,
+    )
+    return {
+        "success": True,
+        "preview": True,
+        "provider_id": provider_id,
+        "url": url,
+        "status_code": status_code,
+        "fetched_count": len(fetched_models),
+        "added_count": added_count,
+        "updated_count": updated_count,
+        "existing_count": len(provider.get("models") if isinstance(provider.get("models"), list) else []),
+        "models": fetched_models,
+        "merged_models": merged_models,
+        "default_context_window": FETCHED_MODEL_DEFAULT_CONTEXT_WINDOW,
+    }
+
+
+def parse_openai_compatible_model_list(payload: Any) -> list[Dict[str, Any]]:
+    items = _model_list_items(payload)
+    models: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        model = _model_from_list_item(item)
+        model_id = str(model.get("id") or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append(normalize_model(model))
+    return models
+
+
+def _model_list_items(payload: Any) -> list[Any]:
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in ("data", "models", "model_list", "items"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    nested = payload.get("result")
+    if isinstance(nested, dict):
+        return _model_list_items(nested)
+    return []
+
+
+def _model_from_list_item(item: Any) -> Dict[str, Any]:
+    if isinstance(item, str):
+        return _fetched_model_defaults(item, item, context_window=0, max_output_tokens=0, raw={})
+    if not isinstance(item, dict):
+        return {}
+    model_id = str(
+        item.get("id")
+        or item.get("model")
+        or item.get("name")
+        or item.get("model_id")
+        or ""
+    ).strip()
+    display_name = str(item.get("display_name") or item.get("displayName") or item.get("name") or model_id).strip()
+    return _fetched_model_defaults(
+        model_id,
+        display_name or model_id,
+        context_window=_first_positive_int(
+            item,
+            (
+                "context_window",
+                "contextWindow",
+                "context_length",
+                "contextLength",
+                "max_context",
+                "max_context_length",
+                "max_input_tokens",
+                "maxInputTokens",
+            ),
+        ),
+        max_output_tokens=_first_positive_int(
+            item,
+            (
+                "max_output_tokens",
+                "maxOutputTokens",
+                "max_tokens",
+                "maxTokens",
+                "max_completion_tokens",
+                "output_token_limit",
+            ),
+        ),
+        raw=item,
+    )
+
+
+def _fetched_model_defaults(
+    model_id: str,
+    display_name: str,
+    *,
+    context_window: int,
+    max_output_tokens: int,
+    raw: Dict[str, Any],
+) -> Dict[str, Any]:
+    capabilities = _capabilities_from_model_list_item(raw)
+    resolved_context = context_window or FETCHED_MODEL_DEFAULT_CONTEXT_WINDOW
+    model = {
+        "id": model_id,
+        "display_name": display_name or model_id,
+        "enabled": True,
+        "selected": False,
+        "catalog_hidden": True,
+        "primary": False,
+        "context_window": resolved_context,
+        "context_window_source": "provider" if context_window else "default_200k",
+        "capabilities": capabilities,
+        "capability_overrides": capabilities,
+    }
+    if max_output_tokens:
+        model["max_output_tokens"] = max_output_tokens
+    return model
+
+
+def _capabilities_from_model_list_item(item: Dict[str, Any]) -> Dict[str, bool]:
+    capabilities = {
+        "text": True,
+        "vision": False,
+        "tools": True,
+        "streaming": True,
+        "reasoning": False,
+        "custom_tools": False,
+        "images": False,
+        "videos": False,
+    }
+    raw_caps = item.get("capabilities")
+    if isinstance(raw_caps, dict):
+        for key, value in raw_caps.items():
+            key_text = str(key).strip()
+            if key_text:
+                capabilities[key_text] = bool(value)
+    for token in _model_list_capability_tokens(item):
+        if token in {"image", "images", "vision", "visual"}:
+            capabilities["vision"] = True
+        elif token in {"video", "videos"}:
+            capabilities["videos"] = True
+        elif token in {"tool", "tools", "function", "function_call", "function_calling"}:
+            capabilities["tools"] = True
+        elif token in {"reasoning", "thinking"}:
+            capabilities["reasoning"] = True
+        elif token in {"text", "chat", "completion"}:
+            capabilities["text"] = True
+    return capabilities
+
+
+def _model_list_capability_tokens(item: Dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for key in ("input", "inputs", "modalities", "input_modalities", "supported_modalities"):
+        value = item.get(key)
+        if isinstance(value, list):
+            tokens.update(str(part).strip().lower() for part in value if str(part).strip())
+    architecture = item.get("architecture")
+    if isinstance(architecture, dict):
+        for key in ("input_modalities", "modality", "modalities"):
+            value = architecture.get(key)
+            if isinstance(value, list):
+                tokens.update(str(part).strip().lower() for part in value if str(part).strip())
+            elif isinstance(value, str):
+                tokens.add(value.strip().lower())
+    return tokens
+
+
+def _first_positive_int(data: Dict[str, Any], keys: tuple[str, ...]) -> int:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, dict):
+            value = value.get("tokens") or value.get("value")
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed
+    return 0
+
+
+def merge_fetched_provider_models(
+    existing_models: list[Dict[str, Any]],
+    fetched_models: list[Dict[str, Any]],
+) -> tuple[list[Dict[str, Any]], int, int]:
+    merged: list[Dict[str, Any]] = [json.loads(json.dumps(model)) for model in existing_models if isinstance(model, dict)]
+    index_by_id = {
+        str(model.get("id") or "").strip(): idx
+        for idx, model in enumerate(merged)
+        if str(model.get("id") or "").strip()
+    }
+    added_count = 0
+    updated_count = 0
+    for fetched in fetched_models:
+        model_id = str(fetched.get("id") or "").strip()
+        if not model_id:
+            continue
+        if model_id not in index_by_id:
+            merged.append(json.loads(json.dumps(fetched)))
+            index_by_id[model_id] = len(merged) - 1
+            added_count += 1
+            continue
+        target = merged[index_by_id[model_id]]
+        changed = False
+        if not int(target.get("context_window") or 0):
+            target["context_window"] = int(fetched.get("context_window") or FETCHED_MODEL_DEFAULT_CONTEXT_WINDOW)
+            target["context_window_source"] = fetched.get("context_window_source") or "provider_or_default"
+            changed = True
+        if not int(target.get("max_output_tokens") or 0) and int(fetched.get("max_output_tokens") or 0):
+            target["max_output_tokens"] = int(fetched.get("max_output_tokens") or 0)
+            changed = True
+        if not str(target.get("display_name") or "").strip():
+            target["display_name"] = fetched.get("display_name") or model_id
+            changed = True
+        if "catalog_hidden" not in target:
+            target["catalog_hidden"] = not bool(target.get("selected", False))
+            changed = True
+        if "primary" not in target:
+            target["primary"] = False
+            changed = True
+        if changed:
+            updated_count += 1
+    return merged, added_count, updated_count
+
+
+def _model_list_response_shape(payload: Any) -> str:
+    if isinstance(payload, list):
+        return "array"
+    if isinstance(payload, dict):
+        keys = ", ".join(sorted(str(key) for key in payload.keys())[:12])
+        return f"object keys: {keys}"
+    return type(payload).__name__
+
+
+def _body_preview(raw_body: bytes, limit: int = 1000) -> str:
+    text = raw_body.decode("utf-8", errors="replace")
+    return text[:limit]
 
 
 def _selected_provider_models_to_amr_candidates(provider: Dict[str, Any], priority: int) -> list[Dict[str, Any]]:

@@ -68,7 +68,9 @@ class UnifiedModelCatalog:
         entries: List[Dict[str, Any]] = []
         explanations: List[str] = []
         seen: Set[str] = set()
+        provider_aliases: Dict[str, str] = {}
 
+        has_focus = bool(self.focus_provider_id)
         for provider in self.providers:
             if not provider_allows_local_routing(provider):
                 continue
@@ -77,20 +79,36 @@ class UnifiedModelCatalog:
                 continue
             is_focused = bool(self.focus_provider_id and provider.get("id") == self.focus_provider_id)
 
-            if visibility == "hidden":
-                continue
-
-            # Determine which models to include
-            selected_only = visibility == "selected_models" and not is_focused
-            include_all = visibility == "always_visible" or is_focused
-
-            if visibility == "focused_only" and not is_focused:
-                continue
-
-            for model in provider.get("models", []):
-                if not model.get("enabled", True):
+            if has_focus:
+                if is_focused:
+                    models_to_include = [
+                        model for model in provider.get("models", [])
+                        if _model_visible_for_catalog(model)
+                    ]
+                else:
+                    if visibility == "hidden":
+                        continue
+                    primary_model = _provider_catalog_primary_model(provider)
+                    models_to_include = [primary_model] if primary_model else []
+            else:
+                if visibility == "hidden":
                     continue
-                if selected_only and not model.get("selected", False):
+                selected_only = visibility == "selected_models"
+                include_all = visibility == "always_visible"
+                if not include_all and visibility not in {"selected_models", "focused_only"}:
+                    continue
+                if visibility == "focused_only":
+                    continue
+                models_to_include = []
+                for model in provider.get("models", []):
+                    if not _model_visible_for_catalog(model):
+                        continue
+                    if selected_only and not model.get("selected", False):
+                        continue
+                    models_to_include.append(model)
+
+            for model in models_to_include:
+                if not isinstance(model, dict):
                     continue
 
                 key = f"{provider.get('id')}::{model.get('id')}"
@@ -98,13 +116,17 @@ class UnifiedModelCatalog:
                     continue
                 seen.add(key)
 
-                entry = self._make_entry(provider, model, is_focused)
+                entry = self._make_entry(provider, model, is_focused, provider_aliases)
                 entries.append(entry)
 
                 if is_focused:
                     reason = "focus provider"
                 elif visibility == "always_visible":
                     reason = "always visible provider"
+                elif model.get("primary", False):
+                    reason = "provider primary model"
+                elif has_focus:
+                    reason = "derived provider primary model"
                 elif visibility == "selected_models":
                     reason = "selected model"
                 else:
@@ -158,30 +180,44 @@ class UnifiedModelCatalog:
         return None
 
     @staticmethod
-    def _make_entry(provider: Dict[str, Any], model: Dict[str, Any], is_focused: bool = False) -> Dict[str, Any]:
+    def _make_entry(
+        provider: Dict[str, Any],
+        model: Dict[str, Any],
+        is_focused: bool = False,
+        provider_aliases: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         alias = provider.get("short_alias") or provider.get("id")
+        visible_provider_alias = _unique_provider_visible_alias(provider, provider_aliases)
         upstream_model_id = model.get("id") or "default"
+        visible_model_id = _model_visible_id(model, upstream_model_id)
         pricing: Dict[str, Any] = {}
         if isinstance(provider.get("pricing"), dict):
             pricing.update(copy.deepcopy(provider["pricing"]))
         if isinstance(model.get("pricing"), dict):
             pricing.update(copy.deepcopy(model["pricing"]))
         return {
-            "codex_model_id": f"{alias}/{upstream_model_id}",
+            "codex_model_id": f"{visible_provider_alias}/{visible_model_id}",
             "display_name": model.get("display_name") or upstream_model_id,
             "provider_id": provider.get("id"),
             "provider_alias": alias,
+            "provider_visible_alias": visible_provider_alias,
             "provider_display_name": provider.get("display_name"),
             "upstream_model_id": upstream_model_id,
+            "visible_model_id": visible_model_id,
+            "codex_visible_id": model.get("codex_visible_id", ""),
             "api_format": provider.get("api_format"),
             "responses_profile": provider.get("responses_profile", {}),
             "context_window": model.get("context_window", 0),
+            "max_output_tokens": model.get("max_output_tokens", 0),
             "capabilities": merge_provider_model_capabilities(provider, model),
+            "reasoning_effort_profile": model.get("reasoning_effort_profile", {}),
             "native_currency": model.get("native_currency") or provider.get("native_currency") or pricing.get("native_currency"),
             "pricing": pricing,
             "has_model_pricing": bool(isinstance(model.get("pricing"), dict) and model.get("pricing")),
             "catalog_visibility": provider.get("catalog_visibility"),
             "focused": is_focused,
+            "primary": bool(model.get("primary", False)),
+            "catalog_hidden": bool(model.get("catalog_hidden", False)),
         }
 
 
@@ -215,6 +251,69 @@ def resolve_catalog_id_collisions(entries: List[Dict[str, Any]]) -> List[str]:
         entry["codex_model_id"] = resolved
         explanations.append(f"Catalog ID collision for '{original}' resolved to '{resolved}'.")
     return explanations
+
+
+def _model_visible_for_catalog(model: Dict[str, Any]) -> bool:
+    if not isinstance(model, dict):
+        return False
+    if not model.get("enabled", True):
+        return False
+    if model.get("catalog_hidden", False):
+        return False
+    return True
+
+
+def _model_visible_id(model: Dict[str, Any], fallback: str) -> str:
+    visible = (
+        model.get("codex_visible_id")
+        or model.get("visible_id")
+        or model.get("display_id")
+        or model.get("display_name")
+    )
+    return _catalog_segment(visible, fallback)
+
+
+def _catalog_segment(value: Any, fallback: str = "") -> str:
+    text = str(value or fallback or "").strip().replace("/", "／")
+    return text or str(fallback or "default").strip() or "default"
+
+
+def _unique_provider_visible_alias(provider: Dict[str, Any], seen: Optional[Dict[str, str]]) -> str:
+    base = _catalog_segment(
+        provider.get("codex_visible_alias")
+        or provider.get("provider_visible_alias")
+        or provider.get("visible_alias")
+        or provider.get("display_name")
+        or provider.get("short_alias")
+        or provider.get("id"),
+        str(provider.get("short_alias") or provider.get("id") or "provider"),
+    )
+    if seen is None:
+        return base
+    provider_id = str(provider.get("id") or "")
+    existing = seen.get(base.lower())
+    if not existing or existing == provider_id:
+        seen[base.lower()] = provider_id
+        return base
+    suffix = _catalog_id_segment(provider_id or provider.get("short_alias") or "provider")
+    candidate = f"{base} ({suffix})"
+    counter = 2
+    while candidate.lower() in seen and seen[candidate.lower()] != provider_id:
+        candidate = f"{base} ({suffix}-{counter})"
+        counter += 1
+    seen[candidate.lower()] = provider_id
+    return candidate
+
+
+def _provider_catalog_primary_model(provider: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    models = [model for model in provider.get("models", []) if _model_visible_for_catalog(model)]
+    for model in models:
+        if model.get("primary", False):
+            return model
+    for model in models:
+        if model.get("selected", False):
+            return model
+    return models[0] if models else None
 
 
 def _collision_safe_codex_model_id(

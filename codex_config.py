@@ -422,13 +422,13 @@ def merge_codex_goals_feature(config_data: Dict[str, Any], goals_enabled: bool =
 
 
 def build_codex_enhance_provider_config(
-    proxy_base_url: str = "http://localhost:8080/v1",
+    proxy_base_url: str = "http://127.0.0.1:51235/v1",
     proxy_model: str = "auto",
     goals_enabled: Optional[bool] = None,
     local_proxy_bearer_token: str = "",
 ) -> Dict[str, Any]:
     """Build a config.toml fragment for the local proxy provider."""
-    base_url = str(proxy_base_url or "http://localhost:8080/v1").strip().rstrip("/")
+    base_url = str(proxy_base_url or "http://127.0.0.1:51235/v1").strip().rstrip("/")
     bearer_token = str(local_proxy_bearer_token or LOCAL_PROXY_BEARER_TOKEN).strip()
     config = {
         "model_provider": "codex_enhance_manager",
@@ -499,7 +499,7 @@ class CodexConfigManager:
 
     def preview_write_provider(
         self,
-        proxy_base_url: str = "http://localhost:8080/v1",
+        proxy_base_url: str = "http://127.0.0.1:51235/v1",
         proxy_model: str = "auto",
         goals_enabled: Optional[bool] = None,
         local_proxy_bearer_token: str = "",
@@ -532,7 +532,7 @@ class CodexConfigManager:
 
     def write_provider_config(
         self,
-        proxy_base_url: str = "http://localhost:8080/v1",
+        proxy_base_url: str = "http://127.0.0.1:51235/v1",
         proxy_model: str = "auto",
         preserve_official_auth: bool = True,
         goals_enabled: Optional[bool] = None,
@@ -553,7 +553,7 @@ class CodexConfigManager:
           - 合并而非替换：merge_toml_dict 保留用户自定义的未知键（如 mcp_servers）。
 
         Args:
-            proxy_base_url: 本地代理地址，默认 http://localhost:8080/v1。
+            proxy_base_url: 本地代理地址，默认 http://127.0.0.1:51235/v1。
             proxy_model: 代理模型标识，默认 "auto"。
             preserve_official_auth: 是否保护官方 OAuth 登录态。
 

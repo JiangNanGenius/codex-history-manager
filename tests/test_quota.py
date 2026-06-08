@@ -52,6 +52,20 @@ class QuotaTest(unittest.TestCase):
         self.assertEqual(normalized["url"], "https://example.test/quota")
         self.assertEqual(normalized["json_paths"], {"balance": "$.balance"})
         self.assertEqual(normalized["ttl_seconds"], 60)
+        self.assertEqual(normalized["type"], "http_json")
+
+    def test_normalize_quota_check_supports_script_probe_shape(self):
+        normalized = normalize_quota_check({
+            "enabled": True,
+            "type": "javascript",
+            "auto_query_interval_minutes": 30,
+            "code": "({ request: { url: '{{baseUrl}}/v1/usage' }, extractor: r => r })",
+        })
+
+        self.assertEqual(normalized["type"], "script")
+        self.assertEqual(normalized["ttl_seconds"], 1800)
+        self.assertEqual(normalized["script"]["language"], "javascript")
+        self.assertIn("extractor", normalized["script"]["code"])
 
     def test_build_quota_headers_uses_user_agent_and_secondary_key(self):
         headers = build_quota_headers(
@@ -142,6 +156,40 @@ class QuotaTest(unittest.TestCase):
         self.assertFalse(result["cache_hit"])
         self.assertEqual(result["values"], {"balance": 12})
         self.assertEqual(result["raw_redacted"]["token"], "********")
+
+    @patch("quota.run_js_quota_script_phase")
+    @patch("quota.urllib.request.urlopen")
+    def test_script_quota_probe_uses_script_request_and_extractor(self, mock_urlopen, mock_script):
+        mock_script.side_effect = [
+            {
+                "method": "GET",
+                "url": "{{baseUrl}}/v1/usage",
+                "headers": {"Authorization": "Bearer {{apiKey}}"},
+            },
+            {"balance": 8.25, "unit": "CNY"},
+        ]
+        mock_urlopen.return_value = FakeResponse({"data": {"amount": 8.25}, "api_key": "secret"})
+        result = refresh_provider_quota_preview({
+            "id": "scripted",
+            "base_url": "https://usage.example.test",
+            "api_key": "secret",
+            "quota_check": {
+                "enabled": True,
+                "type": "script",
+                "script": {
+                    "language": "javascript",
+                    "code": "({ request: {}, extractor(response) { return response.data; } })",
+                },
+            },
+        })
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["type"], "script")
+        self.assertEqual(result["values"], {"balance": 8.25, "unit": "CNY"})
+        request_arg = mock_urlopen.call_args.args[0]
+        self.assertEqual(request_arg.full_url, "https://usage.example.test/v1/usage")
+        self.assertEqual(request_arg.headers["Authorization"], "Bearer secret")
+        self.assertEqual(result["request_redacted"]["headers"]["Authorization"], "********")
 
     def test_redact_quota_result_redacts_nested_secrets(self):
         redacted = redact_quota_result({

@@ -49,6 +49,7 @@ from capabilities import (
 )
 from model_catalog import resolve_catalog_id_collisions
 from provider_routing import provider_allows_local_routing
+from reasoning_policy import build_model_reasoning_effort_profile
 
 
 # Schema version：当数据结构发生不兼容变更时递增，用于未来迁移逻辑。
@@ -237,10 +238,19 @@ class ProviderRegistry:
             # merge 而非 replace：保护 secret 字段不被 REDACTED_VALUE 覆盖
             if is_provider_read_only(existing):
                 raise ValueError("Codex login providers are read-only in Provider settings.")
+            catalog_signature_before = provider_catalog_restart_signature(existing)
+            restart_already_pending = bool((existing.get("status") or {}).get("needs_restart", False))
             merged = merge_provider_update(existing, data)
             merged["id"] = provider_id
             merged["created_at"] = existing.get("created_at") or now_iso()
             merged["updated_at"] = now_iso()
+            catalog_signature_after = provider_catalog_restart_signature(merged)
+            if restart_already_pending or catalog_signature_before != catalog_signature_after:
+                status = normalize_status(merged.get("status"))
+                status["needs_restart"] = True
+                if catalog_signature_before != catalog_signature_after:
+                    status["source_of_truth"] = "Codex model catalog changed; restart Codex to apply model list/context updates."
+                merged["status"] = status
             self._validate_unique_alias(store, merged["short_alias"], provider_id)
             providers[idx] = merged
             self._save_store(store)
@@ -285,7 +295,8 @@ class ProviderRegistry:
           - 返回 deepcopy + redact，防止调用方意外修改内置常量，同时确保
             即使 preset 未来包含 secret 模板也不会泄露。
         """
-        return {"presets": redact_secrets(copy.deepcopy(PROVIDER_PRESETS))}
+        visible = [preset for preset in PROVIDER_PRESETS if not preset.get("hidden")]
+        return {"presets": redact_secrets(copy.deepcopy(visible))}
 
     def import_preset(self, preset_id: str, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -355,6 +366,7 @@ class ProviderRegistry:
         if provider_id:
             existing = self.get_provider(provider_id, include_secrets=True)
             if existing and not is_provider_read_only(existing):
+                status["needs_restart"] = bool((existing.get("status") or {}).get("needs_restart", False))
                 existing["status"] = {**existing.get("status", {}), **status}
                 self.update_provider(provider_id, existing)
 
@@ -440,6 +452,8 @@ class ProviderRegistry:
 
             if new_val != prev:
                 model["selected"] = new_val
+                if new_val:
+                    model["catalog_hidden"] = False
                 changed += 1
 
         if changed > 0:
@@ -767,6 +781,12 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
     provider = {
         "id": sanitize_id(raw.get("id") or short_alias),
         "display_name": display_name,
+        "codex_visible_alias": str(
+            raw.get("codex_visible_alias")
+            or raw.get("provider_visible_alias")
+            or raw.get("visible_alias")
+            or ""
+        ).strip(),
         "kind": str(raw.get("kind") or "openai_compatible").strip(),
         "short_alias": short_alias,
         "base_url": str(raw.get("base_url") or "").strip(),
@@ -797,6 +817,7 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         "fallback_enabled": bool(raw.get("fallback_enabled", True)),
         "country_region": str(raw.get("country_region") or "").strip(),
         "native_currency": normalize_currency(raw.get("native_currency") or "USD"),
+        "capability_policy": str(raw.get("capability_policy") or "").strip(),
         "catalog_visibility": visibility,
         "status": normalize_status(raw.get("status")),
         "notes": str(raw.get("notes") or "").strip(),
@@ -805,9 +826,12 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         "updated_at": raw.get("updated_at") or "",
     }
     provider["capabilities"] = effective_provider_capabilities(provider)
+    provider["capabilities"]["tools"] = True
+    provider["capabilities"]["streaming"] = True
     provider["read_only"] = is_provider_read_only(provider)
     provider["native_responses"] = is_native_responses_provider(provider)
     provider["native_capabilities_locked"] = has_locked_native_capabilities(provider)
+    provider["models"] = _enforce_single_primary_model(provider["models"])
 
     if not provider["models"]:
         provider["models"] = [normalize_model({"id": "default", "display_name": "Default model"})]
@@ -847,7 +871,7 @@ def merge_provider_update(existing: Dict[str, Any], update: Dict[str, Any]) -> D
             merged[key] = merged_headers
             continue
         if key == "models" and isinstance(value, list):
-            merged[key] = merge_model_updates(merged.get("models", []), value)
+            merged[key] = _enforce_single_primary_model(merge_model_updates(merged.get("models", []), value))
             continue
         merged[key] = value
     # 最终再过 normalize：确保合并后的数据仍然符合最新 schema
@@ -883,15 +907,52 @@ def merge_model_updates(existing_models: Any, update_models: Any) -> List[Dict[s
         if model_id and existing_by_id.get(model_id):
             base = existing_by_id[model_id].pop(0)
         base.update(copy.deepcopy(update_model))
+        if update_model.get("selected") is True and "catalog_hidden" not in update_model:
+            base["catalog_hidden"] = False
+        if bool(update_model.get("primary")):
+            base["selected"] = True
+            base["catalog_hidden"] = False
         merged_models.append(base)
     return merged_models
 
 
+def _enforce_single_primary_model(models: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen_primary = False
+    normalized: List[Dict[str, Any]] = []
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        item = copy.deepcopy(model)
+        if bool(item.get("primary")) and not seen_primary:
+            seen_primary = True
+        else:
+            item["primary"] = False
+        normalized.append(item)
+    return normalized
+
+
 def normalize_model(data: Dict[str, Any]) -> Dict[str, Any]:
     model_id = str(data.get("id") or data.get("model") or "default").strip()
+    codex_visible_id = str(
+        data.get("codex_visible_id")
+        or data.get("visible_id")
+        or data.get("display_id")
+        or ""
+    ).strip()
     capabilities = normalize_capabilities(data.get("capabilities"))
+    capabilities["tools"] = True
+    capabilities["streaming"] = True
     capability_overrides = model_capability_overrides(data)
+    capability_overrides.pop("tools", None)
+    capability_overrides.pop("streaming", None)
     context_window = int(data.get("context_window") or data.get("context") or 0)
+    max_output_tokens = int(data.get("max_output_tokens") or data.get("maxTokens") or data.get("max_tokens") or 0)
+    catalog_hidden = bool(data.get("catalog_hidden", False))
+    selected = bool(data.get("selected", True))
+    primary = bool(data.get("primary", False))
+    if primary:
+        selected = True
+        catalog_hidden = False
     api_format = str(data.get("api_format") or data.get("interface") or "").strip()
     if api_format not in API_FORMATS:
         api_format = ""
@@ -906,13 +967,19 @@ def normalize_model(data: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": model_id,
         "display_name": str(data.get("display_name") or model_id).strip(),
+        "codex_visible_id": codex_visible_id,
         "enabled": bool(data.get("enabled", True)),
-        "selected": bool(data.get("selected", False)),
+        "selected": selected and not catalog_hidden,
+        "catalog_hidden": catalog_hidden,
+        "primary": primary and not catalog_hidden,
         "context_window": max(context_window, 0),
+        "max_output_tokens": max(max_output_tokens, 0),
+        "context_window_source": str(data.get("context_window_source") or "").strip(),
         "api_format": api_format,
         "native_approval": native_approval,
         "capabilities": capabilities,
         "capability_overrides": capability_overrides,
+        "reasoning_effort_profile": build_model_reasoning_effort_profile(data),
         "native_currency": normalize_currency(data.get("native_currency") or ""),
         "pricing": data.get("pricing") if isinstance(data.get("pricing"), dict) else {},
         "tags": data.get("tags") if isinstance(data.get("tags"), list) else [],
@@ -1139,6 +1206,68 @@ def normalize_status(data: Any) -> Dict[str, Any]:
     }
 
 
+def provider_catalog_restart_signature(provider: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the provider fields that require a Codex restart after catalog injection."""
+    if not isinstance(provider, dict):
+        return {}
+    models = []
+    for model in provider.get("models", []):
+        if not isinstance(model, dict):
+            continue
+        models.append({
+            "id": str(model.get("id") or ""),
+            "enabled": bool(model.get("enabled", True)),
+            "selected": bool(model.get("selected", False)),
+            "catalog_hidden": bool(model.get("catalog_hidden", False)),
+            "primary": bool(model.get("primary", False)),
+            "display_name": str(model.get("display_name") or ""),
+            "codex_visible_id": str(model.get("codex_visible_id") or ""),
+            "visible_id": str(model.get("visible_id") or ""),
+            "display_id": str(model.get("display_id") or ""),
+            "context_window": int(model.get("context_window") or 0),
+            "max_output_tokens": int(model.get("max_output_tokens") or 0),
+            "api_format": str(model.get("api_format") or ""),
+            "capabilities": _catalog_capability_signature(model.get("capabilities")),
+            "capability_overrides": _catalog_capability_signature(model.get("capability_overrides")),
+            "reasoning_effort_profile": _catalog_reasoning_signature(model.get("reasoning_effort_profile")),
+        })
+    return {
+        "enabled": bool(provider.get("enabled", True)),
+        "local_proxy_routing": provider.get("local_proxy_routing", None),
+        "switch_only": bool(provider.get("switch_only", False)),
+        "amr_excluded": bool(provider.get("amr_excluded", False)),
+        "catalog_visibility": str(provider.get("catalog_visibility") or ""),
+        "short_alias": str(provider.get("short_alias") or ""),
+        "display_name": str(provider.get("display_name") or ""),
+        "codex_visible_alias": str(provider.get("codex_visible_alias") or ""),
+        "provider_visible_alias": str(provider.get("provider_visible_alias") or ""),
+        "visible_alias": str(provider.get("visible_alias") or ""),
+        "api_format": str(provider.get("api_format") or ""),
+        "capabilities": _catalog_capability_signature(provider.get("capabilities")),
+        "models": models,
+    }
+
+
+def _catalog_capability_signature(value: Any) -> Dict[str, bool]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): bool(value[key]) for key in sorted(value)}
+
+
+def _catalog_reasoning_signature(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    keys = (
+        "supports_reasoning_effort",
+        "reasoning_efforts",
+        "reasoning_effort_parameter",
+        "reasoning_effort_map",
+        "reasoning_effort_default",
+        "semantics",
+    )
+    return {key: copy.deepcopy(value.get(key)) for key in keys if key in value}
+
+
 def validate_provider(provider: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     """
     本地 provider 配置校验。
@@ -1194,9 +1323,9 @@ def validate_provider(provider: Dict[str, Any]) -> Tuple[List[str], List[str]]:
         or provider.get("api_format") in {"openai_images", "openai_videos"}
     )
     if media_requested and not media_route_enabled:
-        warnings.append("media capability is enabled, but Media Mode is disabled; image/video routes will not be forwarded")
+        warnings.append("media capability is enabled, but Media Mode is disabled; image routes will not be forwarded")
     if media_route_enabled and not media_requested and provider.get("api_format") not in {"openai_images", "openai_videos"}:
-        warnings.append("Media Mode is enabled, but no Images/Videos capability or default media provider is selected; media routes will still appear unsupported")
+        warnings.append("Media Mode is enabled, but no image capability or default image provider is selected; media routes will still appear unsupported")
     if not provider.get("models"):
         warnings.append("no models configured")
     return errors, warnings
@@ -1346,26 +1475,47 @@ def build_catalog_preview_from_providers(
     entries: List[Dict[str, Any]] = []
     explanations: List[str] = []
     seen: set[str] = set()
+    provider_aliases: Dict[str, str] = {}
 
+    has_focus = bool(focus_provider_id)
     for provider in providers:
         if not provider_allows_local_routing(provider):
             continue
         visibility = provider.get("catalog_visibility", "focused_only")
         is_focused = bool(focus_provider_id and provider.get("id") == focus_provider_id)
-        if visibility == "hidden":
+        if visibility not in {"hidden", "focused_only", "always_visible", "selected_models"}:
             continue
 
-        selected_only = visibility == "selected_models" and not is_focused
-        include_all = visibility == "always_visible" or is_focused
-        if not include_all and visibility not in {"selected_models", "focused_only"}:
-            continue
-        if visibility == "focused_only" and not is_focused:
-            continue
-
-        for model in provider.get("models", []):
-            if not isinstance(model, dict) or not model.get("enabled", True):
+        if has_focus:
+            if is_focused:
+                models_to_include = [
+                    model for model in provider.get("models", [])
+                    if _model_visible_for_catalog(model)
+                ]
+            else:
+                if visibility == "hidden":
+                    continue
+                primary_model = _provider_catalog_primary_model(provider)
+                models_to_include = [primary_model] if primary_model else []
+        else:
+            if visibility == "hidden":
                 continue
-            if selected_only and not model.get("selected", False):
+            selected_only = visibility == "selected_models"
+            include_all = visibility == "always_visible"
+            if not include_all and visibility not in {"selected_models", "focused_only"}:
+                continue
+            if visibility == "focused_only":
+                continue
+            models_to_include = []
+            for model in provider.get("models", []):
+                if not _model_visible_for_catalog(model):
+                    continue
+                if selected_only and not model.get("selected", False):
+                    continue
+                models_to_include.append(model)
+
+        for model in models_to_include:
+            if not isinstance(model, dict):
                 continue
 
             key = f"{provider.get('id')}::{model.get('id')}"
@@ -1373,10 +1523,14 @@ def build_catalog_preview_from_providers(
                 continue
             seen.add(key)
 
-            entry = _catalog_entry(provider, model, is_focused=is_focused)
+            entry = _catalog_entry(provider, model, is_focused=is_focused, provider_aliases=provider_aliases)
             entries.append(entry)
             if is_focused:
                 reason = "focus provider"
+            elif model.get("primary", False):
+                reason = "provider primary model"
+            elif has_focus:
+                reason = "derived provider primary model"
             elif visibility == "always_visible":
                 reason = "always visible provider"
             elif visibility == "selected_models":
@@ -1396,7 +1550,79 @@ def build_catalog_preview_from_providers(
     }
 
 
-def _catalog_entry(provider: Dict[str, Any], model: Dict[str, Any], is_focused: bool = False) -> Dict[str, Any]:
+def _model_visible_for_catalog(model: Dict[str, Any]) -> bool:
+    if not isinstance(model, dict):
+        return False
+    if not model.get("enabled", True):
+        return False
+    if model.get("catalog_hidden", False):
+        return False
+    return True
+
+
+def _catalog_segment(value: Any, fallback: str = "") -> str:
+    text = str(value or fallback or "").strip().replace("/", "／")
+    return text or str(fallback or "default").strip() or "default"
+
+
+def _provider_visible_alias(provider: Dict[str, Any]) -> str:
+    return _catalog_segment(
+        provider.get("codex_visible_alias")
+        or provider.get("provider_visible_alias")
+        or provider.get("visible_alias")
+        or provider.get("display_name")
+        or provider.get("short_alias")
+        or provider.get("id"),
+        str(provider.get("short_alias") or provider.get("id") or "provider"),
+    )
+
+
+def _unique_provider_visible_alias(provider: Dict[str, Any], seen: Optional[Dict[str, str]]) -> str:
+    base = _provider_visible_alias(provider)
+    if seen is None:
+        return base
+    provider_id = str(provider.get("id") or "")
+    existing = seen.get(base.lower())
+    if not existing or existing == provider_id:
+        seen[base.lower()] = provider_id
+        return base
+    suffix = sanitize_id(provider_id or provider.get("short_alias") or "provider")
+    candidate = f"{base} ({suffix})"
+    counter = 2
+    while candidate.lower() in seen and seen[candidate.lower()] != provider_id:
+        candidate = f"{base} ({suffix}-{counter})"
+        counter += 1
+    seen[candidate.lower()] = provider_id
+    return candidate
+
+
+def _model_visible_id(model: Dict[str, Any], fallback: str) -> str:
+    return _catalog_segment(
+        model.get("codex_visible_id")
+        or model.get("visible_id")
+        or model.get("display_id")
+        or model.get("display_name"),
+        fallback,
+    )
+
+
+def _provider_catalog_primary_model(provider: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    models = [model for model in provider.get("models", []) if _model_visible_for_catalog(model)]
+    for model in models:
+        if model.get("primary", False):
+            return model
+    for model in models:
+        if model.get("selected", False):
+            return model
+    return models[0] if models else None
+
+
+def _catalog_entry(
+    provider: Dict[str, Any],
+    model: Dict[str, Any],
+    is_focused: bool = False,
+    provider_aliases: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """
     生成单个 UMC Catalog 条目。
 
@@ -1416,32 +1642,116 @@ def _catalog_entry(provider: Dict[str, Any], model: Dict[str, Any], is_focused: 
         UMC entry 字典。
     """
     alias = provider.get("short_alias") or provider.get("id")
+    visible_provider_alias = _unique_provider_visible_alias(provider, provider_aliases)
     upstream_model_id = model.get("id") or "default"
+    visible_model_id = _model_visible_id(model, upstream_model_id)
     pricing: Dict[str, Any] = {}
     if isinstance(provider.get("pricing"), dict):
         pricing.update(copy.deepcopy(provider["pricing"]))
     if isinstance(model.get("pricing"), dict):
         pricing.update(copy.deepcopy(model["pricing"]))
     return {
-        "codex_model_id": f"{alias}/{upstream_model_id}",
+        "codex_model_id": f"{visible_provider_alias}/{visible_model_id}",
         "display_name": model.get("display_name") or upstream_model_id,
         "provider_id": provider.get("id"),
         "provider_alias": alias,
+        "provider_visible_alias": visible_provider_alias,
         "provider_display_name": provider.get("display_name"),
         "upstream_model_id": upstream_model_id,
+        "visible_model_id": visible_model_id,
+        "codex_visible_id": model.get("codex_visible_id", ""),
         "api_format": model.get("api_format") or provider.get("api_format"),
         "provider_api_format": provider.get("api_format"),
         "model_api_format": model.get("api_format") or "",
         "api_format_source": "model" if model.get("api_format") else "provider",
         "responses_profile": provider.get("responses_profile", {}),
         "context_window": model.get("context_window", 0),
+        "max_output_tokens": model.get("max_output_tokens", 0),
         "capabilities": merge_provider_model_capabilities(provider, model),
+        "reasoning_effort_profile": model.get("reasoning_effort_profile", {}),
         "native_currency": model.get("native_currency") or provider.get("native_currency") or pricing.get("native_currency"),
         "pricing": pricing,
         "has_model_pricing": bool(isinstance(model.get("pricing"), dict) and model.get("pricing")),
         "catalog_visibility": provider.get("catalog_visibility"),
         "focused": is_focused,
+        "primary": bool(model.get("primary", False)),
+        "catalog_hidden": bool(model.get("catalog_hidden", False)),
     }
+
+
+def _volcengine_plan_model(
+    model_id: str,
+    context_window: int,
+    max_output_tokens: int,
+    vision: bool = False,
+    primary: bool = False,
+) -> Dict[str, Any]:
+    return {
+        "id": model_id,
+        "display_name": _display_name_from_model_id(model_id),
+        "selected": True,
+        "catalog_hidden": False,
+        "primary": primary,
+        "context_window": context_window,
+        "max_output_tokens": max_output_tokens,
+        "capabilities": {
+            "text": True,
+            "vision": vision,
+            "tools": True,
+            "streaming": True,
+        },
+        "native_currency": "CNY",
+    }
+
+
+def _display_name_from_model_id(model_id: str) -> str:
+    special = {
+        "ark-code-latest": "Ark Code Latest",
+        "doubao-seed-code": "Doubao Seed Code",
+        "deepseek-v4-flash": "DeepSeek V4 Flash",
+        "deepseek-v4-pro": "DeepSeek V4 Pro",
+        "doubao-seed-2.0-code": "Doubao Seed 2.0 Code",
+        "doubao-seed-2.0-pro": "Doubao Seed 2.0 Pro",
+        "doubao-seed-2.0-lite": "Doubao Seed 2.0 Lite",
+        "doubao-seed-2.0-mini": "Doubao Seed 2.0 Mini",
+        "glm-5.1": "GLM 5.1",
+        "kimi-k2.6": "Kimi K2.6",
+        "minimax-m2.7": "MiniMax M2.7",
+        "minimax-m3": "MiniMax M3",
+    }
+    if model_id in special:
+        return special[model_id]
+    return " ".join(part.upper() if part in {"v4"} else part.capitalize() for part in model_id.replace(".", "-").split("-"))
+
+
+VOLCENGINE_CODING_PLAN_MODELS: List[Dict[str, Any]] = [
+    _volcengine_plan_model("ark-code-latest", 256000, 32000, vision=True, primary=True),
+    _volcengine_plan_model("doubao-seed-code", 256000, 32000, vision=True),
+    _volcengine_plan_model("glm-5.1", 200000, 65536),
+    _volcengine_plan_model("deepseek-v4-flash", 1024000, 65536),
+    _volcengine_plan_model("deepseek-v4-pro", 1024000, 65536),
+    _volcengine_plan_model("doubao-seed-2.0-code", 256000, 65536, vision=True),
+    _volcengine_plan_model("doubao-seed-2.0-pro", 256000, 65536, vision=True),
+    _volcengine_plan_model("doubao-seed-2.0-lite", 256000, 65536, vision=True),
+    _volcengine_plan_model("minimax-m2.7", 200000, 65536),
+    _volcengine_plan_model("minimax-m3", 512000, 65536, vision=True),
+    _volcengine_plan_model("kimi-k2.6", 256000, 32000, vision=True),
+]
+
+
+VOLCENGINE_AGENT_PLAN_MODELS: List[Dict[str, Any]] = [
+    _volcengine_plan_model("ark-code-latest", 256000, 32000, vision=True, primary=True),
+    _volcengine_plan_model("glm-5.1", 200000, 65536),
+    _volcengine_plan_model("deepseek-v4-flash", 1024000, 65536),
+    _volcengine_plan_model("deepseek-v4-pro", 1024000, 65536),
+    _volcengine_plan_model("doubao-seed-2.0-code", 256000, 65536, vision=True),
+    _volcengine_plan_model("doubao-seed-2.0-pro", 256000, 65536, vision=True),
+    _volcengine_plan_model("doubao-seed-2.0-lite", 256000, 65536, vision=True),
+    _volcengine_plan_model("doubao-seed-2.0-mini", 256000, 65536, vision=True),
+    _volcengine_plan_model("minimax-m2.7", 200000, 65536),
+    _volcengine_plan_model("minimax-m3", 512000, 65536, vision=True),
+    _volcengine_plan_model("kimi-k2.6", 256000, 32000, vision=True),
+]
 
 
 PROVIDER_PRESETS: List[Dict[str, Any]] = [
@@ -1523,6 +1833,198 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
         },
     },
     {
+        "preset_id": "xai-grok",
+        "name": "xAI Grok",
+        "category": "text",
+        "description": "xAI API with Grok 4.3 and Grok Build 0.1. Pricing and effort levels are model-specific.",
+        "provider": {
+            "id": "xai-grok",
+            "display_name": "xAI Grok",
+            "kind": "openai_compatible",
+            "short_alias": "xai",
+            "base_url": "https://api.x.ai/v1",
+            "api_format": "openai_responses",
+            "auth_mode": "provider_api_key",
+            "native_currency": "USD",
+            "country_region": "US",
+            "catalog_visibility": "selected_models",
+            "capabilities": {
+                "text": True,
+                "vision": True,
+                "tools": True,
+                "reasoning": True,
+                "streaming": True,
+                "models": True,
+            },
+            "responses_profile": {
+                "domestic_responses": False,
+                "partial_compatibility": False,
+                "requires_adapter": False,
+                "verified_docs_url": "https://docs.x.ai/developers/models",
+                "compatibility_notes": "xAI exposes OpenAI-compatible Responses endpoints. Reasoning effort support differs by model.",
+                "unsupported_fields": [],
+            },
+            "models": [
+                {
+                    "id": "grok-4.3",
+                    "display_name": "Grok 4.3",
+                    "selected": True,
+                    "context_window": 1000000,
+                    "capabilities": {"text": True, "vision": True, "tools": True, "reasoning": True, "streaming": True},
+                    "reasoning_efforts": ["none", "low", "medium", "high"],
+                    "reasoning_effort_parameter": "reasoning.effort",
+                    "reasoning_effort_default": "low",
+                    "reasoning_effort_semantics": "reasoning_depth",
+                    "pricing": {
+                        "native_currency": "USD",
+                        "input_per_million": 1.25,
+                        "cache_read_per_million": 0.20,
+                        "output_per_million": 2.50,
+                    },
+                    "native_currency": "USD",
+                },
+                {
+                    "id": "grok-build-0.1",
+                    "display_name": "Grok Build 0.1",
+                    "selected": True,
+                    "context_window": 256000,
+                    "capabilities": {"text": True, "vision": True, "tools": True, "reasoning": True, "streaming": True},
+                    "aliases": ["grok-code-fast-1", "grok-code-fast"],
+                    "reasoning_efforts": [],
+                    "reasoning_effort_parameter": "disabled",
+                    "reasoning_effort_semantics": "unsupported",
+                    "pricing": {
+                        "native_currency": "USD",
+                        "input_per_million": 1.00,
+                        "cache_read_per_million": 0.20,
+                        "output_per_million": 2.00,
+                    },
+                    "native_currency": "USD",
+                },
+                {
+                    "id": "grok-4.20-multi-agent-0309",
+                    "display_name": "Grok 4.20 Multi-Agent",
+                    "selected": False,
+                    "context_window": 1000000,
+                    "capabilities": {"text": True, "vision": True, "tools": True, "reasoning": True, "streaming": True},
+                    "aliases": ["grok-4.20-multi-agent"],
+                    "reasoning_efforts": ["low", "medium", "high", "xhigh"],
+                    "reasoning_effort_parameter": "reasoning.effort",
+                    "reasoning_effort_default": "low",
+                    "reasoning_effort_semantics": "agent_count",
+                    "pricing": {
+                        "native_currency": "USD",
+                        "input_per_million": 1.25,
+                        "cache_read_per_million": 0.20,
+                        "output_per_million": 2.50,
+                    },
+                    "native_currency": "USD",
+                },
+            ],
+            "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
+            "user_agent": "Codex-Enhance-Manager/0.1",
+            "caveat": "xAI 模型的 reasoning effort 不是统一能力：Grok 4.3 支持 none/low/medium/high；Grok Build 0.1 不发送 effort；Multi-Agent 的 effort 表示协作代理数量。",
+            "notes": "价格来自 xAI 官方 Models/Pricing 文档；视频生成能力在本工具中作为预埋能力雪藏。",
+        },
+    },
+    {
+        "preset_id": "anthropic-claude",
+        "name": "Anthropic Claude",
+        "category": "text",
+        "description": "Anthropic Claude Messages API with current Opus, Sonnet, and Haiku presets.",
+        "provider": {
+            "id": "anthropic-claude",
+            "display_name": "Anthropic Claude",
+            "kind": "anthropic",
+            "short_alias": "claude",
+            "base_url": "https://api.anthropic.com/v1",
+            "api_format": "anthropic",
+            "auth_mode": "provider_api_key",
+            "native_currency": "USD",
+            "country_region": "US",
+            "catalog_visibility": "selected_models",
+            "capabilities": {
+                "text": True,
+                "vision": True,
+                "tools": True,
+                "reasoning": True,
+                "streaming": True,
+                "models": True,
+            },
+            "responses_profile": {
+                "domestic_responses": False,
+                "partial_compatibility": False,
+                "requires_adapter": True,
+                "verified_docs_url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+                "compatibility_notes": "Codex Responses requests are converted to Anthropic Messages by the local proxy.",
+                "unsupported_fields": ["native_responses"],
+            },
+            "models": [
+                {
+                    "id": "claude-opus-4-8",
+                    "display_name": "Claude Opus 4.8",
+                    "selected": True,
+                    "context_window": 1000000,
+                    "capabilities": {"text": True, "vision": True, "tools": True, "reasoning": True, "streaming": True},
+                    "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+                    "reasoning_effort_parameter": "output_config.effort",
+                    "reasoning_effort_default": "high",
+                    "reasoning_effort_semantics": "token_effort",
+                    "pricing": {
+                        "native_currency": "USD",
+                        "input_per_million": 5.00,
+                        "cache_write_per_million": 6.25,
+                        "cache_read_per_million": 0.50,
+                        "output_per_million": 25.00,
+                    },
+                    "native_currency": "USD",
+                },
+                {
+                    "id": "claude-sonnet-4-6",
+                    "display_name": "Claude Sonnet 4.6",
+                    "selected": True,
+                    "context_window": 1000000,
+                    "capabilities": {"text": True, "vision": True, "tools": True, "reasoning": True, "streaming": True},
+                    "reasoning_efforts": ["low", "medium", "high", "max"],
+                    "reasoning_effort_parameter": "output_config.effort",
+                    "reasoning_effort_default": "high",
+                    "reasoning_effort_semantics": "token_effort",
+                    "pricing": {
+                        "native_currency": "USD",
+                        "input_per_million": 3.00,
+                        "cache_write_per_million": 3.75,
+                        "cache_read_per_million": 0.30,
+                        "output_per_million": 15.00,
+                    },
+                    "native_currency": "USD",
+                },
+                {
+                    "id": "claude-haiku-4-5-20251001",
+                    "display_name": "Claude Haiku 4.5",
+                    "selected": False,
+                    "context_window": 200000,
+                    "capabilities": {"text": True, "vision": True, "tools": True, "reasoning": False, "streaming": True},
+                    "aliases": ["claude-haiku-4-5"],
+                    "reasoning_efforts": [],
+                    "reasoning_effort_parameter": "disabled",
+                    "reasoning_effort_semantics": "unsupported",
+                    "pricing": {
+                        "native_currency": "USD",
+                        "input_per_million": 1.00,
+                        "cache_write_per_million": 1.25,
+                        "cache_read_per_million": 0.10,
+                        "output_per_million": 5.00,
+                    },
+                    "native_currency": "USD",
+                },
+            ],
+            "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
+            "user_agent": "Codex-Enhance-Manager/0.1",
+            "caveat": "Anthropic 使用 Messages API，本工具会在本地代理中把 Codex Responses 请求转换为 Anthropic Messages；Haiku 4.5 不发送 effort。",
+            "notes": "价格、上下文和 effort 档位来自 Anthropic 官方 Models/Pricing/Effort 文档。",
+        },
+    },
+    {
         "preset_id": "openai-compatible-images",
         "name": "OpenAI-compatible Images",
         "category": "media",
@@ -1568,6 +2070,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
     },
     {
         "preset_id": "openai-compatible-videos",
+        "hidden": True,
         "name": "OpenAI-compatible Videos",
         "category": "media",
         "description": "OpenAI Video API compatible provider for /v1/videos submit/retrieve/delete.",
@@ -1687,7 +2190,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
             "caveat": "本地代理增强：不会改登录文件；如需生成图片，请确认供应商支持 OpenAI 兼容的图片接口。",
-            "notes": "适合把文本模型和图片模型放在同一个本地代理里；如果上游没有图片接口，可在图片/视频设置里启用全局兜底。",
+            "notes": "适合把文本模型和图片模型放在同一个本地代理里；如果上游没有图片接口，可在图片设置里启用全局兜底。",
         },
     },
     {
@@ -1740,12 +2243,12 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
     },
     {
         "preset_id": "volcengine-ark-text-media",
-        "name": "Volcengine Ark",
+        "name": "火山引擎",
         "category": "domestic",
         "description": "Placeholder preset for Ark text plus Seedream/Seedance media adapters.",
         "provider": {
             "id": "volcengine-ark",
-            "display_name": "Volcengine Ark",
+            "display_name": "火山引擎",
             "kind": "volcengine_ark",
             "short_alias": "ark",
             "base_url": "https://ark.cn-beijing.volces.com/api/v3",
@@ -1785,6 +2288,80 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
             "notes": "Seedream/Seedance payloads require implementation-time doc verification.",
+        },
+    },
+    {
+        "preset_id": "volcengine-coding-plan",
+        "name": "Volcengine Coding Plan",
+        "category": "domestic",
+        "description": "Volcengine Ark Coding Plan endpoint. This is separate from standard Ark API.",
+        "provider": {
+            "id": "volcengine-plan",
+            "display_name": "Volcengine Coding Plan",
+            "codex_visible_alias": "Ark Coding Plan",
+            "kind": "volcengine_ark_coding_plan",
+            "short_alias": "arkcoding",
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "api_format": "openai_chat",
+            "auth_mode": "provider_api_key",
+            "native_currency": "CNY",
+            "country_region": "CN",
+            "catalog_visibility": "focused_only",
+            "capabilities": {
+                "text": True,
+                "vision": True,
+                "tools": True,
+                "streaming": True,
+                "models": True,
+            },
+            "responses_profile": {
+                "domestic_responses": False,
+                "partial_compatibility": False,
+                "requires_adapter": True,
+                "compatibility_notes": "Coding Plan uses an OpenAI-compatible Chat Completions surface. Keep it separate from standard Ark and Agent Plan endpoints.",
+                "unsupported_fields": ["native_responses"],
+            },
+            "models": copy.deepcopy(VOLCENGINE_CODING_PLAN_MODELS),
+            "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
+            "user_agent": "Codex-Enhance-Manager/0.1",
+            "notes": "Public template only. Fill your own Ark key locally; no private token is bundled.",
+        },
+    },
+    {
+        "preset_id": "volcengine-agent-plan",
+        "name": "Volcengine Agent Plan",
+        "category": "domestic",
+        "description": "Volcengine Ark Agent Plan endpoint. This is separate from standard Ark and Coding Plan APIs.",
+        "provider": {
+            "id": "volcengine-agent-plan",
+            "display_name": "Volcengine Agent Plan",
+            "codex_visible_alias": "Ark Agent Plan",
+            "kind": "volcengine_ark_agent_plan",
+            "short_alias": "arkagent",
+            "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+            "api_format": "openai_chat",
+            "auth_mode": "provider_api_key",
+            "native_currency": "CNY",
+            "country_region": "CN",
+            "catalog_visibility": "focused_only",
+            "capabilities": {
+                "text": True,
+                "vision": True,
+                "tools": True,
+                "streaming": True,
+                "models": True,
+            },
+            "responses_profile": {
+                "domestic_responses": False,
+                "partial_compatibility": False,
+                "requires_adapter": True,
+                "compatibility_notes": "Agent Plan uses an OpenAI-compatible Chat Completions surface. Keep it separate from standard Ark and Coding Plan endpoints.",
+                "unsupported_fields": ["native_responses"],
+            },
+            "models": copy.deepcopy(VOLCENGINE_AGENT_PLAN_MODELS),
+            "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
+            "user_agent": "Codex-Enhance-Manager/0.1",
+            "notes": "Public template only. Fill your own Ark key locally; no private token is bundled.",
         },
     },
     {
@@ -2020,7 +2597,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "capabilities": {
                 "text": True,
                 "vision": False,
-                "tools": False,
+                "tools": True,
                 "reasoning": False,
                 "streaming": True,
                 "models": True,
@@ -2143,7 +2720,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "capabilities": {
                 "text": True,
                 "vision": False,
-                "tools": False,
+                "tools": True,
                 "reasoning": False,
                 "streaming": True,
                 "models": True,
@@ -2229,7 +2806,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "capabilities": {
                 "text": True,
                 "vision": False,
-                "tools": False,
+                "tools": True,
                 "reasoning": False,
                 "streaming": True,
                 "models": True,

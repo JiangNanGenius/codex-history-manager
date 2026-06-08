@@ -19,6 +19,7 @@ class BuildExeReleaseTest(unittest.TestCase):
             "amr_registry",
             "capabilities",
             "currency",
+            "desktop_shortcuts",
             "diagnostics",
             "domestic_responses",
             "media_adapters",

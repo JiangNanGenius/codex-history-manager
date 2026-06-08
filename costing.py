@@ -13,6 +13,18 @@ from currency import build_rate_snapshot, normalize_currency_code
 
 
 TOKEN_UNIT = 1_000_000
+NON_ESTIMATED_BILLING_MODES = {
+    "token_plan",
+    "token_plan_monthly",
+    "monthly_plan",
+    "subscription",
+    "package",
+    "credits_plan",
+    "usage_unavailable",
+    "unmetered",
+    "manual",
+}
+DISABLED_COST_ESTIMATION_VALUES = {"disabled", "off", "none", "unavailable", "manual"}
 
 
 PRICE_ALIASES = {
@@ -52,37 +64,63 @@ def estimate_request_cost(
     cache_read_tokens = _int(usage.get("cache_read_tokens") or usage.get("cached_input_tokens"))
     cache_write_tokens = _int(usage.get("cache_creation_tokens") or usage.get("cache_write_tokens"))
     reasoning_tokens = _int(usage.get("reasoning_tokens"))
+    usage_summary = {
+        "input_tokens": input_tokens,
+        "billable_input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "input_includes_cache_read": bool(pricing.get("input_includes_cache_read", usage.get("input_includes_cache_read", True))),
+    }
 
-    input_includes_cache_read = bool(pricing.get("input_includes_cache_read", usage.get("input_includes_cache_read", True)))
+    non_estimated = _non_estimated_billing_mode(pricing)
+    if non_estimated:
+        return _non_estimated_result(
+            native=native,
+            display=display,
+            usage_summary=usage_summary,
+            pricing=pricing,
+            billing_mode=non_estimated,
+            currency_settings=currency_settings,
+            now=now,
+        )
+
+    tier_info = select_pricing_tier(pricing, usage_summary)
+    effective_pricing = tier_info.get("pricing") if isinstance(tier_info.get("pricing"), dict) else pricing
+
+    input_includes_cache_read = bool(effective_pricing.get("input_includes_cache_read", usage.get("input_includes_cache_read", True)))
     billable_input_tokens = input_tokens
     if input_includes_cache_read:
         billable_input_tokens = max(input_tokens - cache_read_tokens, 0)
+    usage_summary["billable_input_tokens"] = billable_input_tokens
+    usage_summary["input_includes_cache_read"] = input_includes_cache_read
 
     components = {
-        "input": _token_cost(billable_input_tokens, _price(pricing, "input_per_million")),
-        "output": _token_cost(output_tokens, _price(pricing, "output_per_million")),
-        "cache_read": _token_cost(cache_read_tokens, _price(pricing, "cache_read_per_million")),
-        "cache_write": _token_cost(cache_write_tokens, _price(pricing, "cache_write_per_million")),
-        "reasoning": _token_cost(reasoning_tokens, _price(pricing, "reasoning_per_million")),
-        "images": _int(usage.get("image_count") or usage.get("images")) * _price(pricing, "per_image"),
-        "video_jobs": _int(usage.get("video_job_count") or usage.get("video_count") or usage.get("videos")) * _price(pricing, "per_video_job"),
-        "video_seconds": _float(usage.get("video_seconds")) * _price(pricing, "per_video_second"),
+        "input": _token_cost(billable_input_tokens, _price(effective_pricing, "input_per_million")),
+        "output": _token_cost(output_tokens, _price(effective_pricing, "output_per_million")),
+        "cache_read": _token_cost(cache_read_tokens, _price(effective_pricing, "cache_read_per_million")),
+        "cache_write": _token_cost(cache_write_tokens, _price(effective_pricing, "cache_write_per_million")),
+        "reasoning": _token_cost(reasoning_tokens, _price(effective_pricing, "reasoning_per_million")),
+        "images": _int(usage.get("image_count") or usage.get("images")) * _price(effective_pricing, "per_image"),
+        "video_jobs": _int(usage.get("video_job_count") or usage.get("video_count") or usage.get("videos")) * _price(effective_pricing, "per_video_job"),
+        "video_seconds": _float(usage.get("video_seconds")) * _price(effective_pricing, "per_video_second"),
     }
     components = {key: round(value, 12) for key, value in components.items() if value}
     subtotal_native = round(sum(components.values()), 12)
 
-    request_minimum = _price(pricing, "request_minimum")
+    request_minimum = _price(effective_pricing, "request_minimum")
     minimum_adjustment = round(max(request_minimum - subtotal_native, 0.0), 12)
     after_minimum = subtotal_native + minimum_adjustment
 
-    multiplier = _price(pricing, "provider_cost_multiplier") or 1.0
+    multiplier = _price(effective_pricing, "provider_cost_multiplier") or 1.0
     after_multiplier = round(after_minimum * multiplier, 12)
 
-    discount_percent = _price(pricing, "discount_percent")
+    discount_percent = _price(effective_pricing, "discount_percent")
     discount_amount = round(after_multiplier * max(discount_percent, 0.0) / 100.0, 12)
     after_discount = max(after_multiplier - discount_amount, 0.0)
 
-    tax_percent = _price(pricing, "tax_percent")
+    tax_percent = _price(effective_pricing, "tax_percent")
     tax_amount = round(after_discount * max(tax_percent, 0.0) / 100.0, 12)
     total_native = round(after_discount + tax_amount, 12)
 
@@ -98,15 +136,8 @@ def estimate_request_cost(
         "estimate": True,
         "native_currency": native,
         "display_currency": display,
-        "usage": {
-            "input_tokens": input_tokens,
-            "billable_input_tokens": billable_input_tokens,
-            "output_tokens": output_tokens,
-            "cache_read_tokens": cache_read_tokens,
-            "cache_write_tokens": cache_write_tokens,
-            "reasoning_tokens": reasoning_tokens,
-            "input_includes_cache_read": input_includes_cache_read,
-        },
+        "usage": usage_summary,
+        "selected_pricing_tier": tier_info.get("selected_tier"),
         "components_native": components,
         "subtotal_native": subtotal_native,
         "minimum_adjustment_native": minimum_adjustment,
@@ -117,7 +148,7 @@ def estimate_request_cost(
         "fx_snapshot": fx_snapshot,
         "components_display": components_display,
         "total_display": total_display,
-        "warnings": _warnings(pricing, fx_snapshot),
+        "warnings": _warnings(effective_pricing, fx_snapshot, tier_info),
     }
 
 
@@ -154,6 +185,53 @@ def _find_model(provider: Dict[str, Any], model_id: str) -> Optional[Dict[str, A
     return None
 
 
+def select_pricing_tier(pricing: Dict[str, Any], usage_summary: Dict[str, Any]) -> Dict[str, Any]:
+    tiers = pricing.get("tiered_pricing") or pricing.get("pricing_tiers") or pricing.get("tiers")
+    if not isinstance(tiers, list) or not tiers:
+        return {"pricing": pricing, "selected_tier": None}
+    basis = str(pricing.get("tier_basis") or "input_tokens").strip() or "input_tokens"
+    basis_value = _tier_basis_value(basis, usage_summary)
+    normalized_tiers = [tier for tier in tiers if isinstance(tier, dict)]
+    if not normalized_tiers:
+        return {"pricing": pricing, "selected_tier": None}
+    selected_index = len(normalized_tiers) - 1
+    selected = normalized_tiers[-1]
+    for idx, tier in enumerate(normalized_tiers):
+        max_tokens = _tier_max_tokens(tier)
+        min_tokens = _int(tier.get("min_input_tokens") or tier.get("min_tokens"))
+        if min_tokens and basis_value < min_tokens:
+            continue
+        if max_tokens <= 0 or basis_value <= max_tokens:
+            selected_index = idx
+            selected = tier
+            break
+
+    merged = copy_pricing_without_tiers(pricing)
+    for key, value in selected.items():
+        if key not in {"min_input_tokens", "min_tokens", "max_input_tokens", "max_tokens", "up_to", "upto", "label", "name"}:
+            merged[key] = value
+    return {
+        "pricing": merged,
+        "selected_tier": {
+            "index": selected_index,
+            "label": selected.get("label") or selected.get("name") or f"tier-{selected_index + 1}",
+            "basis": basis,
+            "basis_value": basis_value,
+            "min_tokens": _int(selected.get("min_input_tokens") or selected.get("min_tokens")),
+            "max_tokens": _tier_max_tokens(selected),
+            "applies_to": pricing.get("tier_applies_to") or "all_tokens",
+        },
+    }
+
+
+def copy_pricing_without_tiers(pricing: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in (pricing or {}).items()
+        if key not in {"tiered_pricing", "pricing_tiers", "tiers"}
+    }
+
+
 def _price(pricing: Dict[str, Any], canonical: str) -> float:
     for key in PRICE_ALIASES[canonical]:
         if key in pricing:
@@ -167,14 +245,90 @@ def _token_cost(tokens: int, per_million: float) -> float:
     return (tokens / TOKEN_UNIT) * per_million
 
 
-def _warnings(pricing: Dict[str, Any], fx_snapshot: Dict[str, Any]) -> list[str]:
+def _warnings(pricing: Dict[str, Any], fx_snapshot: Dict[str, Any], tier_info: Optional[Dict[str, Any]] = None) -> list[str]:
     warnings = ["Local cost is an estimate unless provider-reported invoice-grade cost is available."]
     if not pricing:
         warnings.append("No pricing table was supplied; total will be zero until pricing is configured.")
+    if tier_info and tier_info.get("selected_tier"):
+        tier = tier_info["selected_tier"]
+        warnings.append(
+            "Tiered pricing selected by "
+            f"{tier.get('basis')}={tier.get('basis_value')}; all request tokens use the selected tier."
+        )
     if not fx_snapshot.get("success"):
         warnings.append(str(fx_snapshot.get("error") or "FX conversion failed."))
     warnings.extend(str(item) for item in fx_snapshot.get("warnings", []))
     return warnings
+
+
+def _non_estimated_billing_mode(pricing: Dict[str, Any]) -> str:
+    mode = str(pricing.get("billing_mode") or pricing.get("usage_metering") or "").strip().lower()
+    cost_estimation = str(pricing.get("cost_estimation") or "").strip().lower()
+    if pricing.get("estimate") is False:
+        return mode or "manual"
+    if cost_estimation in DISABLED_COST_ESTIMATION_VALUES:
+        return mode or cost_estimation
+    if mode in NON_ESTIMATED_BILLING_MODES:
+        return mode
+    return ""
+
+
+def _non_estimated_result(
+    native: str,
+    display: str,
+    usage_summary: Dict[str, Any],
+    pricing: Dict[str, Any],
+    billing_mode: str,
+    currency_settings: Dict[str, Any],
+    now: Optional[Any],
+) -> Dict[str, Any]:
+    fx_snapshot = build_rate_snapshot(currency_settings, native, display, now=now)
+    return {
+        "estimate": False,
+        "billing_mode": billing_mode,
+        "native_currency": native,
+        "display_currency": display,
+        "usage": usage_summary,
+        "selected_pricing_tier": None,
+        "components_native": {},
+        "subtotal_native": None,
+        "minimum_adjustment_native": None,
+        "multiplier": None,
+        "discount_amount_native": None,
+        "tax_amount_native": None,
+        "total_native": None,
+        "fx_snapshot": fx_snapshot,
+        "components_display": {},
+        "total_display": None,
+        "warnings": [
+            f"Cost estimation is disabled for billing mode '{billing_mode}'.",
+            "Use provider dashboard or quota script data for this plan.",
+        ],
+    }
+
+
+def _tier_basis_value(basis: str, usage_summary: Dict[str, Any]) -> int:
+    if basis in {"billable_input_tokens", "billable_input"}:
+        return _int(usage_summary.get("billable_input_tokens"))
+    if basis in {"input_plus_cache", "input_with_cache"}:
+        return (
+            _int(usage_summary.get("input_tokens"))
+            + _int(usage_summary.get("cache_read_tokens"))
+            + _int(usage_summary.get("cache_write_tokens"))
+        )
+    if basis in {"total_tokens", "all_tokens"}:
+        return (
+            _int(usage_summary.get("input_tokens"))
+            + _int(usage_summary.get("output_tokens"))
+            + _int(usage_summary.get("cache_read_tokens"))
+            + _int(usage_summary.get("cache_write_tokens"))
+            + _int(usage_summary.get("reasoning_tokens"))
+        )
+    return _int(usage_summary.get("input_tokens"))
+
+
+def _tier_max_tokens(tier: Dict[str, Any]) -> int:
+    return _int(tier.get("max_input_tokens") or tier.get("max_tokens") or tier.get("up_to") or tier.get("upto"))
 
 
 def _int(value: Any) -> int:

@@ -66,6 +66,24 @@ class ProviderRoutingTest(unittest.TestCase):
                         ],
                     },
                     {
+                        "id": "ark-code-plan",
+                        "short_alias": "arkplan",
+                        "codex_visible_alias": "Ark Coding Plan",
+                        "display_name": "Volcengine Coding Plan",
+                        "enabled": True,
+                        "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+                        "api_key": "sk-ark",
+                        "user_agent": "CodexPlusPlus-Compatible/1.0",
+                        "models": [
+                            {
+                                "id": "ark-code-latest",
+                                "enabled": True,
+                                "display_name": "Ark Code Latest",
+                                "codex_visible_id": "Ark Code Latest",
+                            }
+                        ],
+                    },
+                    {
                         "id": "disabled-provider",
                         "short_alias": "disabled",
                         "display_name": "Disabled",
@@ -152,6 +170,20 @@ class ProviderRoutingTest(unittest.TestCase):
         self.assertEqual(route["upstream_model"], "qwen3-coder-plus")
         self.assertTrue(any("Model alias rewrite" in item for item in route["route_explanation"]))
 
+    def test_visible_provider_and_model_names_route_to_real_ids(self):
+        route = _resolve_provider_route_for_model("Ark Coding Plan/Ark Code Latest", {"capabilities": ["text"]})
+        self.assertTrue(route["success"])
+        self.assertEqual(route["provider"]["id"], "ark-code-plan")
+        self.assertEqual(route["upstream_model"], "ark-code-latest")
+        self.assertEqual(route["model"]["id"], "ark-code-latest")
+        self.assertTrue(any("Model alias rewrite" in item for item in route["route_explanation"]))
+
+    def test_visible_provider_prefix_keeps_user_agent_headers(self):
+        provider = _resolve_provider_for_model("Ark Coding Plan/Ark Code Latest")
+        self.assertIsNotNone(provider)
+        headers = _build_upstream_headers(provider)
+        self.assertEqual(headers["User-Agent"], "CodexPlusPlus-Compatible/1.0")
+
 
 class ModelIdExtractionTest(unittest.TestCase):
     def test_provider_prefix_removed(self):
@@ -188,6 +220,20 @@ class ModelIdExtractionTest(unittest.TestCase):
         provider = {"alias_patterns": [{"pattern": "(", "replacement": "broken"}]}
         result = _extract_model_id_for_upstream({"model": "fast-qwen"}, provider)
         self.assertEqual(result, "fast-qwen")
+
+    def test_visible_model_name_rewrites_to_upstream_id(self):
+        provider = {
+            "models": [
+                {
+                    "id": "ark-code-latest",
+                    "enabled": True,
+                    "display_name": "Ark Code Latest",
+                    "codex_visible_id": "Ark Code Latest",
+                }
+            ]
+        }
+        result = _extract_model_id_for_upstream({"model": "Ark Coding Plan/Ark Code Latest"}, provider)
+        self.assertEqual(result, "ark-code-latest")
 
 
 class HeaderBuilderTest(unittest.TestCase):

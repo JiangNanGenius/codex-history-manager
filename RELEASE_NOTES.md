@@ -1,5 +1,27 @@
 # Release Notes
 
+## v2.2.12 - 2026-06-09
+
+### 中文
+
+- 重做供应商页的信息架构：模型上下文窗口、接口覆盖、是否显示给 Codex、模型级文本/视觉/工具/图片/视频能力全部放到供应商编辑器的“模型明细”区。
+- 保留高级批量模型清单，方便粘贴和迁移；保存、预览和测试优先读取新的可视化模型明细表。
+- “模型轮换”正式改名为“智能路由”，用户可见的导航、说明、官方模式提示和 README 已统一改名。
+- Codex 集成页新增三张连接模式卡：官方直连、保留登录 + 本地代理、第三方/本地代理；切回官方的入口现在直接可见并可一键启动。
+- 设置向导增加当前步骤卡和进度条，步骤状态、说明和完成度会随切换同步，整体更接近真正的设置向导。
+- 本次 EXE 大小 `73.22 MB`，SHA256 `896b034d5a81807c16bdf7ba555eba846b7266435f8d694170c36ffebd9d22e3`。
+- 已通过 `python -m pytest -q`、前端 JS 静态检查、`python build_exe.py --no-desktop-copy --smoke-test --write-release-manifest`。
+
+### English
+
+- Reworked Provider information architecture: model context window, interface override, Codex visibility, and model-level text, vision, tools, image, and video capabilities now live in the Provider editor’s Model Details section.
+- Kept the advanced bulk model list for paste/migration workflows; save, preview, and test flows now prefer the visual Model Details table.
+- Renamed user-facing “Model Rotation” to “Smart Routing” across navigation, copy, official-mode warnings, and README.
+- Added three obvious connection-mode cards on Codex Integration: Official Direct, Keep Login + Local Proxy, and Third-party / Local Proxy, so switching back to official is discoverable and launchable.
+- Improved the Settings Wizard with a current-step card and progress bar that sync title, detail, status, and completion as the user moves through steps.
+- This EXE is `73.22 MB` with SHA256 `896b034d5a81807c16bdf7ba555eba846b7266435f8d694170c36ffebd9d22e3`.
+- Verified with `python -m pytest -q`, frontend JS static checks, and `python build_exe.py --no-desktop-copy --smoke-test --write-release-manifest`.
+
 ## v2.2.11 - 2026-06-09
 
 ### 中文

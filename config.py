@@ -19,6 +19,8 @@ from local_proxy_auth import generate_local_proxy_bearer_token, local_proxy_toke
 from auto_detect import (
     detect_archived_dir,
     detect_codex_db,
+    detect_codex_desktop,
+    detect_codex_launch_path,
     detect_codex_plus_plus,
     detect_sessions_dir,
 )
@@ -50,6 +52,7 @@ DEFAULT_CONFIG = {
     "request_log_retention_days": 30,
     "request_log_max_mb": 50,
     "close_button_action": "ask",
+    "desktop_launch_action": "show_window",
     "desktop_monitor_enabled": True,
     "desktop_monitor_opacity": 88,
     "update_check_enabled": True,
@@ -57,7 +60,9 @@ DEFAULT_CONFIG = {
     "plugin_unlock_enabled": False,
     "codex_cdp_port": 51236,
     "codex_injection_enabled": True,
+    "codex_last_start_mode": "",
     "codex_goals_enabled": True,
+    "codex_sandbox_auto_repair_enabled": False,
     "local_proxy_bearer_token": "",
     "proxy_upstream_timeout_seconds": 120,
     "proxy_retry_attempts": 0,
@@ -70,7 +75,7 @@ DEFAULT_CONFIG = {
     "startup_shortcut_name": "CodexEnhanceManager.cmd",
     "startup_target_path": "",
     "startup_arguments": "",
-    "proxy_port": 8080,
+    "proxy_port": 51235,
     "dark_mode": True,
     "theme_preset": "dark",
     "theme_custom": {
@@ -95,6 +100,7 @@ DEFAULT_CONFIG = {
         "progress": True,
         "threshold": True,
         "speed": True,
+        "balance": True,
         "cache": True,
         "context_window": True,
         "updated_at": True,
@@ -235,6 +241,8 @@ class Config:
             self._data["exchange_rate_source"] = DEFAULT_CONFIG["exchange_rate_source"]
         if self._data.get("close_button_action") not in {"ask", "exit", "tray"}:
             self._data["close_button_action"] = DEFAULT_CONFIG["close_button_action"]
+        if self._data.get("desktop_launch_action") not in {"show_window", "start_codex"}:
+            self._data["desktop_launch_action"] = DEFAULT_CONFIG["desktop_launch_action"]
         monitor_enabled = self._data.get("desktop_monitor_enabled")
         if isinstance(monitor_enabled, str):
             self._data["desktop_monitor_enabled"] = monitor_enabled.strip().lower() not in {"0", "false", "no", "off"}
@@ -253,6 +261,7 @@ class Config:
             "plugin_unlock_enabled",
             "codex_injection_enabled",
             "codex_goals_enabled",
+            "codex_sandbox_auto_repair_enabled",
         ):
             value = self._data.get(key)
             if isinstance(value, str):
@@ -263,6 +272,8 @@ class Config:
             self._data["codex_cdp_port"] = min(max(int(self._data.get("codex_cdp_port", 51236)), 1), 65535)
         except (TypeError, ValueError):
             self._data["codex_cdp_port"] = DEFAULT_CONFIG["codex_cdp_port"]
+        if self._data.get("codex_last_start_mode") not in {"", "proxy_injection", "preserve_login_proxy", "official_direct"}:
+            self._data["codex_last_start_mode"] = ""
         for key in (
             "startup_enabled",
             "startup_mode",
@@ -313,6 +324,13 @@ class Config:
             self._data["proxy_retry_backoff_ms"] = min(max(int(self._data.get("proxy_retry_backoff_ms", 250)), 0), 30000)
         except (TypeError, ValueError):
             self._data["proxy_retry_backoff_ms"] = 250
+        try:
+            proxy_port = int(self._data.get("proxy_port", DEFAULT_CONFIG["proxy_port"]))
+        except (TypeError, ValueError):
+            proxy_port = DEFAULT_CONFIG["proxy_port"]
+        if proxy_port == 8080 or proxy_port < 1 or proxy_port > 65535:
+            proxy_port = DEFAULT_CONFIG["proxy_port"]
+        self._data["proxy_port"] = proxy_port
         self._data["auto_approval_system_prompt"] = normalize_auto_approval_system_prompt(
             self._data.get("auto_approval_system_prompt")
         )
@@ -349,6 +367,12 @@ class Config:
             detected = detect_codex_plus_plus()
             if detected:
                 self._data["codex_plus_plus_path"] = detected
+                changed = True
+
+        if not self._data.get("codex_cli_path"):
+            detected = detect_codex_desktop() or detect_codex_launch_path()
+            if detected:
+                self._data["codex_cli_path"] = detected
                 changed = True
 
         if changed:

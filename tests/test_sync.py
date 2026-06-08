@@ -135,7 +135,7 @@ class SyncHelpersTest(unittest.TestCase):
         with patch.dict(sync.os.environ, {"LOCALAPPDATA": local, "CODEX_CLI_PATH": ""}), \
                 patch.object(sync.os.path, "exists", side_effect=lambda path: path in existing), \
                 patch.object(sync.os, "listdir", return_value=["b"]), \
-                patch.object(sync, "_windowsapps_codex_gui_candidates", return_value=[windowsapps_gui]), \
+                patch.object(sync, "find_codex_desktop_launchers", return_value=[appdata_gui, windowsapps_gui]), \
                 patch.object(sync.shutil, "which", return_value=path_cli):
             candidates = sync.codex_launch_candidates(codex_cli_path=configured_cli)
 
@@ -143,6 +143,31 @@ class SyncHelpersTest(unittest.TestCase):
         self.assertLess(candidates.index(windowsapps_gui), candidates.index(configured_cli))
         self.assertIn(bin_cli, candidates)
         self.assertEqual(candidates[-1], path_cli)
+
+    def test_find_codex_desktop_launchers_requires_app_asar_and_uses_latest_squirrel_app(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / "Local"
+            old_root = local / "Programs" / "Codex" / "app-2.9.0"
+            new_root = local / "Programs" / "Codex" / "app-2.10.0"
+            cli_root = local / "OpenAI" / "Codex" / "bin" / "latest"
+            for root in (old_root, new_root):
+                (root / "resources").mkdir(parents=True)
+                (root / "resources" / "app.asar").write_text("asar", encoding="utf-8")
+                (root / "Codex.exe").write_text("", encoding="utf-8")
+            cli_root.mkdir(parents=True)
+            (cli_root / "codex.exe").write_text("", encoding="utf-8")
+
+            with patch.object(sync.os, "name", "nt"), \
+                    patch.dict(sync.os.environ, {
+                        "LOCALAPPDATA": str(local),
+                        "ProgramFiles": str(Path(tmp) / "PF"),
+                        "ProgramFiles(x86)": "",
+                    }), \
+                    patch.object(sync, "_windows_store_codex_installs", return_value=[]):
+                launchers = sync.find_codex_desktop_launchers()
+
+        self.assertEqual(Path(launchers[0]).parent.name, "app-2.10.0")
+        self.assertNotIn(str(cli_root / "codex.exe"), launchers)
 
     def test_launch_codex_path_passes_extra_args(self):
         with patch("subprocess.Popen") as popen, patch.object(sync.os, "name", "posix"):

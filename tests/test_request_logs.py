@@ -150,7 +150,7 @@ class RequestLogStoreTest(unittest.TestCase):
                     "total_cost": 0.08,
                     "currency": "USD",
                 },
-                "debug": {"api_key": "sk-should-not-appear"},
+                "debug": {"api_key": "test-secret-should-not-appear"},
             },
             currency_settings={"display_currency": "USD"},
         )
@@ -162,7 +162,13 @@ class RequestLogStoreTest(unittest.TestCase):
             "source": "usage.total_cost",
             "currency_inferred": False,
         })
-        self.assertNotIn("sk-should-not-appear", json.dumps(entry))
+        self.assertEqual(entry["effective_cost"], {
+            "amount": 0.08,
+            "currency": "USD",
+            "source": "usage.total_cost",
+            "estimated": False,
+        })
+        self.assertNotIn("test-secret-should-not-appear", json.dumps(entry))
 
     def test_store_summary_and_filters_are_metadata_only(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -175,7 +181,7 @@ class RequestLogStoreTest(unittest.TestCase):
                 "status_code": 200,
                 "success": True,
                 "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_tokens": 3},
-                "error_message": "Bearer sk-should-redact",
+                "error_message": "Bearer test-secret-should-redact",
             })
             store.append({
                 "endpoint": "responses",
@@ -193,7 +199,7 @@ class RequestLogStoreTest(unittest.TestCase):
 
             p1_entries = store.read_entries(provider_id="p1")["entries"]
             self.assertEqual(len(p1_entries), 1)
-            self.assertNotIn("sk-should-redact", path.read_text(encoding="utf-8"))
+            self.assertNotIn("test-secret-should-redact", path.read_text(encoding="utf-8"))
 
     def test_read_entries_filters_media_kind_and_error_type(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -310,6 +316,11 @@ class RequestLogStoreTest(unittest.TestCase):
             summary = store.summary()
 
             self.assertEqual(summary["provider_reported_cost_by_currency"], {"USD": 0.08})
+            self.assertEqual(summary["effective_cost_by_currency"], {"USD": 0.28})
+            self.assertEqual(summary["effective_cost_source_counts"], {
+                "provider_reported": 1,
+                "local_estimate": 1,
+            })
             self.assertEqual(summary["cost_comparison"]["estimated_count"], 2)
             self.assertEqual(summary["cost_comparison"]["reported_count"], 1)
             self.assertEqual(summary["cost_comparison"]["estimated_only_count"], 1)
@@ -318,6 +329,35 @@ class RequestLogStoreTest(unittest.TestCase):
                 summary["cost_comparison"]["estimated_minus_reported_by_currency"]["USD"],
                 0.02,
             )
+
+    def test_summary_filters_costs_by_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "proxy_requests.jsonl"
+            store = RequestLogStore(path, retention_days=30, max_mb=1)
+            store.append({
+                "endpoint": "responses",
+                "provider_id": "p1",
+                "status_code": 200,
+                "success": True,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "cost_estimate": {"total_native": 0.1, "native_currency": "USD"},
+            })
+            store.append({
+                "endpoint": "responses",
+                "provider_id": "p2",
+                "status_code": 200,
+                "success": True,
+                "usage": {"input_tokens": 20, "output_tokens": 10},
+                "cost_estimate": {"total_native": 0.2, "native_currency": "USD"},
+            })
+
+            summary = store.summary(provider_id="p1")
+
+            self.assertEqual(summary["filter"]["provider_id"], "p1")
+            self.assertEqual(summary["count"], 1)
+            self.assertEqual(summary["providers"], {"p1": 1})
+            self.assertEqual(summary["tokens"]["input_tokens"], 10)
+            self.assertEqual(summary["effective_cost_by_currency"], {"USD": 0.1})
 
     def test_enforce_retention_by_age_and_size(self):
         with tempfile.TemporaryDirectory() as tmpdir:
