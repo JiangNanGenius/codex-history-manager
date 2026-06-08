@@ -98,6 +98,19 @@ def test_provider_request_preview_ui_is_wired():
     assert "requestHeadersRedacted" in js
 
 
+def test_native_responses_and_codex_login_provider_locks_are_wired():
+    js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+    assert "NATIVE_LOCKED_CAPABILITIES" in js
+    assert "renderResponsesModeSegment" in js
+    assert "syncResponsesModeControls" in js
+    assert "isCodexLoginProvider" in js
+    assert "nativeCapabilitiesLocked" in js
+    assert "codexLoginProviderReadOnly" in js
+    assert "preserveLoginProxyModeDesc" in i18n
+
+
 def test_media_route_guidance_ui_is_wired():
     js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
     i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
@@ -112,17 +125,43 @@ def test_media_route_guidance_ui_is_wired():
     assert "mediaConfigureMediaFallbackAction" in i18n
 
 
+def test_user_facing_preview_copy_is_reframed_as_checks():
+    i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
+    providers_js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    amr_js = (ROOT / "static" / "js" / "amr.js").read_text(encoding="utf-8")
+
+    assert "历史用量来源" in i18n
+    assert "请求路径检查" in i18n
+    assert "图片/视频生成能力检查" in i18n
+    assert "审批规则测试" in i18n
+    assert "将保存的 Codex 连接" in i18n
+    assert "模型列表预览" not in i18n
+    assert "图片/视频设置预览" not in i18n
+    assert "审批预览" not in i18n
+    assert "改动预览" not in i18n
+    assert "renderCodexConnectionSummary" in providers_js
+    assert "scheduleCodexConnectionCheck" in providers_js
+    assert "renderAmrBoundaryCard" in amr_js
+    assert "amrBoundaryProvider" in i18n
+
+
 def test_official_login_start_keeps_safe_enhancement_copy_wired():
     js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
     i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
 
     assert "startOfficialCodex" in js
+    assert "startCodexWithSelectedMode" in js
     assert "renderCodexEnhancementModeCard" in js
     assert "/api/codex/start" in js
+    assert "ci-start-mode" in js
+    assert "'preserve_login_proxy'" in js
+    assert "start_mode: 'official_direct'" in js
     assert "official_mode: true" in js
     assert "startOfficialCodex" in i18n
-    assert "Token、上下文和会话增强" in i18n
-    assert "Token, context, and session enhancements stay on" in i18n
+    assert "startModePreserveLoginProxy" in i18n
+    assert "startModeOfficialDirect" in i18n
+    assert "检测到 Codex 登录" in i18n
+    assert "local or third-party routing" in i18n
     assert "officialEnhancementModeDesc" in i18n
 
 

@@ -413,7 +413,7 @@ def _set_focus_provider(provider_id: str = "") -> dict:
 
 def _start_codex_from_desktop() -> dict:
     def worker():
-        result = _local_post_json("/api/codex/start", {})
+        result = _local_post_json("/api/codex/start", {"start_mode": "preserve_login_proxy"})
         try:
             if tray_icon is not None:
                 if result.get("success"):
@@ -472,7 +472,7 @@ def _native_window_handle(window) -> int:
                 return 0
 
 
-def _owned_window_handles_by_title(title: str) -> list[int]:
+def _owned_window_handles_by_title(title: str, visible_only: bool = False) -> list[int]:
     if os.name != "nt":
         return []
     try:
@@ -489,6 +489,8 @@ def _owned_window_handles_by_title(title: str) -> list[int]:
             pid = ctypes.wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             if int(pid.value) == current_pid:
+                if visible_only and not user32.IsWindowVisible(hwnd):
+                    return True
                 buffer = ctypes.create_unicode_buffer(256)
                 user32.GetWindowTextW(hwnd, buffer, len(buffer))
                 if buffer.value == title:
@@ -499,6 +501,19 @@ def _owned_window_handles_by_title(title: str) -> list[int]:
         return handles
     except Exception:
         return []
+
+
+def _native_monitor_window_handle(window=None) -> int:
+    """Prefer the visible Tk top-level HWND over Tk child handles."""
+    target = window or monitor_window
+    for hwnd in _owned_window_handles_by_title("Token Monitor", visible_only=True):
+        if hwnd:
+            return hwnd
+    hwnd = _native_window_handle(target)
+    if hwnd:
+        return hwnd
+    handles = _owned_window_handles_by_title("Token Monitor")
+    return handles[0] if handles else 0
 
 
 def _apply_monitor_style_to_hwnd(hwnd: int) -> bool:
@@ -648,7 +663,7 @@ def _apply_monitor_native_style(window=None) -> bool:
         return False
     target = window or monitor_window
     handles = []
-    native_hwnd = _native_window_handle(target)
+    native_hwnd = _native_monitor_window_handle(target)
     if native_hwnd:
         handles.append(native_hwnd)
     handles.extend(hwnd for hwnd in _owned_window_handles_by_title("Token Monitor") if hwnd not in handles)
@@ -670,7 +685,7 @@ def _set_monitor_native_position(window=None) -> bool:
     if os.name != "nt":
         return False
     target = window or monitor_window
-    hwnd = _native_window_handle(target)
+    hwnd = _native_monitor_window_handle(target)
     if not hwnd:
         return False
     try:
@@ -967,6 +982,7 @@ class NativeTokenMonitor:
             root.attributes("-topmost", True)
             root.geometry(f"{self.width}x{self.height}+{self.initial_x}+{self.initial_y}")
             self._apply_native_treatment()
+            self._schedule_native_treatment()
         except Exception:
             pass
 
@@ -982,9 +998,21 @@ class NativeTokenMonitor:
             pass
         try:
             _apply_monitor_native_style(self)
-            _apply_rounded_region_to_hwnd(self.window_handle(), self.width, self.height)
+            hwnd = _native_monitor_window_handle(self)
+            if hwnd:
+                _apply_rounded_region_to_hwnd(hwnd, self.width, self.height)
         except Exception:
             pass
+
+    def _schedule_native_treatment(self):
+        root = self._root
+        if root is None:
+            return
+        for delay in (80, 250):
+            try:
+                root.after(delay, self._apply_native_treatment)
+            except Exception:
+                pass
 
     def _process_commands(self):
         root = self._root
@@ -1008,6 +1036,7 @@ class NativeTokenMonitor:
             elif action == "resize":
                 root.geometry(f"{command[1]}x{command[2]}+{self.initial_x}+{self.initial_y}")
                 self._apply_native_treatment()
+                self._schedule_native_treatment()
             elif action == "stats":
                 self._refresh_in_flight = False
                 ok = bool(command[1])

@@ -117,6 +117,7 @@ function renderAmrPage() {
 
         <div class="grid grid-cols-1 2xl:grid-cols-3 gap-4 mt-6">
             <div class="space-y-4">
+                ${renderAmrBoundaryCard()}
                 ${renderAmrGroupList(groups)}
                 ${renderAmrCandidatePalette()}
             </div>
@@ -129,6 +130,20 @@ function renderAmrPage() {
     `;
     if (typeof triggerStaggerAnimations === 'function') triggerStaggerAnimations(root);
     if (typeof attachRippleToButtons === 'function') attachRippleToButtons(root);
+}
+
+function renderAmrBoundaryCard() {
+    return `
+        <div class="card">
+            <h3 class="card-title">${escapeHtml(t('amrBoundaryTitle'))}</h3>
+            <div class="space-y-2 mt-3 text-sm text-dark-300">
+                <div>${escapeHtml(t('amrBoundaryProvider'))}</div>
+                <div>${escapeHtml(t('amrBoundaryRotation'))}</div>
+                <div>${escapeHtml(t('amrBoundaryApply'))}</div>
+            </div>
+            <button onclick="navigateTo('providers')" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('amrOpenProviders'))}</button>
+        </div>
+    `;
 }
 
 function renderAmrGroupList(groups) {

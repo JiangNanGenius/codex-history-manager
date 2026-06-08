@@ -33,24 +33,41 @@ function renderProviderDist(distribution) {
     const container = document.getElementById('sync-provider-dist');
     if (!container) return;
 
-    if (distribution.length === 0) {
-        container.innerHTML = '<div class="text-dark-400 text-sm">' + t('noData') + '</div>';
+    const rows = (Array.isArray(distribution) ? distribution : [])
+        .map(d => ({
+            provider: d.provider || 'unknown',
+            tokens: Number(d.count || 0),
+        }))
+        .filter(d => d.tokens > 0);
+    const totalTokens = rows.reduce((sum, item) => sum + item.tokens, 0);
+
+    if (rows.length === 0 || totalTokens <= 0) {
+        container.innerHTML = '<div class="text-dark-400 text-sm">' + escapeHtml(t('noProviderUsageHistory')) + '</div>';
         return;
     }
 
-    const maxCount = Math.max(...distribution.map(d => d.count), 1);
+    const maxTokens = Math.max(...rows.map(d => d.tokens), 1);
 
-    container.innerHTML = distribution.map(d => {
-        const pct = Math.round((d.count / maxCount) * 100);
+    container.innerHTML = `
+        <div class="text-xs text-dark-500 mb-3">${escapeHtml(t('historyProviderUsageDesc'))}</div>
+        ${rows.map(d => {
+        const width = Math.max(4, Math.round((d.tokens / maxTokens) * 100));
+        const share = Math.round((d.tokens / totalTokens) * 100);
         return `
-            <div class="provider-bar">
-                <div class="w-24 text-sm font-medium text-dark-200 truncate">${escapeHtml(d.provider || 'unknown')}</div>
-                <div class="flex-1 bg-dark-700 rounded overflow-hidden">
-                    <div class="provider-bar-fill" style="width: ${pct}%">${formatNumber(d.count)}</div>
+            <div class="rounded-lg border border-dark-800 bg-dark-900/40 p-3">
+                <div class="flex items-center justify-between gap-3">
+                    <div class="text-sm font-medium text-dark-100 truncate">${escapeHtml(d.provider)}</div>
+                    <div class="text-xs text-dark-400">${escapeHtml(t('providerUsageShare', { value: share }))}</div>
+                </div>
+                <div class="mt-2 bg-dark-800 rounded-full overflow-hidden">
+                    <div class="provider-bar-fill rounded-full px-2 py-1 text-xs font-semibold text-white" style="width: ${width}%">
+                        ${escapeHtml(t('providerUsageTokens', { value: formatNumber(d.tokens) }))}
+                    </div>
                 </div>
             </div>
         `;
-    }).join('');
+    }).join('')}
+    `;
 }
 
 function renderCodexStatus(running, pids) {

@@ -48,6 +48,7 @@ from amr_registry import AMRRegistry
 from codex_config import (
     CodexConfigManager,
     backup_file,
+    is_official_oauth,
     redact_auth_for_preview,
     save_config_toml,
     load_config_toml as _load_config_toml,
@@ -87,6 +88,37 @@ from updater import UpdateManager
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
+START_MODE_PROXY_INJECTION = "proxy_injection"
+START_MODE_PRESERVE_LOGIN_PROXY = "preserve_login_proxy"
+START_MODE_OFFICIAL_DIRECT = "official_direct"
+START_MODES = {
+    START_MODE_PROXY_INJECTION,
+    START_MODE_PRESERVE_LOGIN_PROXY,
+    START_MODE_OFFICIAL_DIRECT,
+}
+
+
+def _normalize_codex_start_mode(body: Dict[str, Any], login_defaults: Dict[str, Any]) -> str:
+    raw_mode = str(body.get("start_mode") or "").strip()
+    if raw_mode in START_MODES:
+        return raw_mode
+    if body.get("official_mode") is True:
+        return START_MODE_OFFICIAL_DIRECT
+    return str(login_defaults.get("default_start_mode") or START_MODE_PROXY_INJECTION)
+
+
+def _official_login_defaults(mgr: CodexConfigManager) -> Dict[str, Any]:
+    official = is_official_oauth(mgr.read_auth())
+    return {
+        "official_oauth_detected": official,
+        "default_preserve_official_auth": official,
+        "default_start_mode": "preserve_login_proxy" if official else "proxy_injection",
+        "available_start_modes": [
+            START_MODE_PRESERVE_LOGIN_PROXY,
+            START_MODE_OFFICIAL_DIRECT,
+            START_MODE_PROXY_INJECTION,
+        ],
+    }
 
 
 def disable_codex_enhance_provider_config(mgr: CodexConfigManager) -> Dict[str, Any]:
@@ -611,10 +643,17 @@ def create_app() -> Flask:
         """启动 Codex/Codex++（启动前自动同步当前 provider/model）。"""
         try:
             body = request.get_json(silent=True) or {}
-            official_mode = bool(body.get("official_mode"))
+            mgr = CodexConfigManager()
+            login_defaults = _official_login_defaults(mgr)
+            start_mode = _normalize_codex_start_mode(body, login_defaults)
+            official_mode = start_mode == START_MODE_OFFICIAL_DIRECT
+            preserve_official_auth = bool(body.get(
+                "preserve_official_auth",
+                start_mode == START_MODE_PRESERVE_LOGIN_PROXY
+                or login_defaults["default_preserve_official_auth"],
+            ))
             official_payload = {}
             if official_mode:
-                mgr = CodexConfigManager()
                 official_payload = disable_codex_enhance_provider_config(mgr)
                 config.update({
                     "use_codex_plus_plus": False,
@@ -641,7 +680,10 @@ def create_app() -> Flask:
                 "success": ok,
                 "message": msg,
                 "sync": sync_payload,
+                "start_mode": start_mode,
                 "official_mode": official_mode,
+                "preserve_official_auth": preserve_official_auth,
+                **login_defaults,
                 "official_mode_changes": official_payload,
                 "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
             })
@@ -1629,10 +1671,12 @@ def create_app() -> Flask:
             config_data = mgr.read_config()
             auth_data = mgr.read_auth()
             permissions = mgr.inspect_permissions()
+            login_defaults = _official_login_defaults(mgr)
             return jsonify({
                 "config": config_data,
                 "auth_redacted": redact_auth_for_preview(auth_data),
                 "auth_mode": mgr.get_auth_mode(),
+                **login_defaults,
                 "codex_home": str(mgr.codex_home),
                 "config_path": str(mgr.config_path),
                 "auth_path": str(mgr.auth_path),
@@ -1650,11 +1694,14 @@ def create_app() -> Flask:
         try:
             body = request.get_json(silent=True) or {}
             mgr = CodexConfigManager()
+            login_defaults = _official_login_defaults(mgr)
             preview = mgr.preview_write_provider(
                 proxy_base_url=body.get("proxy_base_url") or _current_proxy_base_url(),
                 proxy_model=body.get("proxy_model", "auto"),
             )
             preview["auth_redacted"] = redact_auth_for_preview(mgr.read_auth())
+            preview.update(login_defaults)
+            preview["start_mode"] = START_MODE_PRESERVE_LOGIN_PROXY
             return jsonify(preview)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1717,11 +1764,14 @@ def create_app() -> Flask:
             if denied:
                 return denied
             mgr = CodexConfigManager()
+            login_defaults = _official_login_defaults(mgr)
             result = mgr.write_provider_config(
                 proxy_base_url=body.get("proxy_base_url") or _current_proxy_base_url(),
                 proxy_model=body.get("proxy_model", "auto"),
-                preserve_official_auth=body.get("preserve_official_auth", True),
+                preserve_official_auth=body.get("preserve_official_auth", login_defaults["default_preserve_official_auth"]),
             )
+            result.update(login_defaults)
+            result["start_mode"] = START_MODE_PRESERVE_LOGIN_PROXY
             return jsonify(result)
         except Exception as e:
             return jsonify({"error": str(e)}), 500

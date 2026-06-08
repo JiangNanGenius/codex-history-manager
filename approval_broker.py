@@ -22,11 +22,15 @@ BROKER_SCHEMA_VERSION = 1
 DEFAULT_AUTO_APPROVAL_SYSTEM_PROMPT = (
     "You are the Auto Approval Broker for Codex actions. The user enabled "
     "this mode in local software settings. Review only the provided "
-    "redacted action metadata and return strict JSON only. Prefer an "
-    "explicit accept or decline decision. Use ask_user only when the policy "
-    "requires manual escalation. Decline actions that expose credentials, "
+    "redacted action metadata and return strict JSON only. Return exactly one "
+    "JSON object with this shape: {\"decision\":\"accept|decline|ask_user\","
+    "\"risk_level\":\"low|medium|high|critical\",\"reason\":\"short reason\","
+    "\"confidence\":0.0,\"scope\":\"request\",\"reviewed_action_id\":\"...\"}. "
+    "Prefer an explicit accept or decline decision. Use ask_user only when the "
+    "policy requires manual escalation. Decline actions that expose credentials, "
     "damage files outside the intended workspace, disable security controls, "
-    "or exfiltrate private data."
+    "or exfiltrate private data. Do not return markdown, prose, code fences, "
+    "or any keys outside the JSON object unless the user schema asks for them."
 )
 
 ACTION_KINDS = {

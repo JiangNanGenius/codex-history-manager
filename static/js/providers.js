@@ -62,6 +62,23 @@ const PROVIDER_API_FORMATS = new Set([
     'custom',
 ]);
 
+const NATIVE_LOCKED_CAPABILITIES = {
+    text: true,
+    vision: true,
+    tools: true,
+    custom_tools: true,
+    reasoning: true,
+    streaming: true,
+    compact: true,
+    images: true,
+    videos: true,
+    embeddings: true,
+    models: true,
+    balance: false,
+    quota: false,
+    native_approval: true,
+};
+
 /**
  * 加载 Overview 数据并渲染。
  * 注意：renderEnhanceOverview 内部已包含 triggerStaggerAnimations
@@ -557,6 +574,7 @@ function renderProvidersPage() {
     if (typeof triggerStaggerAnimations === 'function') triggerStaggerAnimations(root);
     if (typeof attachRippleToButtons === 'function') attachRippleToButtons(root);
     syncApprovalModeControls();
+    syncResponsesModeControls();
     syncMediaModeControls();
 }
 
@@ -604,6 +622,7 @@ function renderProviderListItem(provider) {
             onchange="event.stopPropagation(); setProviderVisibility('${escapeAttr(provider.id)}', this.value, this)"
             onclick="event.stopPropagation()"
             class="input text-xs py-0.5 px-1.5 w-auto min-w-[80px]"
+            ${isCodexLoginProvider(provider) ? 'disabled' : ''}
         >
             ${visOptions.map(o => `<option value="${escapeAttr(o.value)}" ${provider.catalog_visibility === o.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
         </select>
@@ -657,6 +676,9 @@ function renderProviderEditor(provider) {
     const mediaProfile = provider.media_profile || {};
     const proxyProfile = provider.proxy_profile || {};
     const showMediaAsyncFields = shouldShowMediaAsyncFields(mediaProfile, provider.api_format);
+    const providerReadOnly = isCodexLoginProvider(provider);
+    const capabilityLocked = isNativeCapabilityLocked(provider);
+    const capabilitySource = capabilityLocked ? nativeLockedCapabilities(provider.capabilities || {}) : (provider.capabilities || {});
 
     return `
         <div class="card">
@@ -669,11 +691,12 @@ function renderProviderEditor(provider) {
             </div>
 
             <div id="provider-form-error" class="hidden mt-3 text-sm text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-3"></div>
+            ${providerReadOnly ? `<div class="mt-3 text-xs text-amber-200 bg-amber-950/25 border border-amber-700/50 rounded-lg p-3">${escapeHtml(t('codexLoginProviderReadOnly'))}</div>` : ''}
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                ${renderInput('provider-display-name', t('displayName'), provider.display_name)}
-                ${renderInput('provider-short-alias', t('shortAlias'), provider.short_alias)}
-                ${renderInput('provider-base-url', t('baseUrl'), provider.base_url)}
+                ${renderInput('provider-display-name', t('displayName'), provider.display_name, 'text', providerReadOnly)}
+                ${renderInput('provider-short-alias', t('shortAlias'), provider.short_alias, 'text', providerReadOnly)}
+                ${renderInput('provider-base-url', t('baseUrl'), provider.base_url, 'text', providerReadOnly)}
                 ${renderSelect('provider-api-format', t('apiFormat'), provider.api_format, [
                     'openai_responses',
                     'openai_chat',
@@ -682,16 +705,16 @@ function renderProviderEditor(provider) {
                     'openai_compatible',
                     'anthropic',
                     'custom',
-                ], 'syncMediaModeControls(true)')}
-                ${renderInput('provider-country-region', t('countryRegion'), provider.country_region)}
-                ${renderInput('provider-native-currency', t('nativeCurrency'), provider.native_currency)}
+                ], 'syncResponsesModeControls(true); syncMediaModeControls(true)', providerReadOnly)}
+                ${renderInput('provider-country-region', t('countryRegion'), provider.country_region, 'text', providerReadOnly)}
+                ${renderInput('provider-native-currency', t('nativeCurrency'), provider.native_currency, 'text', providerReadOnly)}
                 ${renderSelect('provider-visibility', t('catalogVisibility'), provider.catalog_visibility, [
                     'hidden',
                     'focused_only',
                     'always_visible',
                     'selected_models',
-                ])}
-                ${renderInput('provider-user-agent', 'User-Agent', provider.user_agent || (provider.headers || {})['User-Agent'] || '')}
+                ], '', providerReadOnly)}
+                ${renderInput('provider-user-agent', 'User-Agent', provider.user_agent || (provider.headers || {})['User-Agent'] || '', 'text', providerReadOnly)}
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
@@ -708,21 +731,21 @@ function renderProviderEditor(provider) {
             <details class="advanced-box mt-4">
                 <summary>${escapeHtml(t('advanced'))}</summary>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderInput('provider-api-key', t('apiKey'), provider.api_key || '', 'password')}
+                    ${renderInput('provider-api-key', t('apiKey'), provider.api_key || '', 'password', providerReadOnly)}
                     ${renderSelect('provider-auth-mode', t('authMode'), provider.auth_mode, [
                         'provider_api_key',
                         'global_auth_json',
                         'official_oauth',
                         'no_auth',
-                    ])}
+                    ], '', providerReadOnly)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderTextarea('provider-headers-json', t('headersJson'), JSON.stringify(provider.headers || {}, null, 2), 7)}
-                    ${renderTextarea('provider-models-text', t('modelsText'), modelsText, 7, t('modelsTextHint'))}
+                    ${renderTextarea('provider-headers-json', t('headersJson'), JSON.stringify(provider.headers || {}, null, 2), 7, '', providerReadOnly)}
+                    ${renderTextarea('provider-models-text', t('modelsText'), modelsText, 7, t('modelsTextHint'), providerReadOnly)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderTextarea('provider-aliases-json', t('modelAliasesJson'), JSON.stringify(provider.aliases || {}, null, 2), 6)}
-                    ${renderTextarea('provider-alias-patterns-json', t('regexRewritePatternsJson'), JSON.stringify(provider.alias_patterns || [], null, 2), 6)}
+                    ${renderTextarea('provider-aliases-json', t('modelAliasesJson'), JSON.stringify(provider.aliases || {}, null, 2), 6, '', providerReadOnly)}
+                    ${renderTextarea('provider-alias-patterns-json', t('regexRewritePatternsJson'), JSON.stringify(provider.alias_patterns || [], null, 2), 6, '', providerReadOnly)}
                 </div>
                 <div class="mt-4">
                     <div class="text-xs text-dark-400 mb-2">${escapeHtml(t('proxyNetworkPolicy'))}</div>
@@ -733,7 +756,7 @@ function renderProviderEditor(provider) {
                         ${renderInput('proxy-retry-backoff-ms', t('retryBackoffMs'), proxyProfile.retry_backoff_ms || 0, 'number')}
                     </div>
                 </div>
-                <div class="flex flex-wrap gap-2 mt-3">
+                <div class="flex flex-wrap gap-2 mt-3 ${providerReadOnly ? 'hidden' : ''}">
                     <button data-bulk-action="select_all" onclick="runBulkModelAction('select_all')" class="btn btn-secondary text-xs">${escapeHtml(t('selectAll'))}</button>
                     <button data-bulk-action="deselect_all" onclick="runBulkModelAction('deselect_all')" class="btn btn-secondary text-xs">${escapeHtml(t('deselectAll'))}</button>
                     <button data-bulk-action="select_vision" onclick="runBulkModelAction('select_vision')" class="btn btn-secondary text-xs">${escapeHtml(t('selectVision'))}</button>
@@ -743,14 +766,16 @@ function renderProviderEditor(provider) {
                 </div>
                 <div id="bulk-action-error" class="hidden mt-2 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2"></div>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
-                    ${renderCapabilityToggle('cap-text', t('textCapability'), provider.capabilities.text)}
-                    ${renderCapabilityToggle('cap-vision', t('visionInputCapability'), provider.capabilities.vision)}
-                    ${renderCapabilityToggle('cap-tools', t('toolsCapability'), provider.capabilities.tools)}
-                    ${renderCapabilityToggle('cap-custom-tools', t('customToolsCapability'), provider.capabilities.custom_tools)}
-                    ${renderCapabilityToggle('cap-reasoning', t('reasoningCapability'), provider.capabilities.reasoning)}
-                    ${renderCapabilityToggle('cap-images', t('imagesCapability'), provider.capabilities.images, 'syncMediaModeControls(true)')}
-                    ${renderCapabilityToggle('cap-videos', t('videosCapability'), provider.capabilities.videos, 'syncMediaModeControls(true)')}
+                    ${renderCapabilityToggle('cap-text', t('textCapability'), capabilitySource.text, '', capabilityLocked || providerReadOnly)}
+                    ${renderCapabilityToggle('cap-vision', t('visionInputCapability'), capabilitySource.vision, '', capabilityLocked || providerReadOnly)}
+                    ${renderCapabilityToggle('cap-tools', t('toolsCapability'), capabilitySource.tools, '', capabilityLocked || providerReadOnly)}
+                    ${renderCapabilityToggle('cap-custom-tools', t('customToolsCapability'), capabilitySource.custom_tools, '', capabilityLocked || providerReadOnly)}
+                    ${renderCapabilityToggle('cap-reasoning', t('reasoningCapability'), capabilitySource.reasoning, '', capabilityLocked || providerReadOnly)}
+                    ${renderCapabilityToggle('cap-images', t('imagesCapability'), capabilitySource.images, 'syncMediaModeControls(true)', capabilityLocked || providerReadOnly)}
+                    ${renderCapabilityToggle('cap-videos', t('videosCapability'), capabilitySource.videos, 'syncMediaModeControls(true)', capabilityLocked || providerReadOnly)}
                 </div>
+                ${capabilityLocked ? `<div id="native-capability-lock-note" class="mt-3 text-xs text-emerald-200 bg-emerald-950/20 border border-emerald-700/40 rounded-lg p-3">${escapeHtml(t('nativeCapabilitiesLocked'))}</div>` : ''}
+                ${renderResponsesModeSegment(provider, providerReadOnly)}
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
                     ${renderCapabilityToggle('responses-domestic', t('domesticResponses'), provider.responses_profile && provider.responses_profile.domestic_responses)}
                     ${renderCapabilityToggle('responses-partial', t('partialResponsesCompatibility'), provider.responses_profile && provider.responses_profile.partial_compatibility)}
@@ -797,7 +822,7 @@ function renderProviderEditor(provider) {
             </details>
 
             <div class="flex flex-wrap gap-2 mt-5">
-                <button onclick="saveSelectedProvider()" class="btn btn-primary">${escapeHtml(t('saveLocalProvider'))}</button>
+                ${providerReadOnly ? '' : `<button onclick="saveSelectedProvider()" class="btn btn-primary">${escapeHtml(t('saveLocalProvider'))}</button>`}
                 <button onclick="testSelectedProvider()" class="btn btn-secondary">${escapeHtml(t('testThisSection'))}</button>
                 <button onclick="checkProviderHealth()" class="btn btn-secondary">${escapeHtml(t('checkNetwork'))}</button>
                 <button onclick="previewProviderRequest()" class="btn btn-secondary">${escapeHtml(t('requestPreview'))}</button>
@@ -806,7 +831,7 @@ function renderProviderEditor(provider) {
                 <button onclick="previewMediaAdapter()" class="btn btn-secondary">${escapeHtml(t('mediaAdapterPreview'))}</button>
                 <button onclick="refreshProviderQuota()" class="btn btn-secondary">${escapeHtml(t('refreshQuota'))}</button>
                 <button onclick="previewProviderDraft()" class="btn btn-ghost">${escapeHtml(t('previewDraft'))}</button>
-                <button onclick="deleteSelectedProvider()" class="btn btn-danger">${escapeHtml(t('deleteAction'))}</button>
+                ${providerReadOnly ? '' : `<button onclick="deleteSelectedProvider()" class="btn btn-danger">${escapeHtml(t('deleteAction'))}</button>`}
             </div>
         </div>
 
@@ -1524,6 +1549,10 @@ async function selectProvider(providerId) {
 async function saveSelectedProvider() {
     const provider = getSelectedProvider();
     if (!provider) return;
+    if (isCodexLoginProvider(provider)) {
+        showProviderFormError(t('codexLoginProviderReadOnly'));
+        return;
+    }
     const draft = readProviderForm(provider);
     if (!draft) return;
     try {
@@ -1699,6 +1728,10 @@ async function refreshProviderQuota() {
 async function deleteSelectedProvider() {
     const provider = getSelectedProvider();
     if (!provider) return;
+    if (isCodexLoginProvider(provider)) {
+        showToast(t('codexLoginProviderReadOnly'), 'warning');
+        return;
+    }
     if (!confirm(t('deleteProviderConfirm', { name: provider.display_name }))) return;
     try {
         await api('/api/providers/' + encodeURIComponent(provider.id), { method: 'DELETE' });
@@ -1820,12 +1853,15 @@ function readProviderForm(existing) {
         const approvalMode = getSelectedApprovalMode();
         const mediaMode = getSelectedMediaMode();
         const mediaAsyncVisible = !document.getElementById('media-async-fields')?.classList.contains('hidden');
+        const responsesMode = getSelectedResponsesMode();
+        const apiFormat = document.getElementById('provider-api-format')?.value || 'openai_responses';
+        const lockedCapabilities = apiFormat === 'openai_responses' && responsesMode === 'native';
         return {
             ...existing,
             display_name: document.getElementById('provider-display-name')?.value || '',
             short_alias: document.getElementById('provider-short-alias')?.value || '',
             base_url: document.getElementById('provider-base-url')?.value || '',
-            api_format: document.getElementById('provider-api-format')?.value || 'openai_responses',
+            api_format: apiFormat,
             country_region: document.getElementById('provider-country-region')?.value || '',
             native_currency: document.getElementById('provider-native-currency')?.value || 'USD',
             catalog_visibility: document.getElementById('provider-visibility')?.value || 'focused_only',
@@ -1839,7 +1875,7 @@ function readProviderForm(existing) {
             alias_patterns: aliasPatterns,
             quota_check: quotaCheck,
             models,
-            capabilities: {
+            capabilities: lockedCapabilities ? nativeLockedCapabilities(existing.capabilities || {}) : {
                 ...existing.capabilities,
                 text: document.getElementById('cap-text')?.checked || false,
                 vision: document.getElementById('cap-vision')?.checked || false,
@@ -1887,6 +1923,8 @@ function readProviderForm(existing) {
             },
             responses_profile: {
                 ...(existing.responses_profile || {}),
+                mode: responsesMode,
+                native_responses: responsesMode === 'native',
                 domestic_responses: document.getElementById('responses-domestic')?.checked || false,
                 partial_compatibility: document.getElementById('responses-partial')?.checked || false,
                 requires_adapter: document.getElementById('responses-requires-adapter')?.checked || false,
@@ -1970,31 +2008,61 @@ function redactDraft(draft) {
     return clone;
 }
 
-function renderInput(id, label, value, type = 'text') {
+function providerResponsesMode(provider) {
+    const profile = provider && provider.responses_profile ? provider.responses_profile : {};
+    if (profile.mode === 'native' || profile.native_responses || provider.native_responses) return 'native';
+    return 'compatible';
+}
+
+function isNativeResponsesProvider(providerOrApiFormat, profile = null) {
+    if (typeof providerOrApiFormat === 'string') {
+        return providerOrApiFormat === 'openai_responses' && providerResponsesMode({ responses_profile: profile || {} }) === 'native';
+    }
+    const provider = providerOrApiFormat || {};
+    return provider.api_format === 'openai_responses' && providerResponsesMode(provider) === 'native';
+}
+
+function isCodexLoginProvider(provider) {
+    return Boolean(provider && (provider.read_only || provider.auth_mode === 'official_oauth' || provider.codex_login));
+}
+
+function isNativeCapabilityLocked(provider) {
+    return Boolean(provider && (provider.native_capabilities_locked || isNativeResponsesProvider(provider) || isCodexLoginProvider(provider)));
+}
+
+function nativeLockedCapabilities(existing = {}) {
+    return { ...(existing || {}), ...NATIVE_LOCKED_CAPABILITIES };
+}
+
+function renderInput(id, label, value, type = 'text', disabled = false, onchange = '') {
+    const disabledAttr = disabled ? ' disabled' : '';
+    const changeAttr = onchange && !disabled ? ` onchange="${escapeAttr(onchange)}" oninput="${escapeAttr(onchange)}"` : '';
     return `
         <div>
             <label class="text-xs text-dark-400">${escapeHtml(label)}</label>
-            <input id="${escapeAttr(id)}" type="${escapeAttr(type)}" class="input mt-1 w-full" value="${escapeAttr(value || '')}">
+            <input id="${escapeAttr(id)}" type="${escapeAttr(type)}" class="input mt-1 w-full" value="${escapeAttr(value || '')}"${changeAttr}${disabledAttr}>
         </div>
     `;
 }
 
-function renderTextarea(id, label, value, rows = 4, hint = '') {
+function renderTextarea(id, label, value, rows = 4, hint = '', disabled = false) {
+    const disabledAttr = disabled ? ' disabled' : '';
     return `
         <div>
             <label class="text-xs text-dark-400">${escapeHtml(label)}</label>
-            <textarea id="${escapeAttr(id)}" class="input mt-1 w-full font-mono" rows="${rows}">${escapeHtml(value || '')}</textarea>
+            <textarea id="${escapeAttr(id)}" class="input mt-1 w-full font-mono" rows="${rows}"${disabledAttr}>${escapeHtml(value || '')}</textarea>
             ${hint ? `<p class="text-xs text-dark-500 mt-1">${escapeHtml(hint)}</p>` : ''}
         </div>
     `;
 }
 
-function renderSelect(id, label, value, options, onchange = '') {
+function renderSelect(id, label, value, options, onchange = '', disabled = false) {
     const changeAttr = onchange ? ` onchange="${escapeAttr(onchange)}"` : '';
+    const disabledAttr = disabled ? ' disabled' : '';
     return `
         <div>
             <label class="text-xs text-dark-400">${escapeHtml(label)}</label>
-            <select id="${escapeAttr(id)}" class="input mt-1 w-full"${changeAttr}>
+            <select id="${escapeAttr(id)}" class="input mt-1 w-full"${changeAttr}${disabledAttr}>
                 ${options.map(option => {
                     const optionValue = typeof option === 'object' ? option.value : option;
                     const optionLabel = typeof option === 'object' ? option.label : providerOptionLabel(optionValue);
@@ -2025,15 +2093,19 @@ function providerOptionLabel(value) {
         decline: t('reviewDecline'),
         ask_user: t('reviewAskUser'),
         allow: t('reviewAllow'),
+        preserve_login_proxy: t('startModePreserveLoginProxy'),
+        official_direct: t('startModeOfficialDirect'),
+        proxy_injection: t('startModeProxyInjection'),
     };
     return labels[value] || value;
 }
 
-function renderCapabilityToggle(id, label, checked, onchange = '') {
-    const changeAttr = onchange ? ` onchange="${escapeAttr(onchange)}"` : '';
+function renderCapabilityToggle(id, label, checked, onchange = '', disabled = false) {
+    const changeAttr = onchange && !disabled ? ` onchange="${escapeAttr(onchange)}"` : '';
+    const disabledAttr = disabled ? ' disabled' : '';
     return `
-        <label class="flex items-center gap-2 text-sm cursor-pointer bg-dark-900/60 border border-dark-700 rounded-lg px-3 py-2">
-            <input id="${escapeAttr(id)}" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${checked ? 'checked' : ''}${changeAttr}>
+        <label class="flex items-center gap-2 text-sm ${disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} bg-dark-900/60 border border-dark-700 rounded-lg px-3 py-2">
+            <input id="${escapeAttr(id)}" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${checked ? 'checked' : ''}${changeAttr}${disabledAttr}>
             <span>${escapeHtml(label)}</span>
         </label>
     `;
@@ -2074,6 +2146,57 @@ function renderApprovalModeSegment(profile) {
             </div>
         </div>
     `;
+}
+
+function renderResponsesModeSegment(provider, disabled = false) {
+    const mode = providerResponsesMode(provider || {});
+    const disabledAttr = disabled ? ' disabled' : '';
+    const options = [
+        ['compatible', t('responsesCompatibleMode'), t('responsesCompatibleModeDesc')],
+        ['native', t('responsesNativeMode'), t('responsesNativeModeDesc')],
+    ];
+    return `
+        <div class="responses-mode-field mt-4">
+            <div class="text-xs text-dark-400 mb-2">${escapeHtml(t('responsesMode'))}</div>
+            <div class="segmented-control" role="radiogroup" aria-label="${escapeAttr(t('responsesMode'))}">
+                ${options.map(([value, label, hint]) => `
+                    <label class="segmented-option ${mode === value ? 'active' : ''} ${disabled ? 'opacity-60 cursor-not-allowed' : ''}">
+                        <input
+                            type="radio"
+                            name="responses-mode"
+                            value="${escapeAttr(value)}"
+                            onchange="syncResponsesModeControls(true)"
+                            ${mode === value ? 'checked' : ''}
+                            ${disabledAttr}
+                        >
+                        <span class="segmented-label">${escapeHtml(label)}</span>
+                        <span class="segmented-hint">${escapeHtml(hint)}</span>
+                    </label>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function getSelectedResponsesMode() {
+    return document.querySelector('input[name="responses-mode"]:checked')?.value || 'compatible';
+}
+
+function syncResponsesModeControls(rerender = false) {
+    const selectedMode = getSelectedResponsesMode();
+    document.querySelectorAll('.responses-mode-field .segmented-option').forEach(option => {
+        const input = option.querySelector('input[name="responses-mode"]');
+        option.classList.toggle('active', Boolean(input && input.value === selectedMode));
+    });
+    if (rerender) {
+        const provider = getSelectedProvider();
+        if (!provider) return;
+        provider.responses_profile = { ...(provider.responses_profile || {}), mode: selectedMode, native_responses: selectedMode === 'native' };
+        provider.native_responses = selectedMode === 'native';
+        provider.native_capabilities_locked = isNativeCapabilityLocked(provider);
+        if (provider.native_capabilities_locked) provider.capabilities = nativeLockedCapabilities(provider.capabilities || {});
+        renderProvidersPage();
+    }
 }
 
 function getSelectedApprovalMode() {
@@ -2401,6 +2524,13 @@ async function runBulkModelAction(action) {
     if (!provider) return;
     const errorEl = document.getElementById('bulk-action-error');
     if (errorEl) errorEl.classList.add('hidden');
+    if (isCodexLoginProvider(provider)) {
+        if (errorEl) {
+            errorEl.textContent = t('codexLoginProviderReadOnly');
+            errorEl.classList.remove('hidden');
+        }
+        return;
+    }
 
     document.querySelectorAll('[data-bulk-action]').forEach(btn => { btn.disabled = true; });
 
@@ -2434,6 +2564,13 @@ async function addSelectedModelsToAmr() {
     if (!provider) return;
     const errorEl = document.getElementById('bulk-action-error');
     if (errorEl) errorEl.classList.add('hidden');
+    if (isCodexLoginProvider(provider)) {
+        if (errorEl) {
+            errorEl.textContent = t('codexLoginProviderReadOnly');
+            errorEl.classList.remove('hidden');
+        }
+        return;
+    }
 
     if (!provider.enabled) {
         if (errorEl) {
@@ -2594,13 +2731,17 @@ async function testProxyRoute() {
 let codexIntegrationState = {
     status: null,
     preview: null,
+    connectionDraft: null,
+    previewChecking: false,
+    previewError: '',
+    previewTimer: null,
     permissionsPreview: null,
     approvalBridgePreview: null,
     approvalBridgeMessage: '',
     approvalBridgeDecision: {
         decision: 'ask_user',
         risk_level: 'unknown',
-        reason: 'Dry-run preview only.',
+        reason: '',
     },
     backups: [],
     loading: false,
@@ -2624,6 +2765,7 @@ async function loadCodexIntegrationPage() {
     await refreshCodexIntegrationStatus();
     await refreshCodexIntegrationBackups();
     renderCodexIntegrationPage();
+    await refreshCodexConnectionCheck({ silent: true });
     setStatus(t('codexIntegrationTitle'));
 }
 
@@ -2644,19 +2786,57 @@ async function refreshCodexIntegrationBackups() {
     }
 }
 
-async function previewCodexIntegration() {
+function readCodexConnectionForm() {
     const proxyBaseUrl = document.getElementById('ci-proxy-base-url')?.value || getCodexIntegrationProxyBaseUrl();
     const proxyModel = document.getElementById('ci-proxy-model')?.value || 'auto';
+    const preserveAuth = document.getElementById('ci-preserve-auth')?.checked !== false;
+    const startMode = document.getElementById('ci-start-mode')?.value || 'preserve_login_proxy';
+    const draft = {
+        proxy_base_url: proxyBaseUrl,
+        proxy_model: proxyModel,
+        preserve_official_auth: preserveAuth,
+        start_mode: startMode,
+    };
+    codexIntegrationState.connectionDraft = draft;
+    return draft;
+}
+
+function scheduleCodexConnectionCheck() {
+    if (codexIntegrationState.previewTimer) {
+        clearTimeout(codexIntegrationState.previewTimer);
+    }
+    codexIntegrationState.previewTimer = setTimeout(() => {
+        codexIntegrationState.previewTimer = null;
+        refreshCodexConnectionCheck({ silent: true });
+    }, 450);
+}
+
+async function refreshCodexConnectionCheck(options = {}) {
+    const silent = options.silent !== false;
+    const payload = readCodexConnectionForm();
+    codexIntegrationState.previewChecking = true;
+    codexIntegrationState.previewError = '';
+    renderCodexIntegrationPage();
     try {
         codexIntegrationState.preview = await api('/api/codex-integration/preview', {
             method: 'POST',
-            body: JSON.stringify({ proxy_base_url: proxyBaseUrl, proxy_model: proxyModel }),
+            body: JSON.stringify(payload),
         });
-        renderCodexIntegrationPage();
-        showToast(t('diffPreviewGenerated'), 'success');
+        codexIntegrationState.previewError = '';
+        return codexIntegrationState.preview;
     } catch (err) {
-        showToast(t('previewFailedWithError', { error: err.message }), 'error');
+        codexIntegrationState.previewError = err.message || t('unknownError');
+        if (!silent) showToast(t('connectionCheckFailedWithError', { error: codexIntegrationState.previewError }), 'error');
+        return null;
+    } finally {
+        codexIntegrationState.previewChecking = false;
+        renderCodexIntegrationPage();
     }
+}
+
+async function previewCodexIntegration() {
+    const result = await refreshCodexConnectionCheck({ silent: false });
+    if (result) showToast(t('connectionCheckUpdated'), 'success');
 }
 
 async function previewCodexPermissions() {
@@ -2727,18 +2907,15 @@ async function previewCodexApprovalBridge() {
 }
 
 async function applyCodexIntegration() {
-    const proxyBaseUrl = document.getElementById('ci-proxy-base-url')?.value || getCodexIntegrationProxyBaseUrl();
-    const proxyModel = document.getElementById('ci-proxy-model')?.value || 'auto';
-    const preserveAuth = document.getElementById('ci-preserve-auth')?.checked !== false;
+    const payload = readCodexConnectionForm();
+    await refreshCodexConnectionCheck({ silent: true });
     const manual = requestCodexMutationConfirmation(t('writeCodexConfigAction'));
     if (!manual) return;
     try {
         const result = await api('/api/codex-integration/apply', {
             method: 'POST',
             body: JSON.stringify({
-                proxy_base_url: proxyBaseUrl,
-                proxy_model: proxyModel,
-                preserve_official_auth: preserveAuth,
+                ...payload,
                 ...manual,
             }),
         });
@@ -2755,13 +2932,33 @@ async function applyCodexIntegration() {
     }
 }
 
+async function startCodexWithSelectedMode() {
+    try {
+        const startMode = document.getElementById('ci-start-mode')?.value || 'preserve_login_proxy';
+        const preserveAuth = document.getElementById('ci-preserve-auth')?.checked !== false;
+        setStatus(t('codexStartRequested'));
+        const result = await api('/api/codex/start', {
+            method: 'POST',
+            body: JSON.stringify({
+                start_mode: startMode,
+                preserve_official_auth: preserveAuth,
+            }),
+        });
+        showToast(result.message || t('codexStartRequested'), result.success ? 'success' : 'error');
+        await refreshCodexIntegrationStatus();
+        renderCodexIntegrationPage();
+    } catch (err) {
+        showToast(t('codexStartFailed') + err.message, 'error');
+    }
+}
+
 async function startOfficialCodex() {
     if (!confirm(t('confirmStartOfficialCodex'))) return;
     try {
         setStatus(t('codexOfficialStartRequested'));
         const result = await api('/api/codex/start', {
             method: 'POST',
-            body: JSON.stringify({ official_mode: true }),
+            body: JSON.stringify({ start_mode: 'official_direct', official_mode: true }),
         });
         showToast(result.message || t('codexOfficialStartRequested'), result.success ? 'success' : 'error');
         await refreshCodexIntegrationStatus();
@@ -2841,6 +3038,7 @@ function renderCodexEnhancementModeCard(status = {}) {
                 ${renderStatusPill('enhancement-mode', badge, tone)}
             </div>
             <p class="text-sm text-dark-400 mt-2">${escapeHtml(desc)}</p>
+            ${official ? `<p class="text-xs text-dark-400 mt-2">${escapeHtml(t('preserveLoginProxyModeDesc'))}</p>` : ''}
             <button onclick="navigateTo('settings'); showSettingsWizardStep(5);" class="btn btn-secondary text-xs mt-4">${escapeHtml(t('openStartupApprovalStep'))}</button>
         </div>
     `;
@@ -2860,6 +3058,15 @@ function renderCodexIntegrationPage() {
     const proxyBaseUrl = getCodexIntegrationProxyBaseUrl();
     const proxyStatus = status.proxy_status || {};
     const proxyBackoff = proxyStatus.port_backoff || {};
+    const preserveAuthDefault = status.default_preserve_official_auth === true;
+    const defaultStartMode = status.default_start_mode || (preserveAuthDefault ? 'preserve_login_proxy' : 'proxy_injection');
+    const connectionDraft = codexIntegrationState.connectionDraft || {};
+    const formStartMode = connectionDraft.start_mode || defaultStartMode;
+    const formProxyBaseUrl = connectionDraft.proxy_base_url || proxyBaseUrl;
+    const formProxyModel = connectionDraft.proxy_model || 'auto';
+    const formPreserveAuth = Object.prototype.hasOwnProperty.call(connectionDraft, 'preserve_official_auth')
+        ? connectionDraft.preserve_official_auth !== false
+        : preserveAuthDefault;
     const proxyBackoffNote = proxyBackoff.used
         ? `<div class="mt-2 text-xs text-amber-300">${escapeHtml(t('proxyBackoffNotice', { from: proxyBackoff.from, to: proxyBackoff.to }))}</div>`
         : '';
@@ -2895,17 +3102,23 @@ function renderCodexIntegrationPage() {
                 <div class="card">
                     <h3 class="card-title">${escapeHtml(t('localProxySettings'))}</h3>
                     <div class="grid grid-cols-1 gap-4 mt-3">
-                        ${renderInput('ci-proxy-base-url', t('proxyBaseUrl'), proxyBaseUrl)}
-                        ${renderInput('ci-proxy-model', t('proxyModel'), 'auto')}
+                        ${renderSelect('ci-start-mode', t('codexStartMode'), formStartMode, [
+                            'preserve_login_proxy',
+                            'official_direct',
+                            'proxy_injection',
+                        ], 'scheduleCodexConnectionCheck()')}
+                        <p class="text-xs text-dark-500 -mt-2">${escapeHtml(t('codexStartModeDesc'))}</p>
+                        ${renderInput('ci-proxy-base-url', t('proxyBaseUrl'), formProxyBaseUrl, 'text', false, 'scheduleCodexConnectionCheck()')}
+                        ${renderInput('ci-proxy-model', t('proxyModel'), formProxyModel, 'text', false, 'scheduleCodexConnectionCheck()')}
                         <label class="flex items-center gap-2 text-sm cursor-pointer">
-                            <input id="ci-preserve-auth" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" checked>
+                            <input id="ci-preserve-auth" type="checkbox" onchange="scheduleCodexConnectionCheck()" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${formPreserveAuth ? 'checked' : ''}>
                             <span>${escapeHtml(t('preserveOfficialOAuth'))}</span>
                         </label>
                     </div>
                     ${proxyBackoffNote}
                     <div class="flex flex-wrap gap-2 mt-4">
-                        <button onclick="previewCodexIntegration()" class="btn btn-secondary">${escapeHtml(t('previewDiff'))}</button>
                         <button onclick="applyCodexIntegration()" class="btn btn-warning">${escapeHtml(t('manualApplyCodexConfig'))}</button>
+                        <button onclick="startCodexWithSelectedMode()" class="btn btn-primary">${escapeHtml(t('startCodexSelectedMode'))}</button>
                         <button onclick="startOfficialCodex()" class="btn btn-secondary">${escapeHtml(t('startOfficialCodex'))}</button>
                     </div>
                     <p class="text-xs text-dark-500 mt-3">${escapeHtml(t('officialCodexStartDesc'))}</p>
@@ -2915,7 +3128,7 @@ function renderCodexIntegrationPage() {
             </div>
 
             <div class="space-y-4">
-                ${preview ? renderDiffPreview(preview) : renderDiffPreviewShell()}
+                ${renderCodexConnectionSummary(preview)}
                 ${renderApprovalBridgePreviewCard(codexIntegrationState.approvalBridgePreview)}
 
                 <div class="card">
@@ -2966,6 +3179,77 @@ function renderDiffPreview(preview) {
                 ${escapeHtml(t('preserveOfficialOAuthStatus'))}: ${escapeHtml(preview.preserve_official_oauth ? t('yes') : t('no'))}
                 &middot; ${escapeHtml(t('restartRequiredStatus'))}: ${escapeHtml(preview.restart_required ? t('yes') : t('no'))}
             </div>
+        </div>
+    `;
+}
+
+function renderCodexConnectionSummary(preview) {
+    if (codexIntegrationState.previewChecking) {
+        return `
+            <div class="card">
+                <div class="flex items-center justify-between gap-3">
+                    <h3 class="card-title">${escapeHtml(t('codexConnectionSummary'))}</h3>
+                    ${renderStatusPill('checking', t('checking'), 'accent')}
+                </div>
+                <div class="text-sm text-dark-500 mt-3">${escapeHtml(t('connectionCheckRunning'))}</div>
+            </div>
+        `;
+    }
+    if (codexIntegrationState.previewError) {
+        return `
+            <div class="card">
+                <div class="flex items-center justify-between gap-3">
+                    <h3 class="card-title">${escapeHtml(t('codexConnectionSummary'))}</h3>
+                    ${renderStatusPill('error', t('hasError'), 'red')}
+                </div>
+                <div class="text-sm text-red-300 mt-3">${escapeHtml(codexIntegrationState.previewError)}</div>
+                <button onclick="previewCodexIntegration()" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('recheckConnection'))}</button>
+            </div>
+        `;
+    }
+    if (!preview) {
+        return `
+            <div class="card">
+                <div class="flex items-center justify-between gap-3">
+                    <h3 class="card-title">${escapeHtml(t('codexConnectionSummary'))}</h3>
+                    ${renderStatusPill('pending', t('notTested'), 'dark')}
+                </div>
+                <div class="text-sm text-dark-500 mt-3">${escapeHtml(t('connectionCheckPending'))}</div>
+                <button onclick="previewCodexIntegration()" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('recheckConnection'))}</button>
+            </div>
+        `;
+    }
+    const diff = preview.config_diff || {};
+    const hasChanges = Object.keys(diff.added || {}).length || Object.keys(diff.changed || {}).length || Object.keys(diff.removed || {}).length;
+    const mode = preview.start_mode || 'preserve_login_proxy';
+    const changedFields = [
+        ...Object.keys(diff.added || {}),
+        ...Object.keys(diff.changed || {}),
+        ...Object.keys(diff.removed || {}),
+    ];
+    return `
+        <div class="card">
+            <div class="flex items-center justify-between gap-3">
+                <h3 class="card-title">${escapeHtml(t('codexConnectionSummary'))}</h3>
+                ${hasChanges ? renderStatusPill('pending', t('changesPending'), 'amber') : renderStatusPill('clean', t('ready'), 'emerald')}
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 text-sm">
+                ${renderReadonlyKV(t('codexStartMode'), providerOptionLabel(mode))}
+                ${renderReadonlyKV(t('preserveOfficialOAuth'), preview.preserve_official_oauth ? t('yes') : t('no'))}
+                ${renderReadonlyKV(t('restartRequiredStatus'), preview.restart_required ? t('yes') : t('no'))}
+                ${renderReadonlyKV(t('changesToApply'), hasChanges ? t('changedFieldCount', { count: changedFields.length }) : t('noChanges'))}
+            </div>
+            ${(preview.warnings || []).length ? `<div class="mt-3 space-y-1">${(preview.warnings || []).map(w => `<div class="text-xs text-amber-300">${escapeHtml(w)}</div>`).join('')}</div>` : ''}
+            <details class="advanced-box mt-3">
+                <summary>${escapeHtml(t('connectionDetails'))}</summary>
+                <div class="mt-3 space-y-2 text-sm">
+                    ${Object.entries(diff.added || {}).map(([k, v]) => `<div class="diff-added">+ ${escapeHtml(k)} = ${escapeHtml(JSON.stringify(v))}</div>`).join('')}
+                    ${Object.entries(diff.changed || {}).map(([k, v]) => `<div class="diff-changed">~ ${escapeHtml(k)}: ${escapeHtml(JSON.stringify(v.old))} -> ${escapeHtml(JSON.stringify(v.new))}</div>`).join('')}
+                    ${Object.entries(diff.removed || {}).map(([k, v]) => `<div class="diff-removed">- ${escapeHtml(k)} = ${escapeHtml(JSON.stringify(v))}</div>`).join('')}
+                    ${!hasChanges ? `<div class="text-dark-500">${escapeHtml(t('noDifferencesConfig'))}</div>` : ''}
+                </div>
+            </details>
+            <button onclick="previewCodexIntegration()" class="btn btn-secondary text-xs mt-3">${escapeHtml(t('recheckConnection'))}</button>
         </div>
     `;
 }
@@ -3156,8 +3440,8 @@ function renderPermissionsPreviewResult(preview, desired, hasChanges) {
 function renderDiffPreviewShell() {
     return `
         <div class="card">
-            <h3 class="card-title">${escapeHtml(t('diffPreview'))}</h3>
-            <div class="text-sm text-dark-500 mt-3">${escapeHtml(t('clickPreviewDiffHint'))}</div>
+            <h3 class="card-title">${escapeHtml(t('codexConnectionSummary'))}</h3>
+            <div class="text-sm text-dark-500 mt-3">${escapeHtml(t('connectionCheckPending'))}</div>
         </div>
     `;
 }

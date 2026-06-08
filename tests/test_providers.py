@@ -244,6 +244,62 @@ class ProviderRegistryTest(unittest.TestCase):
 
         self.assertEqual(provider["api_format"], "anthropic")
 
+    def test_compatible_responses_does_not_force_all_capabilities(self):
+        provider = normalize_provider({
+            "display_name": "Compatible Responses",
+            "short_alias": "cr",
+            "api_format": "openai_responses",
+            "responses_profile": {"mode": "compatible"},
+            "capabilities": {"text": True, "vision": False, "images": False},
+            "models": [{"id": "auto"}],
+        })
+
+        self.assertEqual(provider["responses_profile"]["mode"], "compatible")
+        self.assertFalse(provider["native_responses"])
+        self.assertFalse(provider["native_capabilities_locked"])
+        self.assertFalse(provider["capabilities"]["vision"])
+        self.assertFalse(provider["capabilities"]["images"])
+
+    def test_native_responses_forces_all_runtime_capabilities(self):
+        provider = normalize_provider({
+            "display_name": "Native Responses",
+            "short_alias": "nr",
+            "api_format": "openai_responses",
+            "responses_profile": {"mode": "native"},
+            "capabilities": {"vision": False, "images": False, "tools": False},
+            "models": [{"id": "auto", "capabilities": {"vision": False, "images": False}}],
+        })
+
+        self.assertEqual(provider["responses_profile"]["mode"], "native")
+        self.assertTrue(provider["native_responses"])
+        self.assertTrue(provider["native_capabilities_locked"])
+        self.assertTrue(provider["capabilities"]["vision"])
+        self.assertTrue(provider["capabilities"]["images"])
+        preview = build_catalog_preview_from_providers([provider], focus_provider_id=provider["id"])
+        caps = preview["entries"][0]["capabilities"]
+        self.assertTrue(caps["vision"])
+        self.assertTrue(caps["images"])
+        self.assertTrue(caps["native_approval"])
+
+    def test_codex_login_provider_is_read_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.create_provider({
+                "display_name": "Codex Login",
+                "short_alias": "codex",
+                "auth_mode": "official_oauth",
+                "api_format": "openai_responses",
+                "models": [{"id": "gpt-5"}],
+            })
+
+            loaded = registry.get_provider(provider["id"], include_secrets=True)
+            self.assertTrue(loaded["read_only"])
+            self.assertTrue(loaded["native_capabilities_locked"])
+            with self.assertRaises(ValueError):
+                registry.update_provider(provider["id"], {"display_name": "Changed"})
+            with self.assertRaises(ValueError):
+                registry.delete_provider(provider["id"])
+
     def test_model_api_format_and_native_approval_are_model_level_settings(self):
         provider = normalize_provider({
             "display_name": "Mixed Interface",

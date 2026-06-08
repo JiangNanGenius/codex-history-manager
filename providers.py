@@ -39,9 +39,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from app_paths import app_data_path
 from capabilities import (
     effective_provider_capabilities,
+    has_locked_native_capabilities,
+    is_codex_login_provider,
+    is_native_responses_provider,
     merge_provider_model_capabilities,
     model_capability_overrides,
     normalize_capabilities as _normalize_capabilities,
+    responses_profile_mode,
 )
 from model_catalog import resolve_catalog_id_collisions
 
@@ -72,6 +76,11 @@ APPROVAL_MODES = {
     "official_guardian",
     "proxy_auto_approve",
 }
+
+
+def is_provider_read_only(provider: Dict[str, Any]) -> bool:
+    """Provider entries backed by Codex official login are status-only here."""
+    return is_codex_login_provider(provider)
 
 # Token-based matching to avoid false positives like "monkey" or "tokenize"
 # 设计说明：使用分词后匹配，而非简单子串包含，避免 "monkey" 被误判为 secret。
@@ -214,6 +223,8 @@ class ProviderRegistry:
             if existing.get("id") != provider_id:
                 continue
             # merge 而非 replace：保护 secret 字段不被 REDACTED_VALUE 覆盖
+            if is_provider_read_only(existing):
+                raise ValueError("Codex login providers are read-only in Provider settings.")
             merged = merge_provider_update(existing, data)
             merged["id"] = provider_id
             merged["created_at"] = existing.get("created_at") or now_iso()
@@ -240,6 +251,9 @@ class ProviderRegistry:
             是否实际发生了删除。
         """
         store = self._load_store()
+        existing = self._find_provider(store, provider_id)
+        if existing and is_provider_read_only(existing):
+            raise ValueError("Codex login providers are read-only in Provider settings.")
         before = len(store.get("providers", []))
         store["providers"] = [p for p in store.get("providers", []) if p.get("id") != provider_id]
         # 级联清理 focus：避免 dangling reference
@@ -328,7 +342,7 @@ class ProviderRegistry:
         # 回写状态：让用户在 Providers 页面看到「上次测试时间 / 错误」
         if provider_id:
             existing = self.get_provider(provider_id, include_secrets=True)
-            if existing:
+            if existing and not is_provider_read_only(existing):
                 existing["status"] = {**existing.get("status", {}), **status}
                 self.update_provider(provider_id, existing)
 
@@ -382,6 +396,8 @@ class ProviderRegistry:
         provider = self.get_provider(provider_id, include_secrets=True)
         if not provider:
             return {"success": False, "changed": 0, "action": action, "error": "Provider not found"}
+        if is_provider_read_only(provider):
+            raise ValueError("Codex login providers are read-only in Provider settings.")
 
         models = provider.get("models", [])
         changed = 0
@@ -437,6 +453,8 @@ class ProviderRegistry:
         provider = self.get_provider(provider_id, include_secrets=True)
         if not provider:
             return {"success": False, "error": "Provider not found"}
+        if is_provider_read_only(provider):
+            raise ValueError("Codex login providers are read-only in Provider settings.")
 
         previous = provider.get("catalog_visibility", "focused_only")
         if previous == visibility:
@@ -739,6 +757,9 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         "updated_at": raw.get("updated_at") or "",
     }
     provider["capabilities"] = effective_provider_capabilities(provider)
+    provider["read_only"] = is_provider_read_only(provider)
+    provider["native_responses"] = is_native_responses_provider(provider)
+    provider["native_capabilities_locked"] = has_locked_native_capabilities(provider)
 
     if not provider["models"]:
         provider["models"] = [normalize_model({"id": "default", "display_name": "Default model"})]
@@ -1040,7 +1061,10 @@ def normalize_responses_profile(data: Any) -> Dict[str, Any]:
     unsupported = raw.get("unsupported_fields")
     if not isinstance(unsupported, list):
         unsupported = []
+    mode = responses_profile_mode(raw)
     return {
+        "mode": mode,
+        "native_responses": mode == "native",
         "profile_id": str(raw.get("profile_id") or "").strip(),
         "domestic_responses": bool(raw.get("domestic_responses", False)),
         "partial_compatibility": bool(raw.get("partial_compatibility", False)),

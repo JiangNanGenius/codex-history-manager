@@ -2,83 +2,74 @@
 
 更新日期：2026-06-08
 
-## 当前最高优先级
+## 本轮发布目标
 
-- [ ] 悬浮窗：继续实测桌面版打开、隐藏、置顶、深色背景和右键菜单，确认不再白底、不再点了没反应。本轮推进：桌面版启动时只创建主 WebView；Token 悬浮窗已改为原生 Tk 工具窗口，WebView 就绪后懒加载并默认显示，避免两个 WebView2 同步初始化导致卡死；悬浮窗数据刷新改为后台轻量轮询，失败快速重试，避免卡住 Tk 主循环；右键菜单动作改为后台线程；圆角通过 Win32 region 应用；半透明程度新增设置项；大 token 数改为短格式显示，避免截断；主界面左侧新增常驻“悬浮窗/启动 Codex”按钮；设置页新增“立即显示悬浮窗/启动 Codex”入口且默认勾选启动显示；悬浮窗右键菜单和标题栏菜单按钮支持启动 Codex、显示主窗口、打开设置、快速切换/自动选择供应商、隐藏和退出；托盘右键菜单同步支持显示主窗口、打开设置、显示/隐藏悬浮窗、启动 Codex、快速切换/自动选择供应商和退出。仍需打包后真实桌面点击验证。
-- [ ] 退出清理：实测主窗口关闭、托盘退出、后台 Flask 线程、托盘线程和隐藏悬浮窗是否会留下进程。本轮推进：关闭询问改为“是=退出程序，否=缩小到托盘”，并新增默认行为设置；新增管理器单实例锁和 PyInstaller 父进程看门狗；退出改为短延迟兜底强退，降低残留概率。
-- [ ] 图标替换：应用内侧边栏、favicon、托盘、主窗口和 EXE 都必须使用新版图标。本轮推进：新增 `/app-icon.png`、`/favicon.ico` 路由；侧边栏 logo 改用新版 png；PyInstaller datas 打包 `icon.ico`/`icon.png`；主窗口 shown 后通过 Win32 句柄设置窗口图标；原生悬浮窗和托盘同样读取打包图标。仍需打包后目视验证。
-- [ ] 设置向导：继续把设置页改成新手可一步步完成的向导，支持以后回来修改，不强迫重跑完整流程。本轮推进：快速设置已升级为 8 步向导，加入“建议下一步”卡片、步骤 ready/待补充状态、供应商/路由/提醒/保存检查动态摘要、缺项定位和完整中英文文案；导入预设/新建供应商后自动进入连接信息步骤。后续还要把供应商/模型能力编辑做成独立表单，并把额度/余额脚本导入做成真正向导步骤。
-- [ ] 开机启动：普通启动文件夹不提供提权；需要最高权限时使用 Windows 任务计划。设置页已加预览摘要和说明，打包后还要做真实应用/移除烟测。
-- [ ] 中文/英文双语：去掉主界面里过重的技术文案，中文界面补齐汉化，英文保持同等完整。本轮推进：移除首页“安全提示”卡片，淡化“重要改动确认”等提示型文案。
-- [x] 自动审批：默认开启，保留“无感”体验；审批提示词允许用户自定义，并提供恢复默认。本轮已把后端和前端默认都改为自动处理低风险操作，并修正隐式默认不会在无 reviewer 的媒体测试路径上误拦截。
+- [x] 版本号升至 `v2.2.8`，避免复用已发布的 `v2.2.7`。
+- [x] README 中英文重写为面向用户的说明，去掉旧的技术化检查说明和“手动修改限制”表达。
+- [x] 新增中英文 `RELEASE_NOTES.md`，作为 GitHub Release 描述来源。
+- [x] 跑完整测试、重新打包 `dist/CodexHistoryManager.exe`，并生成 `dist/release-manifest.json`。
+- [x] 对打包后的 EXE 运行 `--smoke-test`。真实桌面冒烟仍需继续覆盖：主界面、设置向导、悬浮窗、托盘菜单、启动/关闭 Codex、退出清理。
+- [ ] 提交、推送，并创建带 EXE 资产的 GitHub Release。
 
-## 已调研依据
+## 最高优先级
+
+- [ ] 悬浮窗真实桌面验证：确认默认开启、可见、圆角、半透明、数据刷新、右键菜单、托盘菜单、快速切换供应商、打开主窗口、启动 Codex 和退出都能工作。
+- [ ] 退出清理：确认主窗口关闭、托盘退出、悬浮窗隐藏、后台 Flask 线程、托盘线程、Codex 子进程和 PyInstaller 父进程看门狗不会留下残留。
+- [ ] 设置向导继续产品化：供应商、多模型、模型能力、媒体 fallback、路由、额度脚本、余额提醒、默认值补齐和后续修改入口要真正按步骤走。
+- [ ] 总览页增强：显示当前连接模式、Codex 登录状态、当前供应商/模型、代理状态、今日/本轮 Token、费用估算、余额/额度数据来源和仓库直链。
+- [ ] 供应商页减负：只保留连接、密钥、Header、User-Agent、模型能力、媒体能力和额度脚本；新会话顺序、优先级和故障转移继续放到模型轮换页。
+- [ ] 纯原生 Responses 代理支持：默认标记完整文本能力；原生模式配置不可随意修改；图片/视频若未被同一 base URL 代理，需要引导配置媒体供应商或全局 fallback。
+- [ ] 官方登录态：检测到 Codex 登录后默认采用“保留登录注入模式”；官方直连模式下锁定会改变供应商/路由的配置，只保留只读显示增强。
+- [ ] 开机启动：普通启动不承诺提权；需要最高权限时走 Windows 任务计划。界面要讲清“普通启动”和“管理员启动”的差别，并在打包版实测添加/移除。
+- [ ] 自动审批：默认无感开启；用户可编辑提示词；默认提示词必须要求严格 JSON；支持模型是否原生审批的模型级设置。
+- [ ] 用量、额度、余额报警：用量以 Codex 输出/事件为准；额度和余额只有在官方接口、预设脚本或用户导入脚本可用时才开启；没有模型价格就只计 Token 不计费。
+- [ ] Codex 右上角设置入口：研究并实现 CDP 注入，不修改安装文件；注入成功后显示本应用菜单，支持打开设置、路由、用量和诊断。
+
+## 已完成的关键推进
+
+- [x] 自动更新：新增 GitHub Releases 检查、EXE 资产识别、下载到 `updates/<版本>/`，下载后提示用户关闭旧版并运行新版。
+- [x] 自动审批默认开启：后端和前端默认都偏向低风险无感处理；无 reviewer 的媒体路径不会被隐式默认阻断。
+- [x] 自动审批提示词：默认要求返回严格 JSON，包含 `decision`、`risk_level`、`reason`、`confidence`、`scope`、`reviewed_action_id`。
+- [x] Responses 和 Chat 分流：新增模型级 `api_format`，`/v1/responses` 会按模型选择原生 Responses、Responses 兼容或 Chat 转换路径。
+- [x] 原生审批标记：新增模型级 `native_approval`，并在模型能力 badge 中展示。
+- [x] 模型名映射：支持 exact、alias、regex，并能显示最终上游模型名。
+- [x] 连接测试 Header 一致性：测试 API 会使用和真实代理一致的 `User-Agent` 与自定义 Header，并默认隐藏敏感值。
+- [x] 媒体 fallback 引导：文本代理不再显示“全部不支持”，而是提示图片/视频需要媒体供应商或全局 fallback。
+- [x] 托盘/悬浮窗快速切换供应商：新增持久化 `focus_provider_id`、`/api/providers/focus`、桌面 API 和代理焦点优先路由。
+- [x] 供应商与模型轮换职责边界：供应商页负责连接和能力；模型轮换页负责新会话策略；Codex 连接页负责启动、登录保留和配置写入。
+- [x] README 正文不包含外部对照项目名，也不再保留“真实修改必须用户手动执行”的限制。
+
+## 调研记录
 
 - 参考脚本市场：`https://github.com/BigPizzaV3/CodexPlusPlusScriptMarket`
-- `hide-usage-alert`：隐藏 Codex 桌面的额度/用量提醒，目标是减少官方提醒对代理/自定义路由用户的干扰。
-- `codex-token-usage`：从 Codex 响应、事件、SSE、WebSocket 和历史 bridge 中提取每轮 input/output/total/cache/context 用量。
-- `codex-list-pagebuster`：补强 Codex 原生会话列表，为旧会话提供入口。
-- Codex++ 本体：`https://github.com/BigPizzaV3/CodexPlusPlus`
-- Codex++ 最新核对：`v1.2.4`（2026-06-08）包含 Windows 单实例兜底、多个 `session_meta` 同步修复、混合官方登录/中转说明、Fast 服务模式仅支持兼容模型。
-- Codex++ 注入方式：外部启动 Codex，开启 Chromium DevTools Protocol，再通过 `Runtime.evaluate` 和 `Page.addScriptToEvaluateOnNewDocument` 注入，不改 Codex 安装文件。
-- Codex++ 设置入口：注入脚本在 Codex 顶部/右上创建 `codex-plus-menu`，通过 bridge 调宿主后端。
-
-## 官方登录态规则
-
-- [x] 官方登录启动：关闭本地代理 provider 路由，不启用 Codex++ 启动器，不执行会改路由的供应商同步，保留官方 OAuth 登录态。
-- [x] 官方登录可保留安全 UI 增强：Token 显示、上下文显示、会话列表补强、本应用设置入口。
-- [x] 非官方/本地供应商模式提供插件增强开关；官方登录启动会自动关闭这类能力，避免遮挡官方提示或改变路由。
-- [ ] 官方登录默认不启用隐藏官方用量提醒、媒体 fallback 注入、自动供应商轮换等会改变请求路由或遮挡官方提示的能力。
-- [ ] 后续注入菜单实现时，要把“安全显示增强”和“请求路由增强”分开开关。
+- `hide-usage-alert`：可隐藏 Codex 桌面里的官方用量提醒，适合做成“显示增强/请求路由增强”分离开关。
+- `codex-token-usage`：会从 Codex 响应、事件、SSE、WebSocket 和历史 bridge 中提取 input/output/total/cache/context 用量；本项目先对齐本地 rollout 和代理日志，再评估注入侧实时账本。
+- 参考桌面增强项目：`https://github.com/BigPizzaV3/CodexPlusPlus`
+- 参考注入方法：外部启动 Codex，开启 Chromium DevTools Protocol，再通过 `Runtime.evaluate` 和 `Page.addScriptToEvaluateOnNewDocument` 注入，不修改 Codex 安装文件。
+- 参考设置入口：注入脚本在 Codex 顶部/右上创建菜单，通过 bridge 调用宿主后端。
 
 ## 设置向导设计
 
-- [ ] 第 1 步：自动检测 Codex 数据库、sessions、归档目录、Codex++ 路径、代理端口。
-- [ ] 第 2 步：添加供应商，支持一个供应商多个模型，并为缺失字段填默认值。
-- [ ] 第 3 步：连接高级设置，可展开设置 User-Agent、自定义 headers、超时、重试、max tokens、模型名映射。
-- [ ] 第 4 步：模型能力设置，按模型标记 text/vision/tools/images/videos/reasoning/streaming/context。
-- [ ] 第 5 步：路由设置，支持动态调整顺序；后台切换模型或顺序后，在上一个会话结束后自动切换。
-- [ ] 第 6 步：图片/视频模型设置，可选择“全局 fallback”，开启后所有模型获得该供应商提供的生成能力。
-- [ ] 第 7 步：用量、额度、余额报警。用量以 Codex 输出事件为准；额度/余额只在有官方接口、预设脚本或用户导入脚本时开启。
-- [ ] 第 8 步：保存、验证、以后修改入口。保存前给用户明确缺项提示，并允许先用默认值。
+- [ ] 第 1 步：自动检测 Codex 数据库、sessions、归档目录、Codex 可执行文件、代理端口和当前登录态。
+- [ ] 第 2 步：添加供应商，支持一个供应商多个模型，并给缺失字段补默认值。
+- [ ] 第 3 步：连接高级设置，可展开设置 `User-Agent`、自定义 Header、超时、重试、max tokens 和模型名映射。
+- [ ] 第 4 步：模型能力设置，按模型标记 text、vision、tools、images、videos、reasoning、streaming、context 和 native approval。
+- [ ] 第 5 步：路由设置，支持后台动态调整顺序；当前会话结束后自动切到下一组模型。
+- [ ] 第 6 步：图片/视频设置，支持全局 fallback；开启后其他模型可借用该供应商的生成能力。
+- [ ] 第 7 步：用量、额度、余额报警，明确数据来源；无官方接口或脚本时不开放额度/余额自动报警。
+- [ ] 第 8 步：保存和以后修改入口；保存前明确缺项，允许先用默认值跑起来。
 
-## 供应商与纯原生代理支持
+## 发布检查清单
 
-- [x] 连接测试/预览必须和真实代理请求使用一致的 User-Agent 和自定义 headers。本轮新增“请求预览”dry-run：复用真实代理 `_build_upstream_headers`，显示 Content-Type、User-Agent、自定义 headers，并在返回前隐藏 Authorization/x-api-key 等敏感值；原有轻量网络检查仍保持低风险 HEAD。
-- [x] 纯原生 Responses 代理要检查图片/视频接口是否被同一 base URL 代理；若没有，界面应提示需要配置媒体供应商或开启全局 fallback。本轮新增媒体路由 readiness 引导：原生 Responses 开启图片/视频能力但未确认 OpenAI 兼容媒体直通时，会提示先确认同一供应商地址是否覆盖图片/视频接口，否则配置默认媒体供应商；缺少供应商地址时给出单独提示。
-- [ ] 一个供应商可提供多个不同能力模型，路由和目录不能只按供应商级能力判断。
-- [x] 托盘/悬浮窗快速切换供应商：本轮新增持久化 `focus_provider_id`、`/api/providers/focus`、桌面 API 和本地代理焦点优先路由；媒体请求在焦点供应商具备能力时优先使用焦点，否则仍走全局媒体 fallback。
-- [x] Responses 和 Chat 接口要能区分到模型级：本轮已增加模型级 `api_format`，目录预览显示最终接口来源，`/v1/responses` 路由会按模型级 Responses/Chat 选择原生或转换路径。
-- [x] 模型是否原生支持审批要有设置项：本轮已增加模型级 `native_approval` 标记，并在模型能力 badge 中显示。
-- [x] 模型名映射支持 exact、alias、regex，并在测试页显示最终上游模型名。本轮新增 provider 请求预览：显示 requested_model、upstream_model、api_format 和路由说明，覆盖 provider 前缀剥离、exact/case-insensitive alias 与 regex rewrite。
-- [x] 对不支持图片/视频的纯文本代理，不显示“全部不支持”，而是引导配置媒体 fallback。本轮新增 `guidance_key/action_key`，前端使用中英文文案显示“文本仍可用，图片/视频需要单独媒体供应商”，不再优先展示后端英文技术说明。
-- [x] 自动审批默认开启后不应破坏媒体代理：隐式默认无 reviewer 时允许媒体请求继续，用户显式开启的严格审批仍按失败策略处理。
-
-## 用量、额度、余额报警
-
-- [ ] 用量接口已能解析 Codex rollout `token_count` 的 input/output/total/cache/context；默认轮询只轻量扫描，完整“Codex 输出为准”还需要注入侧实时账本或后台索引，避免部分扫描冒充全量。
-- [ ] 对齐 `codex-token-usage` 的更多来源：SSE 片段、WebSocket、bridge 历史恢复。先做本地 rollout 等价能力，再评估注入侧实时捕获；官方登录态也允许保留这类只读显示增强。
-- [ ] 额度报警：只有存在官方拉取、预设脚本或用户导入脚本时才允许开启。
-- [ ] 余额报警：优先官方扣费；没有官方扣费时使用用户设置的余额和模型价格估算。
-- [ ] 模型价格未设置时不计算费用，只显示 token 用量。
-- [ ] 报警设置要区分 token、余额、额度、费用估算，并解释数据来源。
-
-## Codex 右上角设置菜单
-
-- [ ] 调研并复用 Codex++ 的安全注入思路：CDP 注入，不改 `app.asar`。
-- [ ] 注入成功后在 Codex 右上角显示本应用入口，打开设置、路由、用量、诊断。
-- [ ] 菜单必须有后端连接状态；断开时给出“重启注入/打开管理器”的简单操作。
-- [ ] 选择器不能猜。需要用当前 Codex 版本实测 DOM，再写稳定 fallback。
-- [ ] 注入脚本要可卸载、可重复注入、可检查版本，避免重复菜单。
-
-## 更新与发布
-
-- [x] 增加自动更新功能：本轮新增 GitHub Releases 检查、EXE 资产识别、设置页更新入口和本地下载到 `updates/<版本>/`；下载后提示关闭本程序并运行新版 EXE，不做静默覆盖。
-- [ ] Release 必须附带打包好的 `.exe`。
-- [ ] 打包后必须烟测试：`--smoke-test`、主界面、设置页、悬浮窗入口、退出清理。
-- [ ] 软件内适当位置显示仓库直链：`https://github.com/JiangNanGenius/Codex-Enhance-Manager`
+- [x] `python -m pytest -q`
+- [x] `node --check static/js/i18n.js static/js/providers.js static/js/amr.js static/js/sync.js`
+- [x] `python -m py_compile approval_broker.py app.py main.py providers.py capabilities.py`
+- [x] `python build_exe.py --no-desktop-copy --smoke-test --write-release-manifest`
+- [ ] 打开打包版 EXE，检查主界面、设置页、总览、悬浮窗、托盘菜单、启动 Codex 和退出清理。
+- [ ] GitHub Release 上传 `dist/CodexHistoryManager.exe` 和 `dist/release-manifest.json`。
+- [ ] Release 描述必须中英文双语，并写清测试结果和已知风险。
 
 ## 已知提醒安排
 
 - [x] 已创建当前线程 2026-06-08 06:00 推进提醒。
-- [ ] 8:00、10:00、12:00：Codex 当前线程只允许一个 heartbeat，未能直接创建；如需严格四次自动唤醒，需要用户确认改用其他自动化方式。
+- [ ] 8:00、10:00、12:00：当前线程只允许一个 heartbeat，未能直接创建；如需严格四次自动推进，需要改用其他自动化方式。

@@ -20,6 +20,53 @@ CAPABILITY_DEFAULTS: Dict[str, bool] = {
     "native_approval": False,
 }
 
+NATIVE_RESPONSES_PROFILE_MODES = {"native", "native_responses", "native_proxy", "native_responses_proxy"}
+NATIVE_FULL_CAPABILITY_EXCLUDED_KEYS = {"balance", "quota"}
+
+
+def native_full_capabilities(data: Any = None) -> Dict[str, bool]:
+    """Return the locked capability map for native Responses/Codex-login modes."""
+    capabilities = normalize_capabilities(data)
+    for key in CAPABILITY_DEFAULTS:
+        capabilities[key] = key not in NATIVE_FULL_CAPABILITY_EXCLUDED_KEYS
+    return normalize_capabilities(capabilities)
+
+
+def responses_profile_mode(profile: Any) -> str:
+    raw = profile if isinstance(profile, dict) else {}
+    mode = str(
+        raw.get("mode")
+        or raw.get("responses_mode")
+        or raw.get("connection_mode")
+        or ""
+    ).strip().lower()
+    if mode in NATIVE_RESPONSES_PROFILE_MODES:
+        return "native"
+    if mode == "native":
+        return "native"
+    if bool(raw.get("native_responses") or raw.get("native_proxy") or raw.get("native_responses_proxy")):
+        return "native"
+    return "compatible"
+
+
+def is_native_responses_provider(provider: Dict[str, Any]) -> bool:
+    if not isinstance(provider, dict):
+        return False
+    return (
+        str(provider.get("api_format") or "") == "openai_responses"
+        and responses_profile_mode(provider.get("responses_profile")) == "native"
+    )
+
+
+def is_codex_login_provider(provider: Dict[str, Any]) -> bool:
+    if not isinstance(provider, dict):
+        return False
+    return str(provider.get("auth_mode") or "") == "official_oauth" or bool(provider.get("codex_login"))
+
+
+def has_locked_native_capabilities(provider: Dict[str, Any]) -> bool:
+    return is_native_responses_provider(provider) or is_codex_login_provider(provider)
+
 
 def normalize_capabilities(data: Any) -> Dict[str, bool]:
     """
@@ -67,6 +114,9 @@ def effective_provider_capabilities(provider: Dict[str, Any]) -> Dict[str, bool]
     capabilities = normalize_capabilities(provider.get("capabilities"))
     api_format = str(provider.get("api_format") or "")
     media_profile = provider.get("media_profile") if isinstance(provider.get("media_profile"), dict) else {}
+
+    if has_locked_native_capabilities(provider):
+        return native_full_capabilities(capabilities)
 
     if (
         api_format == "openai_images"
@@ -123,4 +173,6 @@ def merge_model_capabilities(provider_capabilities: Any, model: Dict[str, Any]) 
 
 def merge_provider_model_capabilities(provider: Dict[str, Any], model: Dict[str, Any]) -> Dict[str, bool]:
     """Merge effective provider capabilities with explicit model overrides."""
+    if has_locked_native_capabilities(provider):
+        return native_full_capabilities(provider.get("capabilities"))
     return merge_model_capabilities(effective_provider_capabilities(provider), model)

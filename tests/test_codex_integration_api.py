@@ -15,7 +15,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             patch("app.TokenStats"),
             patch("app.ProviderRegistry"),
             patch("app.AutoApprovalModelReviewer"),
-            patch("app.LocalProxyServer"),
+            patch("app.LocalProxyServer") as MockLocalProxyServer,
             patch("app.AMRRegistry"),
             patch("app.QuotaManager"),
             patch("app.StartupManager"),
@@ -29,6 +29,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             MockConfig.return_value = config
             self.last_config = config
             MockDB.return_value.get_provider_distribution.return_value = []
+            MockLocalProxyServer.return_value.status.return_value = {}
 
             from app import create_app
 
@@ -103,6 +104,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
         data = response.get_json()
         self.assertTrue(data["success"])
         self.assertTrue(data["official_mode"])
+        self.assertEqual(data["start_mode"], "official_direct")
         self.assertTrue(data["sync"]["skipped"])
         sync_with_backup.assert_not_called()
         disable_proxy.assert_called_once()
@@ -112,6 +114,45 @@ class CodexIntegrationApiTest(unittest.TestCase):
             "use_codex_plus_plus": False,
             "plugin_unlock_enabled": False,
         })
+
+    def test_start_codex_preserve_login_proxy_keeps_provider_sync(self):
+        app = self._app()
+        with (
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)) as sync_with_backup,
+            patch("app.disable_codex_enhance_provider_config") as disable_proxy,
+            patch("app.start_codex", return_value=(True, "started")) as start,
+        ):
+            response = app.test_client().post("/api/codex/start", json={"start_mode": "preserve_login_proxy"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertFalse(data["official_mode"])
+        self.assertEqual(data["start_mode"], "preserve_login_proxy")
+        self.assertTrue(data["preserve_official_auth"])
+        sync_with_backup.assert_called_once()
+        disable_proxy.assert_not_called()
+        start.assert_called_once()
+
+    def test_codex_integration_status_defaults_to_preserve_login_when_official_oauth_detected(self):
+        app = self._app()
+        fake_mgr = MagicMock()
+        fake_mgr.read_config.return_value = {}
+        fake_mgr.read_auth.return_value = {"access_token": "eyJhbGciOiJ...", "expires_at": 123}
+        fake_mgr.inspect_permissions.return_value = {}
+        fake_mgr.get_auth_mode.return_value = "official_oauth"
+        fake_mgr.codex_home = Path("C:/Users/demo/.codex")
+        fake_mgr.config_path = Path("C:/Users/demo/.codex/config.toml")
+        fake_mgr.auth_path = Path("C:/Users/demo/.codex/auth.json")
+        with patch("app.CodexConfigManager", return_value=fake_mgr):
+            response = app.test_client().get("/api/codex-integration/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["official_oauth_detected"])
+        self.assertTrue(data["default_preserve_official_auth"])
+        self.assertEqual(data["default_start_mode"], "preserve_login_proxy")
+        self.assertIn("preserve_login_proxy", data["available_start_modes"])
 
     def test_disable_codex_enhance_provider_config_removes_only_local_routing(self):
         with tempfile.TemporaryDirectory() as tmp:

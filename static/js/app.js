@@ -213,7 +213,10 @@ async function startCodexFromQuickAction() {
         if (window.pywebview && window.pywebview.api && window.pywebview.api.start_codex) {
             data = await window.pywebview.api.start_codex();
         } else {
-            data = await api('/api/codex/start', { method: 'POST' });
+            data = await api('/api/codex/start', {
+                method: 'POST',
+                body: JSON.stringify({ start_mode: 'preserve_login_proxy' }),
+            });
         }
         const ok = !data || data.success !== false;
         const message = (data && (data.message || data.error)) || (ok ? t('codexStartRequested') : t('failed'));

@@ -54,6 +54,12 @@ class ApprovalBrokerTest(unittest.TestCase):
 
         self.assertIn("Auto Approval Broker", system_content)
         self.assertNotIn("fallback", system_content.lower())
+        self.assertIn('"decision"', system_content)
+        self.assertIn('"risk_level"', system_content)
+        self.assertIn('"reason"', system_content)
+        self.assertIn('"confidence"', system_content)
+        self.assertIn('"scope"', system_content)
+        self.assertIn('"reviewed_action_id"', system_content)
         self.assertEqual(prompt["response_format"], {"type": "json_object"})
         self.assertTrue(user_payload["user_enabled"])
         self.assertEqual(user_payload["action"]["kind"], "permissions")
