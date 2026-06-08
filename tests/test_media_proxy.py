@@ -213,6 +213,43 @@ class MediaProxyHelperTest(unittest.TestCase):
         self.assertFalse(readiness["live_forwarding_enabled"])
         self.assertFalse(image_check["can_forward"])
         self.assertEqual(image_check["error_type"], "media_base_url_missing")
+        self.assertEqual(image_check["guidance_key"], "mediaBaseUrlNeededGuidance")
+        self.assertEqual(image_check["action_key"], "mediaAddProviderUrlAction")
+
+    def test_text_only_provider_readiness_guides_media_fallback(self):
+        readiness = build_media_route_readiness({
+            "id": "native-text",
+            "api_format": "openai_responses",
+            "capabilities": {"text": True, "images": False, "videos": False},
+        })
+
+        self.assertFalse(readiness["live_forwarding_enabled"])
+        self.assertEqual(readiness["guidance_keys"], ["mediaTextProviderNeedsFallback"])
+        self.assertEqual(readiness["action_keys"], ["mediaConfigureMediaFallbackAction"])
+        for check in readiness["checks"]:
+            self.assertFalse(check["can_forward"])
+            self.assertEqual(check["error_type"], "media_capability_unsupported")
+            self.assertEqual(check["guidance_key"], "mediaTextProviderNeedsFallback")
+            self.assertEqual(check["action_key"], "mediaConfigureMediaFallbackAction")
+
+    def test_native_responses_media_capability_guides_proxy_or_fallback(self):
+        readiness = build_media_route_readiness({
+            "id": "native-mixed",
+            "base_url": "https://native.example.test/v1",
+            "api_format": "openai_responses",
+            "capabilities": {"text": True, "images": True, "videos": False},
+        })
+
+        image_check = next(item for item in readiness["checks"] if item["media_kind"] == MEDIA_KIND_IMAGE)
+        video_check = next(item for item in readiness["checks"] if item["media_kind"] == MEDIA_KIND_VIDEO)
+        self.assertFalse(readiness["live_forwarding_enabled"])
+        self.assertIn("mediaNativeResponsesNeedsMediaProxy", readiness["guidance_keys"])
+        self.assertIn("mediaCapabilityNeedsEnableOrFallback", readiness["guidance_keys"])
+        self.assertFalse(image_check["can_forward"])
+        self.assertEqual(image_check["error_type"], "media_adapter_required")
+        self.assertEqual(image_check["guidance_key"], "mediaNativeResponsesNeedsMediaProxy")
+        self.assertEqual(image_check["action_key"], "mediaConfirmNativeMediaProxyAction")
+        self.assertEqual(video_check["guidance_key"], "mediaCapabilityNeedsEnableOrFallback")
 
     def test_media_route_readiness_exposes_adapter_required_blocker(self):
         readiness = build_media_route_readiness({

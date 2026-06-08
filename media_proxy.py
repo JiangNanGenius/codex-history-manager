@@ -199,12 +199,14 @@ def media_forwarding_status(provider: Dict[str, Any], media_kind: str) -> Dict[s
             "error_type": "media_adapter_required",
             "message": summarize_media_adapter_preview(preview),
             "adapter_preview": preview,
+            **_media_guidance(provider, media_kind, "media_adapter_required"),
         }
     if not provider_supports_media(provider, media_kind):
         return {
             "can_forward": False,
             "error_type": "media_capability_unsupported",
             "message": f"Provider '{provider.get('id')}' is not configured for {media_kind} media requests.",
+            **_media_guidance(provider, media_kind, "media_capability_unsupported"),
         }
     if not media_profile.get("openai_compatible_media") and str(provider.get("api_format") or "") not in {"openai_images", "openai_videos"}:
         return {
@@ -214,6 +216,7 @@ def media_forwarding_status(provider: Dict[str, Any], media_kind: str) -> Dict[s
                 f"Provider '{provider.get('id')}' has media capability enabled, but OpenAI-compatible "
                 "media pass-through is not enabled."
             ),
+            **_media_guidance(provider, media_kind, "media_adapter_required"),
         }
     return {"can_forward": True, "error_type": "", "message": ""}
 
@@ -229,6 +232,8 @@ def build_media_route_readiness(provider: Dict[str, Any], model_id: str = "") ->
     ]
     ready_checks = [item for item in checks if item.get("can_forward")]
     blocked_checks = [item for item in checks if not item.get("can_forward")]
+    guidance_keys = _unique_truthy(item.get("guidance_key") for item in blocked_checks)
+    action_keys = _unique_truthy(item.get("action_key") for item in blocked_checks)
     return {
         "success": True,
         "preview": True,
@@ -248,6 +253,8 @@ def build_media_route_readiness(provider: Dict[str, Any], model_id: str = "") ->
         "live_forwarding_enabled": bool(ready_checks),
         "ready_count": len(ready_checks),
         "blocked_count": len(blocked_checks),
+        "guidance_keys": guidance_keys,
+        "action_keys": action_keys,
         "checks": checks,
     }
 
@@ -403,6 +410,11 @@ def _media_route_readiness_check(provider: Dict[str, Any], media_kind: str, mode
     if status.get("can_forward") and not upstream_url:
         error_type = "media_base_url_missing"
         message = "Provider has media pass-through enabled, but base_url is empty."
+        status = {
+            **status,
+            "guidance_key": "mediaBaseUrlNeededGuidance",
+            "action_key": "mediaAddProviderUrlAction",
+        }
     elif can_forward:
         message = f"OpenAI-compatible {media_kind} media pass-through is ready."
 
@@ -412,6 +424,8 @@ def _media_route_readiness_check(provider: Dict[str, Any], media_kind: str, mode
         "can_forward": can_forward,
         "error_type": "" if can_forward else error_type,
         "message": message,
+        "guidance_key": str(status.get("guidance_key") or ""),
+        "action_key": str(status.get("action_key") or ""),
         "proxy_paths": proxy_paths,
         "canonical_path": canonical_path,
         "upstream_url": upstream_url,
@@ -420,6 +434,55 @@ def _media_route_readiness_check(provider: Dict[str, Any], media_kind: str, mode
     }
     if status.get("adapter_preview"):
         result["adapter_preview"] = status["adapter_preview"]
+    return result
+
+
+def _media_guidance(provider: Dict[str, Any], media_kind: str, error_type: str) -> Dict[str, str]:
+    capabilities = effective_provider_capabilities(provider)
+    media_profile = provider.get("media_profile") if isinstance(provider.get("media_profile"), dict) else {}
+    api_format = str(provider.get("api_format") or "")
+    has_any_media_capability = bool(
+        capabilities.get("images")
+        or capabilities.get("videos")
+        or media_profile.get("default_image_provider")
+        or media_profile.get("default_video_provider")
+    )
+    text_only = bool(capabilities.get("text")) and not has_any_media_capability
+
+    if error_type == "media_capability_unsupported":
+        if text_only:
+            return {
+                "guidance_key": "mediaTextProviderNeedsFallback",
+                "action_key": "mediaConfigureMediaFallbackAction",
+            }
+        return {
+            "guidance_key": "mediaCapabilityNeedsEnableOrFallback",
+            "action_key": "mediaConfigureMediaFallbackAction",
+        }
+
+    if error_type == "media_adapter_required":
+        if api_format == "openai_responses":
+            return {
+                "guidance_key": "mediaNativeResponsesNeedsMediaProxy",
+                "action_key": "mediaConfirmNativeMediaProxyAction",
+            }
+        return {
+            "guidance_key": "mediaAdapterNeedsSetup",
+            "action_key": "mediaUseAdapterOrFallbackAction",
+        }
+
+    return {"guidance_key": "", "action_key": ""}
+
+
+def _unique_truthy(values) -> List[str]:
+    result: List[str] = []
+    seen = set()
+    for value in values:
+        item = str(value or "")
+        if not item or item in seen:
+            continue
+        result.append(item)
+        seen.add(item)
     return result
 
 

@@ -77,3 +77,17 @@ def test_provider_request_preview_ui_is_wired():
     assert "/request-preview-draft" in js
     assert "provider-request-preview" in js
     assert "requestHeadersRedacted" in js
+
+
+def test_media_route_guidance_ui_is_wired():
+    js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+    assert "guidance_keys" in js
+    assert "action_keys" in js
+    assert "mediaRouteGuidanceTitle" in js
+    assert "guidance_key" in js
+    assert "action_key" in js
+    assert "mediaTextProviderNeedsFallback" in i18n
+    assert "mediaNativeResponsesNeedsMediaProxy" in i18n
+    assert "mediaConfigureMediaFallbackAction" in i18n

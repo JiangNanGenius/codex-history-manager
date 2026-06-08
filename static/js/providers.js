@@ -990,6 +990,8 @@ function renderProviderMediaAdapterResult(result) {
 function renderProviderMediaRouteResult(result) {
     if (!result) return '';
     const checks = Array.isArray(result.checks) ? result.checks : [];
+    const guidanceKeys = Array.isArray(result.guidance_keys) ? result.guidance_keys.filter(Boolean) : [];
+    const actionKeys = Array.isArray(result.action_keys) ? result.action_keys.filter(Boolean) : [];
     return `
         <div class="enhance-status-strip mt-3">
             ${renderStatusPill('forwarding', result.live_forwarding_enabled ? t('forwardingReady') : t('forwardingBlocked'), result.live_forwarding_enabled ? 'emerald' : 'amber')}
@@ -997,6 +999,15 @@ function renderProviderMediaRouteResult(result) {
             ${renderStatusPill('blocked', String(result.blocked_count || 0), result.blocked_count ? 'amber' : 'dark')}
             ${renderStatusPill('format', result.api_format || t('formatUnknown'), 'dark')}
         </div>
+        ${guidanceKeys.length ? `
+            <div class="mt-3 rounded-lg border border-amber-800/60 bg-amber-950/10 p-3">
+                <div class="text-xs font-semibold text-amber-200">${escapeHtml(t('mediaRouteGuidanceTitle'))}</div>
+                <div class="mt-1 space-y-1">
+                    ${guidanceKeys.map(key => `<div class="text-xs text-amber-100">${escapeHtml(t(key))}</div>`).join('')}
+                    ${actionKeys.map(key => `<div class="text-xs text-dark-300">${escapeHtml(t(key))}</div>`).join('')}
+                </div>
+            </div>
+        ` : ''}
         <div class="space-y-2 mt-3">
             ${checks.map(renderMediaRouteCheckItem).join('') || renderEmptyState(t('noMediaRouteChecks'))}
         </div>
@@ -1011,7 +1022,9 @@ function renderMediaRouteCheckItem(item) {
     const ready = Boolean(item && item.can_forward);
     const proxyPaths = Array.isArray(item.proxy_paths) ? item.proxy_paths : [];
     const title = `${providerMediaKindLabel(item.media_kind)} ${item.operation || t('routeFilter')}`;
-    const message = item.message || (ready ? t('routeCanForward') : t('routeBlocked'));
+    const guidance = item.guidance_key ? t(item.guidance_key) : '';
+    const action = item.action_key ? t(item.action_key) : '';
+    const message = guidance || (ready ? t('routeCanForward') : (item.message || t('routeBlocked')));
     return `
         <div class="rounded-lg border ${ready ? 'border-emerald-800/60 bg-emerald-950/10' : 'border-amber-800/60 bg-amber-950/10'} p-3">
             <div class="flex items-center justify-between gap-2">
@@ -1021,6 +1034,7 @@ function renderMediaRouteCheckItem(item) {
             <div class="font-mono text-xs text-dark-300 mt-2 break-all">${escapeHtml(t('proxyPathLabel'))}: ${escapeHtml(proxyPaths.join(' | ') || item.canonical_path || '-')}</div>
             <div class="font-mono text-xs text-dark-300 mt-1 break-all">${escapeHtml(t('upstreamPathLabel'))}: ${escapeHtml(item.upstream_url || '-')}</div>
             <div class="text-xs ${ready ? 'text-emerald-300' : 'text-amber-200'} mt-2">${escapeHtml(message)}</div>
+            ${action ? `<div class="text-xs text-dark-300 mt-1">${escapeHtml(action)}</div>` : ''}
             <div class="text-xs text-dark-500 mt-1">${escapeHtml(t('modeValue', { mode: item.route_mode || t('statusUnknown') }))}</div>
         </div>
     `;
