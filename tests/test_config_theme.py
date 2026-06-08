@@ -70,6 +70,19 @@ class ConfigThemeTest(unittest.TestCase):
         cfg._normalize_storage_defaults()
         self.assertFalse(cfg._data["desktop_monitor_enabled"])
 
+    def test_update_settings_default_and_string_normalization(self):
+        cfg = Config.__new__(Config)
+        cfg._data = {}
+        cfg._normalize_storage_defaults()
+        self.assertTrue(cfg._data["update_check_enabled"])
+        self.assertFalse(cfg._data["update_include_prerelease"])
+
+        cfg._data["update_check_enabled"] = "no"
+        cfg._data["update_include_prerelease"] = "yes"
+        cfg._normalize_storage_defaults()
+        self.assertFalse(cfg._data["update_check_enabled"])
+        self.assertTrue(cfg._data["update_include_prerelease"])
+
 
 if __name__ == "__main__":
     unittest.main()

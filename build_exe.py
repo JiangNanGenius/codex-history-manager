@@ -66,7 +66,9 @@ LOCAL_MODULES = [
     "sync",
     "token_stats",
     "app",
+    "app_version",
     "amr_registry",
+    "updater",
 ]
 
 # PyWebView 平台相关 hidden imports（Windows 使用 EdgeChromium + WinForms）

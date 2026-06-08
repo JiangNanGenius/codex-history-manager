@@ -32,6 +32,12 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert "fillSettingsWizardDefaults" in html
     assert "setting-close-button-action" in html
     assert "setting-desktop-monitor-enabled" in html
+    assert "setting-update-check-enabled" in html
+    assert "setting-update-include-prerelease" in html
+    assert "checkForUpdates" in html
+    assert "downloadLatestUpdate" in js
+    assert "/api/updates/check" in js
+    assert "/api/updates/download" in js
     assert "https://github.com/JiangNanGenius/Codex-Enhance-Manager" in html
     assert "restoreAutoApprovalPromptDefault" in js
     assert "updateSettingsWizardChecklist" in js

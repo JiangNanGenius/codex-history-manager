@@ -62,7 +62,7 @@
 
 ## 更新与发布
 
-- [ ] 增加自动更新功能：检查 GitHub Releases，提示新版本，下载后引导重启。
+- [x] 增加自动更新功能：本轮新增 GitHub Releases 检查、EXE 资产识别、设置页更新入口和本地下载到 `updates/<版本>/`；下载后提示关闭本程序并运行新版 EXE，不做静默覆盖。
 - [ ] Release 必须附带打包好的 `.exe`。
 - [ ] 打包后必须烟测试：`--smoke-test`、主界面、设置页、悬浮窗入口、退出清理。
 - [ ] 软件内适当位置显示仓库直链：`https://github.com/JiangNanGenius/Codex-Enhance-Manager`

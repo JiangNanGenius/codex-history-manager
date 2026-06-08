@@ -32,6 +32,7 @@ let settingsWizardStep = 0;
 let defaultAutoApprovalSystemPrompt = '';
 let settingsDefaults = {};
 let latestSettings = {};
+let latestUpdateCheck = null;
 
 function showSettingsWizardStep(step, options = {}) {
     const nextStep = Math.min(Math.max(Number(step) || 0, 0), SETTINGS_WIZARD_STEP_COUNT - 1);
@@ -206,6 +207,7 @@ async function loadSettings() {
             loadUninstallPreview(),
             loadCurrencySettings(),
             loadStartupStatus(),
+            loadUpdateStatus(),
             typeof ensureProviderData === 'function' ? ensureProviderData() : Promise.resolve(),
         ]);
         updateSettingsWizardChecklist(readSettingsWizardDraft());
@@ -271,11 +273,14 @@ function populateSettingsForm(data) {
         'setting-startup-enabled': 'startup_enabled',
         'setting-startup-auto-elevate': 'startup_auto_elevate',
         'setting-desktop-monitor-enabled': 'desktop_monitor_enabled',
+        'setting-update-check-enabled': 'update_check_enabled',
+        'setting-update-include-prerelease': 'update_include_prerelease',
     };
     for (const [elId, key] of Object.entries(checkboxFields)) {
         const el = document.getElementById(elId);
         if (el && data[key] !== undefined) el.checked = Boolean(data[key]);
     }
+    renderAppVersion(data);
     syncStartupControls();
 
     const themeCustom = normalizeThemeCustom(data.theme_custom || {});
@@ -451,6 +456,100 @@ async function previewStartupSettings() {
     }
 }
 
+function renderAppVersion(data = latestSettings) {
+    const el = document.getElementById('app-version-label');
+    if (!el) return;
+    el.textContent = data.app_version ? t('currentVersionLabel', { version: data.app_version }) : '';
+}
+
+async function loadUpdateStatus() {
+    const status = document.getElementById('update-status');
+    if (!status) return;
+    renderAppVersion(latestSettings);
+    if (latestSettings.update_check_enabled === false) {
+        renderUpdateStatus({ skipped: true });
+        return;
+    }
+    await checkForUpdates(false);
+}
+
+async function checkForUpdates(showSuccessToast = true) {
+    const include = document.getElementById('setting-update-include-prerelease')?.checked || false;
+    const status = document.getElementById('update-status');
+    if (status) status.textContent = t('updateChecking');
+    try {
+        latestUpdateCheck = await api('/api/updates/check?include_prerelease=' + encodeURIComponent(String(include)));
+        renderUpdateStatus(latestUpdateCheck);
+        if (showSuccessToast) {
+            showToast(latestUpdateCheck.update_available ? t('updateAvailableToast') : t('updateNoUpdateToast'), 'success');
+        }
+    } catch (err) {
+        latestUpdateCheck = null;
+        renderInlineError('update-status', t('updateCheckFailed') + err.message);
+    }
+}
+
+async function downloadLatestUpdate() {
+    const include = document.getElementById('setting-update-include-prerelease')?.checked || false;
+    const button = document.getElementById('download-update-btn');
+    if (button) button.disabled = true;
+    const status = document.getElementById('update-status');
+    if (status) status.textContent = t('updateDownloading');
+    try {
+        const result = await api('/api/updates/download', {
+            method: 'POST',
+            body: JSON.stringify({ include_prerelease: include }),
+        });
+        if (!result.success) throw new Error(result.error || t('updateDownloadFailed'));
+        renderUpdateStatus(result.check || latestUpdateCheck, result.downloaded_path);
+        showToast(t('updateDownloadedToast'), 'success', 5000);
+    } catch (err) {
+        renderInlineError('update-status', t('updateDownloadFailed') + err.message);
+        if (button) button.disabled = false;
+    }
+}
+
+function renderUpdateStatus(result, downloadedPath = '') {
+    const status = document.getElementById('update-status');
+    const button = document.getElementById('download-update-btn');
+    if (!status) return;
+    if (result && result.skipped) {
+        status.innerHTML = `<div class="text-dark-500">${escapeHtml(t('updateAutoCheckDisabled'))}</div>`;
+        if (button) button.disabled = true;
+        return;
+    }
+    const release = (result && result.release) || {};
+    const asset = release.asset || {};
+    const current = (result && result.current_version) || latestSettings.app_version || '-';
+    const latest = (result && result.latest_version) || release.tag_name || '-';
+    const updateAvailable = Boolean(result && result.update_available && asset.url);
+    if (button) button.disabled = !updateAvailable;
+    const assetLine = asset.name
+        ? `${escapeHtml(asset.name)} · ${escapeHtml(formatBytes(asset.size || 0))}`
+        : escapeHtml(t('updateNoExeAsset'));
+    status.innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div class="rounded-lg border border-dark-800 bg-dark-950/45 p-3">
+                <div class="text-xs text-dark-500">${escapeHtml(t('currentVersion'))}</div>
+                <div class="text-sm font-semibold text-dark-100">${escapeHtml(current)}</div>
+            </div>
+            <div class="rounded-lg border border-dark-800 bg-dark-950/45 p-3">
+                <div class="text-xs text-dark-500">${escapeHtml(t('latestVersion'))}</div>
+                <div class="text-sm font-semibold ${updateAvailable ? 'text-emerald-300' : 'text-dark-100'}">${escapeHtml(latest)}</div>
+            </div>
+            <div class="rounded-lg border border-dark-800 bg-dark-950/45 p-3">
+                <div class="text-xs text-dark-500">${escapeHtml(t('releaseAsset'))}</div>
+                <div class="text-sm text-dark-200 break-all">${assetLine}</div>
+            </div>
+        </div>
+        <div class="mt-3 text-xs ${updateAvailable ? 'text-emerald-300' : 'text-dark-500'}">
+            ${escapeHtml(updateAvailable ? t('updateAvailable') : t('updateNoUpdate'))}
+        </div>
+        ${downloadedPath ? `<div class="mt-2 text-xs text-amber-200 break-all">${escapeHtml(t('updateDownloadedPath', { path: downloadedPath }))}</div>` : ''}
+        ${release.url ? `<a class="inline-flex mt-2 text-xs font-semibold text-accent-300 hover:text-accent-200" href="${escapeHtml(release.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('openReleasePage'))}</a>` : ''}
+    `;
+}
+
 async function applyStartupSettings() {
     const confirmation = prompt(t('startupConfirmApply'));
     if (confirmation !== 'MODIFY_WINDOWS_STARTUP') {
@@ -602,6 +701,8 @@ async function saveSettings() {
         request_log_max_mb: parseFloat(document.getElementById('setting-request-log-max-mb')?.value) || 50,
         close_button_action: document.getElementById('setting-close-button-action')?.value || 'ask',
         desktop_monitor_enabled: document.getElementById('setting-desktop-monitor-enabled')?.checked ?? true,
+        update_check_enabled: document.getElementById('setting-update-check-enabled')?.checked ?? true,
+        update_include_prerelease: document.getElementById('setting-update-include-prerelease')?.checked ?? false,
         proxy_upstream_timeout_seconds: parseInt(document.getElementById('setting-proxy-upstream-timeout')?.value, 10) || 120,
         proxy_retry_attempts: parseInt(document.getElementById('setting-proxy-retry-attempts')?.value, 10) || 0,
         proxy_retry_backoff_ms: parseInt(document.getElementById('setting-proxy-retry-backoff-ms')?.value, 10) || 250,

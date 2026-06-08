@@ -74,6 +74,8 @@ from capabilities import merge_provider_model_capabilities
 from media_adapters import build_media_adapter_preview_bundle
 from media_proxy import build_media_route_readiness
 from codex_approval_bridge import CodexApprovalBridgeError, build_codex_approval_bridge_preview
+from app_version import APP_REPOSITORY_URL, APP_VERSION
+from updater import UpdateManager
 
 
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
@@ -123,6 +125,7 @@ def create_app() -> Flask:
     amr_registry = AMRRegistry()
     quota_manager = QuotaManager(lambda: provider_registry.list_providers(include_secrets=True).get("providers", []))
     startup_manager = StartupManager()
+    update_manager = UpdateManager(current_version=APP_VERSION, repository_url=APP_REPOSITORY_URL)
 
     diagnostics_collector = DiagnosticsCollector(
         config=config,
@@ -610,6 +613,8 @@ def create_app() -> Flask:
             settings = redact_currency_settings(config.get_all())
             settings["auto_approval_system_prompt_default"] = DEFAULT_CONFIG["auto_approval_system_prompt"]
             settings["defaults"] = redact_currency_settings(DEFAULT_CONFIG)
+            settings["app_version"] = APP_VERSION
+            settings["repository_url"] = APP_REPOSITORY_URL
             return jsonify(settings)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -712,6 +717,29 @@ def create_app() -> Flask:
             return jsonify({"success": True, "settings": redact_currency_settings(config.get_all())})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/updates/check")
+    def updates_check():
+        """Check GitHub Releases for a newer packaged EXE."""
+        try:
+            include_prerelease = request.args.get("include_prerelease")
+            if include_prerelease is None:
+                include = bool(config.get("update_include_prerelease", False))
+            else:
+                include = include_prerelease.strip().lower() in {"1", "true", "yes", "on"}
+            return jsonify(update_manager.check_latest(include_prerelease=include))
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/updates/download", methods=["POST"])
+    def updates_download():
+        """Download the latest packaged EXE to local update storage."""
+        try:
+            body = request.get_json(silent=True) or {}
+            include = bool(body.get("include_prerelease", config.get("update_include_prerelease", False)))
+            return jsonify(update_manager.download_latest(include_prerelease=include))
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
 
     @app.route("/api/startup/status")
     def startup_status():
