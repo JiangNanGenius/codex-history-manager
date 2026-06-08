@@ -93,6 +93,17 @@
                 <span data-i18n="navSettings">Settings</span>
             </button>
         </nav>
+        <!-- Desktop quick actions -->
+        <div id="desktop-quick-actions" class="px-3 py-3 border-t border-dark-700/60 space-y-2">
+            <button id="sidebar-open-monitor" onclick="showDesktopTokenMonitor()" class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold bg-accent-600/20 text-accent-100 border border-accent-500/30 hover:bg-accent-600/30 transition-all">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h16v10H4zM8 19h8M12 15v4"/></svg>
+                <span data-i18n="toggleMonitor">悬浮窗</span>
+            </button>
+            <button id="sidebar-start-codex" onclick="startCodexFromQuickAction()" class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold bg-dark-900/80 text-dark-200 border border-dark-700 hover:bg-dark-800 transition-all">
+                <svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3l14 9-14 9V3z"/></svg>
+                <span data-i18n="startCodex">启动 Codex</span>
+            </button>
+        </div>
         <!-- Status bar -->
         <div id="sidebar-status" class="px-5 py-3 border-t border-dark-700 text-xs text-dark-400">
             <span id="status-text" data-i18n="ready">就绪</span>

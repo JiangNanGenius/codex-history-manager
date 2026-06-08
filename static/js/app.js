@@ -206,6 +206,25 @@ function setStatus(text) {
     if (el) el.textContent = text;
 }
 
+async function startCodexFromQuickAction() {
+    try {
+        setStatus(t('codexStartRequested'));
+        let data;
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.start_codex) {
+            data = await window.pywebview.api.start_codex();
+        } else {
+            data = await api('/api/codex/start', { method: 'POST' });
+        }
+        const ok = !data || data.success !== false;
+        const message = (data && (data.message || data.error)) || (ok ? t('codexStartRequested') : t('failed'));
+        showToast(message, ok ? 'success' : 'error');
+        setStatus(message);
+    } catch (err) {
+        showToast(t('failed') + err.message, 'error');
+        setStatus(t('failed') + err.message);
+    }
+}
+
 // ─────────────── Toast Notification ───────────────
 
 let toastTimer = null;

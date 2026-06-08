@@ -57,6 +57,16 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 IDYES = 6
 IDNO = 7
 LOCAL_API_TIMEOUT = 10
+TRAY_MENU_TEXT = {
+    "show_main": "显示主窗口",
+    "show_monitor": "显示悬浮窗",
+    "hide_monitor": "隐藏悬浮窗",
+    "start_codex": "启动 Codex",
+    "quick_switch_provider": "快速切换供应商",
+    "auto_provider": "自动选择供应商",
+    "no_providers": "暂无可切换供应商",
+    "exit": "退出程序",
+}
 
 tray_icon = None
 allow_exit = False
@@ -120,6 +130,8 @@ class DesktopApi:
     def show_main(self):
         if main_window is not None:
             _show_window(main_window)
+            return {"success": True}
+        return {"success": False, "error": "Main window is not ready."}
 
     def start_codex(self):
         return _start_codex_from_desktop()
@@ -492,6 +504,9 @@ def _setup_tray(window):
     def show_monitor_from_menu(icon=None, item=None):
         _show_monitor()
 
+    def hide_monitor_from_menu(icon=None, item=None):
+        _hide_monitor()
+
     def start_codex_from_menu(icon=None, item=None):
         _start_codex_from_desktop()
 
@@ -501,9 +516,18 @@ def _setup_tray(window):
     def provider_menu_items():
         payload = _quick_switch_payload()
         providers = payload.get("providers") or []
+        focus_provider_id = str(payload.get("focus_provider_id") or "")
         if not providers:
-            yield pystray.MenuItem("暂无可切换供应商", None, enabled=False)
+            yield pystray.MenuItem(TRAY_MENU_TEXT["no_providers"], None, enabled=False)
             return
+        yield pystray.MenuItem(
+            TRAY_MENU_TEXT["auto_provider"],
+            lambda icon=None, item=None: _set_focus_provider(""),
+            checked=lambda item: not _quick_switch_payload().get("focus_provider_id"),
+            radio=True,
+            enabled=bool(focus_provider_id),
+        )
+        yield pystray.Menu.SEPARATOR
         for provider in providers:
             provider_id = str(provider.get("id") or "")
             label = provider.get("display_name") or provider_id
@@ -521,12 +545,13 @@ def _setup_tray(window):
 
     def build_menu():
         return pystray.Menu(
-            pystray.MenuItem("显示主窗口", show_from_menu, default=True),
-            pystray.MenuItem("显示悬浮窗", show_monitor_from_menu),
-            pystray.MenuItem("启动 Codex", start_codex_from_menu),
-            pystray.MenuItem("快速切换供应商", pystray.Menu(provider_menu_items)),
+            pystray.MenuItem(TRAY_MENU_TEXT["show_main"], show_from_menu, default=True),
+            pystray.MenuItem(TRAY_MENU_TEXT["show_monitor"], show_monitor_from_menu),
+            pystray.MenuItem(TRAY_MENU_TEXT["hide_monitor"], hide_monitor_from_menu),
+            pystray.MenuItem(TRAY_MENU_TEXT["start_codex"], start_codex_from_menu),
+            pystray.MenuItem(TRAY_MENU_TEXT["quick_switch_provider"], pystray.Menu(provider_menu_items)),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("退出程序", exit_from_menu),
+            pystray.MenuItem(TRAY_MENU_TEXT["exit"], exit_from_menu),
         )
 
     tray_icon = pystray.Icon(
@@ -631,6 +656,24 @@ def _create_desktop_windows(api):
     return _create_main_window(api), _create_monitor_window(api)
 
 
+def _on_webview_started():
+    """Show the monitor after WebView is ready so default-on is reliable."""
+    if not _monitor_auto_show_enabled():
+        return False
+
+    def show_later():
+        _show_monitor()
+
+    try:
+        timer = threading.Timer(0.45, show_later)
+        timer.daemon = True
+        timer.start()
+        return True
+    except Exception:
+        show_later()
+        return True
+
+
 def _smoke_test_webview_window_creation() -> bool:
     original_windows = list(webview.windows)
     try:
@@ -701,7 +744,7 @@ def main():
       - 主窗口 1280x800：适合大多数笔记本屏幕，min_size 保证内容不溢出。
       - Monitor 窗口 300x178：小型悬浮窗，frameless + transparent 实现无边框
         透明效果，on_top 始终置顶，供用户实时查看 token 用量。
-      - hidden=True：Monitor 默认隐藏，通过托盘菜单或 API 唤起。
+      - hidden=False：Monitor 默认显示；若用户在设置中关闭，则启动时隐藏。
 
     Windows 平台特殊性：
       - gui="edgechromium"：在 Windows 上强制使用 Edge WebView2，而非 IE
@@ -727,7 +770,7 @@ def main():
     main_window = window
     _setup_tray(window)
     try:
-        webview.start(gui="edgechromium")
+        webview.start(_on_webview_started, gui="edgechromium")
     finally:
         # If the WebView loop returns without going through the tray Exit item,
         # ensure background tray/Flask threads do not keep a ghost process alive.

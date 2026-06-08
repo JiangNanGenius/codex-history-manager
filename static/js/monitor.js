@@ -31,6 +31,7 @@ const monitorCopy = {
         start: '启动 Codex',
         exit: '退出程序',
         quickSwitchProvider: '快速切换供应商',
+        autoProvider: '自动选择供应商',
         noProviders: '暂无可切换供应商',
         loadingProviders: '正在加载...',
         providerSwitched: '已切换供应商',
@@ -60,6 +61,7 @@ const monitorCopy = {
         start: 'Start Codex',
         exit: 'Exit app',
         quickSwitchProvider: 'Quick switch provider',
+        autoProvider: 'Auto select provider',
         noProviders: 'No switchable providers',
         loadingProviders: 'Loading...',
         providerSwitched: 'Provider switched',
@@ -315,10 +317,15 @@ function renderProviderMenu(failed = false) {
         return;
     }
     if (!providers.length) {
-        root.innerHTML = `<button class="muted" disabled>${mt('noProviders')}</button>`;
+        root.innerHTML = `<button data-provider-id="" class="${providerFocus.focus_provider_id ? '' : 'active'}">${providerFocus.focus_provider_id ? '' : '✓ '}${mt('autoProvider')}</button>
+            <button class="muted" disabled>${mt('noProviders')}</button>`;
         return;
     }
-    root.innerHTML = providers.map(provider => {
+    const autoActive = !providerFocus.focus_provider_id;
+    const autoButton = `<button data-provider-id="" class="${autoActive ? 'active' : ''}">
+        <span>${autoActive ? '✓ ' : ''}${mt('autoProvider')}</span>
+    </button>`;
+    root.innerHTML = autoButton + providers.map(provider => {
         const id = String(provider.id || '');
         const label = provider.display_name || id;
         const alias = provider.short_alias ? ` (${provider.short_alias})` : '';
@@ -332,7 +339,7 @@ function renderProviderMenu(failed = false) {
 }
 
 async function switchProvider(providerId) {
-    if (!providerId) return;
+    providerId = String(providerId || '');
     if (window.pywebview?.api?.switch_provider) {
         const result = await window.pywebview.api.switch_provider(providerId);
         if (!result || result.success === false) throw new Error((result && result.error) || mt('providerSwitchFailed'));

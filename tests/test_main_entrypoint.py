@@ -136,6 +136,41 @@ class MainEntrypointTest(unittest.TestCase):
         with patch.object(main, "_configured_close_action", return_value="tray"):
             self.assertEqual(main._ask_close_action(None), "tray")
 
+    def test_webview_started_schedules_default_monitor(self):
+        calls = []
+
+        class FakeTimer:
+            def __init__(self, delay, callback):
+                self.delay = delay
+                self.callback = callback
+                self.daemon = False
+
+            def start(self):
+                calls.append(("timer", self.delay, self.daemon))
+                self.callback()
+
+        with patch.object(main, "_monitor_auto_show_enabled", return_value=True), \
+                patch.object(main, "_show_monitor", side_effect=lambda: calls.append("show")), \
+                patch.object(main.threading, "Timer", FakeTimer):
+            self.assertTrue(main._on_webview_started())
+
+        self.assertEqual(calls, [("timer", 0.45, True), "show"])
+
+    def test_webview_started_respects_disabled_monitor_setting(self):
+        with patch.object(main, "_monitor_auto_show_enabled", return_value=False), \
+                patch.object(main, "_show_monitor") as show_monitor:
+            self.assertFalse(main._on_webview_started())
+            show_monitor.assert_not_called()
+
+    def test_tray_menu_texts_cover_desktop_actions(self):
+        self.assertEqual(main.TRAY_MENU_TEXT["show_main"], "显示主窗口")
+        self.assertEqual(main.TRAY_MENU_TEXT["show_monitor"], "显示悬浮窗")
+        self.assertEqual(main.TRAY_MENU_TEXT["hide_monitor"], "隐藏悬浮窗")
+        self.assertEqual(main.TRAY_MENU_TEXT["start_codex"], "启动 Codex")
+        self.assertEqual(main.TRAY_MENU_TEXT["quick_switch_provider"], "快速切换供应商")
+        self.assertEqual(main.TRAY_MENU_TEXT["auto_provider"], "自动选择供应商")
+        self.assertEqual(main.TRAY_MENU_TEXT["exit"], "退出程序")
+
 
 if __name__ == "__main__":
     unittest.main()

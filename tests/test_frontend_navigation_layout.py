@@ -47,10 +47,18 @@ def test_settings_wizard_exposes_prompt_and_source_link():
 def test_monitor_context_menu_exposes_desktop_actions():
     html = (ROOT / "static" / "monitor.html").read_text(encoding="utf-8")
     js = (ROOT / "static" / "js" / "monitor.js").read_text(encoding="utf-8")
+    index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    app_js = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
 
+    assert 'id="sidebar-open-monitor"' in index
+    assert 'id="sidebar-start-codex"' in index
+    assert "startCodexFromQuickAction" in app_js
     assert 'data-action="start"' in html
+    assert 'data-action="main"' in html
+    assert 'data-action="hide"' in html
     assert 'data-action="exit"' in html
     assert 'id="provider-menu-items"' in html
     assert "list_quick_providers" in js
     assert "switch_provider" in js
+    assert "autoProvider" in js
     assert "/api/providers/focus" in js
