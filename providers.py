@@ -100,6 +100,47 @@ _SECRET_FIELD_HINTS = {
 # 脱敏后的占位符。UI 和诊断日志中统一使用此常量，便于全局搜索识别。
 REDACTED_VALUE = "********"
 
+_PROVIDER_DISPLAY_NAME_FALLBACKS = {
+    "alibaba-bailian": "阿里云百炼",
+    "alibaba-bailian-cn": "阿里云百炼",
+    "volcengine-ark": "火山引擎",
+    "volcengine-ark-cn": "火山引擎",
+    "deepseek-official": "DeepSeek 官方",
+    "deepseek-official-cn": "DeepSeek 官方",
+    "xinsilu-native-proxy": "新思路 AI 原生代理",
+}
+
+
+def _looks_question_corrupted(value: Any) -> bool:
+    text = str(value or "").strip()
+    if "??" not in text:
+        return False
+    return not any(ord(ch) > 127 for ch in text)
+
+
+def _provider_display_name_fallback(raw: Dict[str, Any], provider_id: str, short_alias: str) -> str:
+    for key in (provider_id, short_alias):
+        if key in _PROVIDER_DISPLAY_NAME_FALLBACKS:
+            return _PROVIDER_DISPLAY_NAME_FALLBACKS[key]
+
+    base_url = str(raw.get("base_url") or "").lower()
+    if "dashscope.aliyuncs.com" in base_url:
+        return "阿里云百炼"
+    if "ark.cn-beijing.volces.com/api/v3" in base_url:
+        return "火山引擎"
+    if "api.deepseek.com" in base_url:
+        return "DeepSeek 官方"
+    if "xinsilu" in base_url:
+        return "新思路 AI 原生代理"
+    return ""
+
+
+def _repair_question_corrupted_text(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    if fallback and _looks_question_corrupted(text):
+        return fallback
+    return text
+
 
 class ProviderRegistry:
     """
@@ -766,7 +807,19 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     raw = copy.deepcopy(data or {})
     short_alias = sanitize_alias(raw.get("short_alias") or raw.get("id") or raw.get("display_name") or "provider")
-    display_name = str(raw.get("display_name") or short_alias).strip()
+    provider_id = sanitize_id(raw.get("id") or short_alias)
+    display_name_fallback = _provider_display_name_fallback(raw, provider_id, short_alias)
+    display_name = _repair_question_corrupted_text(
+        raw.get("display_name") or display_name_fallback or short_alias,
+        display_name_fallback,
+    )
+    visible_alias = _repair_question_corrupted_text(
+        raw.get("codex_visible_alias")
+        or raw.get("provider_visible_alias")
+        or raw.get("visible_alias")
+        or "",
+        display_name_fallback,
+    )
     api_format = raw.get("api_format") if raw.get("api_format") in API_FORMATS else "openai_responses"
     auth_mode = raw.get("auth_mode") if raw.get("auth_mode") in AUTH_MODES else "provider_api_key"
     visibility = raw.get("catalog_visibility")
@@ -779,14 +832,9 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         headers["User-Agent"] = user_agent
 
     provider = {
-        "id": sanitize_id(raw.get("id") or short_alias),
+        "id": provider_id,
         "display_name": display_name,
-        "codex_visible_alias": str(
-            raw.get("codex_visible_alias")
-            or raw.get("provider_visible_alias")
-            or raw.get("visible_alias")
-            or ""
-        ).strip(),
+        "codex_visible_alias": visible_alias,
         "kind": str(raw.get("kind") or "openai_compatible").strip(),
         "short_alias": short_alias,
         "base_url": str(raw.get("base_url") or "").strip(),

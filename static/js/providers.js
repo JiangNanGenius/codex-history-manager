@@ -747,7 +747,7 @@ function renderProviderEditor(provider) {
                 ${renderInput('provider-codex-visible-alias', t('providerVisibleAlias'), provider.codex_visible_alias || provider.display_name || provider.short_alias || provider.id, 'text', providerReadOnly)}
                 ${renderInput('provider-short-alias', t('internalShortAlias'), provider.short_alias, 'text', true)}
                 ${renderInput('provider-base-url', t('baseUrl'), provider.base_url, 'text', providerReadOnly)}
-                ${renderInput('provider-api-key', t('apiKey'), provider.api_key || '', 'password', providerReadOnly)}
+                ${renderSecretInput('provider-api-key', t('apiKey'), provider.api_key || '', 'api_key', providerReadOnly)}
                 ${renderSelect('provider-api-format', t('apiFormat'), provider.api_format, visibleApiFormatOptions(provider.api_format), 'syncResponsesModeControls(true); syncMediaModeControls(true)', providerReadOnly)}
                 ${renderSelect('provider-auth-mode', t('authMode'), provider.auth_mode, [
                     'provider_api_key',
@@ -2382,6 +2382,52 @@ function readProviderForm(existing) {
     }
 }
 
+async function revealProviderSecret(field = 'api_key', inputId = 'provider-api-key') {
+    const provider = getSelectedProvider();
+    const input = document.getElementById(inputId);
+    const button = document.getElementById(inputId + '-reveal-btn');
+    if (!provider || !input) return;
+
+    if (input.type === 'text') {
+        input.type = 'password';
+        if (button) button.textContent = t('revealSecret');
+        return;
+    }
+
+    async function requestSecret(password = '') {
+        const response = await fetch('/api/providers/' + encodeURIComponent(provider.id) + '/secret', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ field, password }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            const err = new Error(data.error || ('HTTP ' + response.status));
+            err.payload = data;
+            throw err;
+        }
+        return data;
+    }
+
+    try {
+        let data;
+        try {
+            data = await requestSecret('');
+        } catch (err) {
+            if (!err.payload || !err.payload.password_required) throw err;
+            const password = window.prompt(t('secretRevealPasswordPrompt'));
+            if (password === null) return;
+            data = await requestSecret(password);
+        }
+        input.value = data.secret || '';
+        input.type = 'text';
+        if (button) button.textContent = t('hideSecret');
+        showToast(t('secretRevealSuccess'), 'success');
+    } catch (err) {
+        showToast(t('secretRevealFailed') + err.message, 'error');
+    }
+}
+
 function parseModelsText(text, existingModels = []) {
     const existingById = new Map();
     (existingModels || []).forEach(model => {
@@ -2497,6 +2543,20 @@ function renderInput(id, label, value, type = 'text', disabled = false, onchange
         <div>
             <label class="text-xs text-dark-400">${escapeHtml(label)}</label>
             <input id="${escapeAttr(id)}" type="${escapeAttr(type)}" class="input mt-1 w-full" value="${escapeAttr(value || '')}"${changeAttr}${disabledAttr}>
+        </div>
+    `;
+}
+
+function renderSecretInput(id, label, value, field = 'api_key', disabled = false) {
+    const disabledAttr = disabled ? ' disabled' : '';
+    return `
+        <div>
+            <div class="flex items-center justify-between gap-2">
+                <label class="text-xs text-dark-400">${escapeHtml(label)}</label>
+                ${disabled ? '' : `<button id="${escapeAttr(id)}-reveal-btn" type="button" onclick="revealProviderSecret('${escapeAttr(field)}', '${escapeAttr(id)}')" class="btn btn-ghost text-xs px-2 py-1">${escapeHtml(t('revealSecret'))}</button>`}
+            </div>
+            <input id="${escapeAttr(id)}" type="password" class="input mt-1 w-full font-mono" value="${escapeAttr(value || '')}" autocomplete="off"${disabledAttr}>
+            <p class="text-xs text-dark-500 mt-1">${escapeHtml(t('secretRevealLocalOnlyHint'))}</p>
         </div>
     `;
 }

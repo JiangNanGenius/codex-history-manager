@@ -93,6 +93,8 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert "setting-update-include-prerelease" in html
     assert "setting-plugin-unlock-enabled" in html
     assert "setting-codex-sandbox-auto-repair-enabled" in html
+    assert "setting-secret-reveal-password" in html
+    assert "setting-secret-reveal-password-confirm" in html
     assert "setting-desktop-launch-action" in html
     assert "createDesktopShortcut('normal')" in html
     assert "createDesktopShortcut('start_codex')" in html
@@ -106,6 +108,8 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert "/api/updates/download" in js
     assert "plugin_unlock_enabled" in js
     assert "codex_sandbox_auto_repair_enabled" in js
+    assert "saveSecretRevealPassword" in js
+    assert "clearSecretRevealPassword" in js
     assert "desktop_launch_action" in js
     assert "/api/desktop-shortcuts/create" in js
     assert "renderStartupPreviewResult" in js
@@ -159,6 +163,9 @@ def test_provider_request_preview_ui_is_wired():
     assert "readProviderModelsFromDetails" in js
     assert "providerModelDetailsTitle" in i18n
     assert "上下文窗口" in i18n
+    assert "renderSecretInput('provider-api-key'" in js
+    assert "revealProviderSecret" in js
+    assert "/secret" in js
 
 
 def test_provider_model_details_are_single_editing_surface():

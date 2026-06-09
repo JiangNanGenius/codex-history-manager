@@ -372,6 +372,27 @@ class ProviderRegistryTest(unittest.TestCase):
 
         self.assertEqual(provider["api_format"], "anthropic")
 
+    def test_known_provider_question_corruption_is_repaired(self):
+        bailian = normalize_provider({
+            "id": "alibaba-bailian-cn",
+            "short_alias": "bailian",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "display_name": "?" * 10,
+            "codex_visible_alias": "?" * 5,
+            "models": [{"id": "qwen"}],
+        })
+        self.assertEqual(bailian["display_name"], "\u963f\u91cc\u4e91\u767e\u70bc")
+        self.assertEqual(bailian["codex_visible_alias"], "\u963f\u91cc\u4e91\u767e\u70bc")
+
+        ark = normalize_provider({
+            "id": "volcengine-ark-cn",
+            "short_alias": "ark",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "display_name": "?" * 9,
+            "models": [{"id": "ark-code-latest"}],
+        })
+        self.assertEqual(ark["display_name"], "\u706b\u5c71\u5f15\u64ce")
+
     def test_compatible_responses_does_not_force_all_capabilities(self):
         provider = normalize_provider({
             "display_name": "Compatible Responses",

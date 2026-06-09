@@ -20,7 +20,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             patch("app.CodexDB") as MockDB,
             patch("app.BackupManager"),
             patch("app.TokenStats"),
-            patch("app.ProviderRegistry"),
+            patch("app.ProviderRegistry") as MockProviderRegistry,
             patch("app.AutoApprovalModelReviewer"),
             patch("app.LocalProxyServer") as MockLocalProxyServer,
             patch("app.AMRRegistry"),
@@ -39,6 +39,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             MockDB.return_value.get_provider_distribution.return_value = []
             MockLocalProxyServer.return_value.status.return_value = {}
             self.proxy_server = MockLocalProxyServer.return_value
+            self.provider_registry = MockProviderRegistry.return_value
             MockDesktopShortcutManager.return_value.create_shortcuts.return_value = {
                 "success": True,
                 "shortcuts": [],
@@ -79,6 +80,55 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertFalse(data["live_transport_connected"])
         self.assertEqual(data["broker_action"]["kind"], "command")
         self.assertEqual(data["jsonrpc_response"]["result"], {"decision": "accept"})
+
+    def test_settings_redacts_secret_reveal_password_hash(self):
+        app = self._app()
+        secret_settings = {
+            "secret_reveal_password_hash": "hash-value",
+            "secret_reveal_password_salt": "salt-value",
+            "secret_reveal_password_iterations": 210000,
+        }
+        self.last_config.get_all.return_value = dict(secret_settings)
+        self.last_config.get.side_effect = lambda key, default=None: secret_settings.get(key, default)
+        with patch("app.CodexConfigManager") as MockCodexConfigManager:
+            MockCodexConfigManager.return_value.read_config.return_value = {}
+            response = app.test_client().get("/api/settings")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["secret_reveal_password_configured"])
+        self.assertNotIn("secret_reveal_password_hash", data)
+        self.assertNotIn("secret_reveal_password_salt", data)
+        self.assertNotIn("secret_reveal_password_iterations", data)
+        self.assertNotIn("secret_reveal_password_hash", data["defaults"])
+
+    def test_provider_secret_reveal_is_direct_when_secondary_password_unset(self):
+        app = self._app()
+        self.provider_registry.get_provider.return_value = {"id": "p", "api_key": "local-secret"}
+
+        response = app.test_client().post("/api/providers/p/secret", json={"field": "api_key"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["secret"], "local-secret")
+        self.assertFalse(data["password_required"])
+
+    def test_provider_secret_reveal_requires_secondary_password_when_set(self):
+        app = self._app()
+        from app import _hash_secret_reveal_password
+
+        secret_settings = _hash_secret_reveal_password("second-pass")
+        self.last_config.get.side_effect = lambda key, default=None: secret_settings.get(key, default)
+        self.provider_registry.get_provider.return_value = {"id": "p", "api_key": "local-secret"}
+
+        denied = app.test_client().post("/api/providers/p/secret", json={"field": "api_key", "password": "wrong"})
+        allowed = app.test_client().post("/api/providers/p/secret", json={"field": "api_key", "password": "second-pass"})
+
+        self.assertEqual(denied.status_code, 403)
+        self.assertTrue(denied.get_json()["password_required"])
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(allowed.get_json()["secret"], "local-secret")
 
     def test_approval_bridge_preview_rejects_unsupported_messages(self):
         app = self._app()

@@ -938,6 +938,23 @@
                         <input id="setting-codex-sandbox-auto-repair-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
                         <span data-i18n="codexSandboxAutoRepairEnabled">Auto repair sandbox permissions before starting Codex</span>
                     </label>
+                    <div class="lg:col-span-2 rounded-lg border border-dark-800 bg-dark-950/40 p-3">
+                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                            <div>
+                                <div class="text-sm font-semibold text-dark-100" data-i18n="secretRevealPasswordTitle">Secondary password for secret reveal</div>
+                                <div id="setting-secret-reveal-status" class="text-xs text-dark-500 mt-1">Not configured</div>
+                            </div>
+                            <button type="button" onclick="clearSecretRevealPassword()" class="btn btn-danger text-xs" data-i18n="clearSecretRevealPassword">Clear Password</button>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                            <input id="setting-secret-reveal-password" type="password" class="input" autocomplete="new-password" data-i18n-placeholder="secretRevealPasswordPlaceholder" placeholder="New secondary password">
+                            <input id="setting-secret-reveal-password-confirm" type="password" class="input" autocomplete="new-password" data-i18n-placeholder="secretRevealPasswordConfirmPlaceholder" placeholder="Confirm secondary password">
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 mt-3">
+                            <button type="button" onclick="saveSecretRevealPassword()" class="btn btn-secondary text-xs" data-i18n="saveSecretRevealPassword">Save Secondary Password</button>
+                            <span class="text-xs text-dark-500" data-i18n="secretRevealPasswordDesc">Optional. When unset, local provider keys can be revealed directly.</span>
+                        </div>
+                    </div>
                     <div class="flex flex-wrap gap-2">
                         <button onclick="applyStartupSettings()" class="btn btn-warning text-xs" data-i18n="applyStartupChange">Apply Startup Change</button>
                         <button onclick="removeStartupSettings()" class="btn btn-danger text-xs" data-i18n="removeStartupEntry">Remove Startup Entry</button>

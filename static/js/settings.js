@@ -518,6 +518,7 @@ function populateSettingsForm(data) {
     if (approvalPrompt) {
         approvalPrompt.value = data.auto_approval_system_prompt || defaultAutoApprovalSystemPrompt;
     }
+    renderSecretRevealPasswordStatus(data);
 
     const checkboxFields = {
         'setting-auto-backup': 'auto_backup',
@@ -559,6 +560,14 @@ function populateSettingsForm(data) {
         const el = document.getElementById(elId);
         if (el) el.checked = monitorFields[key] !== false;
     }
+}
+
+function renderSecretRevealPasswordStatus(data = latestSettings) {
+    const el = document.getElementById('setting-secret-reveal-status');
+    if (!el) return;
+    const configured = Boolean(data && data.secret_reveal_password_configured);
+    el.textContent = configured ? t('secretRevealPasswordConfigured') : t('secretRevealPasswordNotConfigured');
+    el.className = configured ? 'text-xs text-emerald-300 mt-1' : 'text-xs text-dark-500 mt-1';
 }
 
 async function loadCurrencySettings() {
@@ -1072,6 +1081,63 @@ function restoreAutoApprovalPromptDefault() {
     const el = document.getElementById('setting-auto-approval-system-prompt');
     if (el) el.value = defaultAutoApprovalSystemPrompt;
     showToast(t('autoApprovalPromptRestored'), 'success');
+}
+
+async function saveSecretRevealPassword() {
+    const passwordEl = document.getElementById('setting-secret-reveal-password');
+    const confirmEl = document.getElementById('setting-secret-reveal-password-confirm');
+    const password = passwordEl?.value || '';
+    const confirm = confirmEl?.value || '';
+    if (!password) {
+        showToast(t('secretRevealPasswordEmpty'), 'warning');
+        return;
+    }
+    if (password !== confirm) {
+        showToast(t('secretRevealPasswordMismatch'), 'error');
+        return;
+    }
+
+    let currentPassword = '';
+    if (latestSettings.secret_reveal_password_configured) {
+        const entered = window.prompt(t('secretRevealCurrentPasswordPrompt'));
+        if (entered === null) return;
+        currentPassword = entered;
+    }
+
+    try {
+        const result = await api('/api/settings/secret-reveal-password', {
+            method: 'POST',
+            body: JSON.stringify({ password, current_password: currentPassword }),
+        });
+        latestSettings.secret_reveal_password_configured = Boolean(result.configured);
+        if (passwordEl) passwordEl.value = '';
+        if (confirmEl) confirmEl.value = '';
+        renderSecretRevealPasswordStatus(latestSettings);
+        showToast(t('secretRevealPasswordSaved'), 'success');
+    } catch (err) {
+        showToast(t('secretRevealPasswordSaveFailed') + err.message, 'error');
+    }
+}
+
+async function clearSecretRevealPassword() {
+    let currentPassword = '';
+    if (latestSettings.secret_reveal_password_configured) {
+        const entered = window.prompt(t('secretRevealCurrentPasswordPrompt'));
+        if (entered === null) return;
+        currentPassword = entered;
+    }
+
+    try {
+        const result = await api('/api/settings/secret-reveal-password', {
+            method: 'POST',
+            body: JSON.stringify({ clear: true, current_password: currentPassword }),
+        });
+        latestSettings.secret_reveal_password_configured = Boolean(result.configured);
+        renderSecretRevealPasswordStatus(latestSettings);
+        showToast(t('secretRevealPasswordCleared'), 'success');
+    } catch (err) {
+        showToast(t('secretRevealPasswordSaveFailed') + err.message, 'error');
+    }
 }
 
 async function resetSettings() {

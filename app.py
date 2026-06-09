@@ -24,6 +24,8 @@ Windows 平台特殊性：
 """
 import os
 import copy
+import hashlib
+import hmac
 import json
 import re
 import shutil
@@ -126,6 +128,7 @@ START_MODES = {
     START_MODE_PRESERVE_LOGIN_PROXY,
     START_MODE_OFFICIAL_DIRECT,
 }
+SECRET_REVEAL_FIELDS = {"api_key", "secondary_usage_key"}
 CHAT_HISTORY_RISK_CONFIRMATION = "CHAT_HISTORY_MAY_BE_LOST"
 CONFIG_REPAIR_REMOVED_KEYS = [
     "model_provider",
@@ -216,6 +219,65 @@ def _select_available_cdp_port(preferred: int, scan_limit: int = 40) -> int:
         if _tcp_port_is_available(candidate):
             return candidate
     return preferred
+
+
+def _secret_reveal_password_configured(config_obj: Config) -> bool:
+    return bool(config_obj.get("secret_reveal_password_hash") and config_obj.get("secret_reveal_password_salt"))
+
+
+def _hash_secret_reveal_password(password: str, salt_hex: str = "", iterations: int = 210000) -> Dict[str, Any]:
+    iterations = min(max(int(iterations or 210000), 100000), 1000000)
+    salt = bytes.fromhex(salt_hex) if salt_hex else os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", str(password or "").encode("utf-8"), salt, iterations)
+    return {
+        "secret_reveal_password_hash": digest.hex(),
+        "secret_reveal_password_salt": salt.hex(),
+        "secret_reveal_password_iterations": iterations,
+    }
+
+
+def _verify_secret_reveal_password(config_obj: Config, password: str) -> bool:
+    if not _secret_reveal_password_configured(config_obj):
+        return True
+    try:
+        expected = str(config_obj.get("secret_reveal_password_hash") or "")
+        salt = str(config_obj.get("secret_reveal_password_salt") or "")
+        iterations = int(config_obj.get("secret_reveal_password_iterations", 210000) or 210000)
+        candidate = _hash_secret_reveal_password(password or "", salt, iterations)["secret_reveal_password_hash"]
+        return hmac.compare_digest(candidate, expected)
+    except Exception:
+        return False
+
+
+def _redact_secret_reveal_settings(settings: Dict[str, Any], config_obj: Config | None = None) -> Dict[str, Any]:
+    redacted = copy.deepcopy(settings or {})
+    configured = bool(redacted.get("secret_reveal_password_hash") and redacted.get("secret_reveal_password_salt"))
+    if config_obj is not None:
+        configured = _secret_reveal_password_configured(config_obj)
+    redacted.pop("secret_reveal_password_hash", None)
+    redacted.pop("secret_reveal_password_salt", None)
+    redacted.pop("secret_reveal_password_iterations", None)
+    redacted["secret_reveal_password_configured"] = configured
+    return redacted
+
+
+def _settings_response_payload(settings: Dict[str, Any], config_obj: Config | None = None) -> Dict[str, Any]:
+    return _redact_secret_reveal_settings(
+        redact_local_proxy_token(redact_currency_settings(settings)),
+        config_obj,
+    )
+
+
+def _drop_secret_reveal_response_fields(data: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = copy.deepcopy(data or {})
+    for key in (
+        "secret_reveal_password_hash",
+        "secret_reveal_password_salt",
+        "secret_reveal_password_iterations",
+        "secret_reveal_password_configured",
+    ):
+        cleaned.pop(key, None)
+    return cleaned
 
 
 def _resolve_codex_injection_settings(
@@ -2119,7 +2181,7 @@ def create_app() -> Flask:
     def get_settings():
         """读取设置"""
         try:
-            settings = redact_local_proxy_token(redact_currency_settings(config.get_all()))
+            settings = _settings_response_payload(config.get_all(), config)
             try:
                 mgr = CodexConfigManager()
                 config_data = mgr.read_config()
@@ -2139,7 +2201,7 @@ def create_app() -> Flask:
                     "error": str(exc),
                 }
             settings["auto_approval_system_prompt_default"] = DEFAULT_CONFIG["auto_approval_system_prompt"]
-            settings["defaults"] = redact_local_proxy_token(redact_currency_settings(DEFAULT_CONFIG))
+            settings["defaults"] = _settings_response_payload(DEFAULT_CONFIG)
             settings["app_version"] = APP_VERSION
             settings["repository_url"] = APP_REPOSITORY_URL
             return jsonify(settings)
@@ -2153,6 +2215,7 @@ def create_app() -> Flask:
             data = request.get_json(silent=True) or {}
             data = preserve_redacted_currency_secret(data, config.get_all())
             data = preserve_redacted_local_proxy_token(data, config.get_all())
+            data = _drop_secret_reveal_response_fields(data)
             config.update(data)
             _sync_proxy_request_log_config()
             goals_sync = None
@@ -2208,6 +2271,37 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/settings/secret-reveal-password", methods=["POST"])
+    def update_secret_reveal_password():
+        """Set or clear the optional local password used before revealing provider secrets."""
+        try:
+            body = request.get_json(silent=True) or {}
+            configured = _secret_reveal_password_configured(config)
+            if configured and not _verify_secret_reveal_password(config, str(body.get("current_password") or "")):
+                return jsonify({"error": "Secondary password is incorrect.", "password_required": True}), 403
+
+            if bool(body.get("clear")):
+                config.update({
+                    "secret_reveal_password_hash": "",
+                    "secret_reveal_password_salt": "",
+                    "secret_reveal_password_iterations": DEFAULT_CONFIG["secret_reveal_password_iterations"],
+                })
+                return jsonify({"success": True, "configured": False})
+
+            password = str(body.get("password") or "")
+            if not password:
+                return jsonify({"error": "Secondary password is optional; leave it unset or enter a password."}), 400
+            if len(password) < 4:
+                return jsonify({"error": "Secondary password must be at least 4 characters."}), 400
+
+            config.update(_hash_secret_reveal_password(
+                password,
+                iterations=DEFAULT_CONFIG["secret_reveal_password_iterations"],
+            ))
+            return jsonify({"success": True, "configured": True})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/settings/storage")
     def settings_storage():
         """返回配置、临时文件和导出目录位置。"""
@@ -2238,7 +2332,7 @@ def create_app() -> Flask:
             return jsonify({
                 "schema": "codex_enhance_manager.settings.v1",
                 "exported_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                "settings": redact_local_proxy_token(redact_currency_settings(config.get_all())),
+                "settings": _settings_response_payload(config.get_all(), config),
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -2253,10 +2347,11 @@ def create_app() -> Flask:
                 return jsonify({"error": "Invalid settings payload"}), 400
             imported = preserve_redacted_currency_secret(imported, config.get_all())
             imported = preserve_redacted_local_proxy_token(imported, config.get_all())
+            imported = _drop_secret_reveal_response_fields(imported)
             config.update(imported)
             ensure_app_dirs()
             _sync_proxy_request_log_config()
-            return jsonify({"success": True, "settings": redact_local_proxy_token(redact_currency_settings(config.get_all()))})
+            return jsonify({"success": True, "settings": _settings_response_payload(config.get_all(), config)})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -2644,6 +2739,39 @@ def create_app() -> Flask:
             if not provider:
                 return jsonify({"error": "Provider not found"}), 404
             return jsonify(provider)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/providers/<provider_id>/secret", methods=["POST"])
+    def reveal_provider_secret(provider_id):
+        """Reveal one local provider secret after optional secondary-password verification."""
+        try:
+            _refresh_provider_registry_path()
+            body = request.get_json(silent=True) or {}
+            field = str(body.get("field") or "api_key").strip()
+            if field not in SECRET_REVEAL_FIELDS:
+                return jsonify({"error": "Unsupported secret field"}), 400
+
+            configured = _secret_reveal_password_configured(config)
+            if configured and not _verify_secret_reveal_password(config, str(body.get("password") or "")):
+                return jsonify({
+                    "error": "Secondary password is required to reveal this secret.",
+                    "password_required": True,
+                }), 403
+
+            provider = provider_registry.get_provider(
+                provider_id,
+                include_secrets=True,
+                extra_providers=_current_official_provider_extra(),
+            )
+            if not provider:
+                return jsonify({"error": "Provider not found"}), 404
+            return jsonify({
+                "success": True,
+                "field": field,
+                "secret": str(provider.get(field) or ""),
+                "password_required": configured,
+            })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

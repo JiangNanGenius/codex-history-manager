@@ -63,6 +63,9 @@ DEFAULT_CONFIG = {
     "codex_last_start_mode": "",
     "codex_goals_enabled": True,
     "codex_sandbox_auto_repair_enabled": False,
+    "secret_reveal_password_hash": "",
+    "secret_reveal_password_salt": "",
+    "secret_reveal_password_iterations": 210000,
     "local_proxy_bearer_token": "",
     "proxy_upstream_timeout_seconds": 120,
     "proxy_retry_attempts": 0,
@@ -268,6 +271,14 @@ class Config:
                 self._data[key] = value.strip().lower() not in {"0", "false", "no", "off"}
             elif not isinstance(value, bool):
                 self._data[key] = DEFAULT_CONFIG[key]
+        try:
+            iterations = int(self._data.get("secret_reveal_password_iterations", DEFAULT_CONFIG["secret_reveal_password_iterations"]))
+        except (TypeError, ValueError):
+            iterations = DEFAULT_CONFIG["secret_reveal_password_iterations"]
+        self._data["secret_reveal_password_iterations"] = min(max(iterations, 100000), 1000000)
+        for key in ("secret_reveal_password_hash", "secret_reveal_password_salt"):
+            self._data[key] = str(self._data.get(key) or "")
+        self._data.pop("secret_reveal_password_configured", None)
         try:
             self._data["codex_cdp_port"] = min(max(int(self._data.get("codex_cdp_port", 51236)), 1), 65535)
         except (TypeError, ValueError):
