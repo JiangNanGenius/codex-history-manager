@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 BROKEN_HTML_CLOSER_RE = re.compile(r"\?/[A-Za-z][A-Za-z0-9-]*>")
+MOJIBAKE_FLAG_MARKERS = ("馃", "рџ")
 
 
 def test_static_html_has_no_mojibake_broken_closing_tags():
@@ -17,6 +18,15 @@ def test_static_html_has_no_mojibake_broken_closing_tags():
         assert not BROKEN_HTML_CLOSER_RE.search(html), path
     index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
     assert "</title>" in index.split("</head>", 1)[0]
+
+
+def test_language_switcher_keeps_real_flag_emoji():
+    index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert "🇨🇳" in index
+    assert "🇬🇧" in index
+    for marker in MOJIBAKE_FLAG_MARKERS:
+        assert marker not in index
 
 
 def test_flask_serves_frontend_assets_outside_project_cwd(monkeypatch, tmp_path):
