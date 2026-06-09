@@ -715,26 +715,6 @@ function renderProviderListItem(provider) {
  * 但外层 .card 仍参与兜底动画。
  */
 function renderProviderEditor(provider) {
-    /**
-     * 渲染 Provider 编辑器（三栏中间栏）。
-     *
-     * 设计意图：
-     *   - 表单字段较多，未使用 stagger-item（避免过多项同时动画导致眩晕），
-     *     但外层 .card 仍参与兜底动画。
-     *   - Models 使用文本区 + parseModelsText 解析：用户可批量粘贴模型列表，
-     *     格式为 "id|display_name|context_window|selected"，比逐个表单字段
-     *     更高效。
-     *   - Advanced 折叠面板：默认折叠复杂字段（headers、capabilities、media profile），
-     *     降低新手认知负担，高级用户可展开编辑。
-     */
-    const modelsText = (provider.models || []).map(m => [
-        m.id || '',
-        m.display_name || '',
-        m.context_window || 0,
-        m.selected ? 'selected' : '',
-        m.api_format || '',
-        m.native_approval ? 'native_approval' : '',
-    ].join('|')).join('\n');
     const approvalProfile = provider.approval_profile || {};
     const mediaProfile = provider.media_profile || {};
     const proxyProfile = provider.proxy_profile || {};
@@ -799,9 +779,8 @@ function renderProviderEditor(provider) {
             <details class="advanced-box mt-4">
                 <summary>${escapeHtml(t('providerDetailedProfile'))}</summary>
                 ${renderProviderSectionHeading(t('providerHeadersModels'), t('providerHeadersModelsDesc'))}
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                <div class="grid grid-cols-1 gap-4 mt-4">
                     ${renderTextarea('provider-headers-json', t('headersJson'), JSON.stringify(provider.headers || {}, null, 2), 7, '', providerReadOnly)}
-                    ${renderTextarea('provider-models-text', t('modelsText'), modelsText, 7, t('modelsTextHint'), providerReadOnly)}
                 </div>
                 ${renderProviderSectionHeading(t('providerAliasesPolicy'), t('providerAliasesPolicyDesc'))}
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
@@ -817,15 +796,6 @@ function renderProviderEditor(provider) {
                         ${renderInput('proxy-retry-backoff-ms', t('retryBackoffMs'), proxyProfile.retry_backoff_ms || 0, 'number')}
                     </div>
                 </div>
-                <div class="flex flex-wrap gap-2 mt-3 ${providerReadOnly ? 'hidden' : ''}">
-                    <button data-bulk-action="select_all" onclick="runBulkModelAction('select_all')" class="btn btn-secondary text-xs">${escapeHtml(t('selectAll'))}</button>
-                    <button data-bulk-action="deselect_all" onclick="runBulkModelAction('deselect_all')" class="btn btn-secondary text-xs">${escapeHtml(t('deselectAll'))}</button>
-                    <button data-bulk-action="select_vision" onclick="runBulkModelAction('select_vision')" class="btn btn-secondary text-xs">${escapeHtml(t('selectVision'))}</button>
-                    <button data-bulk-action="select_high_context" onclick="runBulkModelAction('select_high_context')" class="btn btn-secondary text-xs">${escapeHtml(t('selectHighContext'))}</button>
-                    <button data-bulk-action="select_low_cost" onclick="runBulkModelAction('select_low_cost')" class="btn btn-secondary text-xs">${escapeHtml(t('selectLowCost'))}</button>
-                    <button data-bulk-action="add_selected_to_amr" onclick="addSelectedModelsToAmr()" class="btn btn-secondary text-xs">${escapeHtml(t('addToAmr'))}</button>
-                </div>
-                <div id="bulk-action-error" class="hidden mt-2 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2"></div>
                 ${renderProviderSectionHeading(t('providerCapabilities'), t('providerCapabilitiesDesc'))}
                 <div class="mt-3 text-xs text-emerald-200 bg-emerald-950/20 border border-emerald-700/40 rounded-lg p-3">${escapeHtml(t('providerCoreCapabilitiesLocked'))}</div>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
@@ -954,9 +924,31 @@ function renderProviderModelDetails(provider, disabled = false) {
                     </div>
                 `}
             </div>
+            <div class="mt-3 text-xs text-sky-200 bg-sky-950/20 border border-sky-700/40 rounded-lg p-3">
+                ${escapeHtml(t('providerModelSingleSourceHint'))}
+            </div>
+            ${renderProviderModelBulkActions(disabled)}
             <div id="provider-model-detail-list" class="space-y-3 mt-4">
                 ${models.map((model, index) => renderProviderModelDetailRow(provider, model, index, disabled)).join('')}
             </div>
+        </div>
+    `;
+}
+
+function renderProviderModelBulkActions(disabled = false) {
+    if (disabled) return '';
+    return `
+        <div class="mt-4">
+            <div class="text-xs font-semibold text-dark-300 mb-2">${escapeHtml(t('providerModelBulkActions'))}</div>
+            <div class="flex flex-wrap gap-2">
+                <button data-bulk-action="select_all" onclick="runBulkModelAction('select_all')" class="btn btn-secondary text-xs">${escapeHtml(t('selectAll'))}</button>
+                <button data-bulk-action="deselect_all" onclick="runBulkModelAction('deselect_all')" class="btn btn-secondary text-xs">${escapeHtml(t('deselectAll'))}</button>
+                <button data-bulk-action="select_vision" onclick="runBulkModelAction('select_vision')" class="btn btn-secondary text-xs">${escapeHtml(t('selectVision'))}</button>
+                <button data-bulk-action="select_high_context" onclick="runBulkModelAction('select_high_context')" class="btn btn-secondary text-xs">${escapeHtml(t('selectHighContext'))}</button>
+                <button data-bulk-action="select_low_cost" onclick="runBulkModelAction('select_low_cost')" class="btn btn-secondary text-xs">${escapeHtml(t('selectLowCost'))}</button>
+                <button data-bulk-action="add_selected_to_amr" onclick="addSelectedModelsToAmr()" class="btn btn-secondary text-xs">${escapeHtml(t('addToAmr'))}</button>
+            </div>
+            <div id="bulk-action-error" class="hidden mt-2 text-xs text-red-300 bg-red-950/30 border border-red-700/50 rounded-lg p-2"></div>
         </div>
     `;
 }
@@ -975,8 +967,28 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false) 
     const hidden = Boolean(model && model.catalog_hidden);
     const selected = model ? (!hidden && model.selected !== false) : true;
     const enabled = !model || model.enabled !== false;
+    const rowTitle = model && (model.display_name || model.name || model.id)
+        ? (model.display_name || model.name || model.id)
+        : t('modelDraftLabel');
+    const rowMeta = model && model.id ? model.id : t('modelDraftLabel');
+    const rowBadges = [
+        enabled ? `<span class="badge bg-emerald-900/35 text-emerald-200 border-emerald-700/40">${escapeHtml(t('enabledLabel'))}</span>` : `<span class="badge bg-dark-800 text-dark-300 border-dark-700">${escapeHtml(t('disabledLabel'))}</span>`,
+        model && model.primary ? `<span class="badge bg-sky-900/35 text-sky-200 border-sky-700/40">${escapeHtml(t('primaryModel'))}</span>` : '',
+        hidden ? `<span class="badge bg-amber-900/35 text-amber-200 border-amber-700/40">${escapeHtml(t('hideFromCodex'))}</span>` : '',
+        selected && !hidden ? `<span class="badge bg-accent-900/35 text-accent-200 border-accent-700/40">${escapeHtml(t('selectedModel'))}</span>` : '',
+    ].filter(Boolean).join('');
     return `
         <div class="provider-model-row rounded-lg border border-dark-800 bg-dark-900/55 p-3" data-provider-model-row="${index}" data-original-model-id="${escapeAttr(model.id || '')}">
+            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-3">
+                <div class="min-w-0">
+                    <div class="text-sm font-semibold text-dark-100 truncate">${escapeHtml(rowTitle)}</div>
+                    <div class="text-xs text-dark-500 font-mono truncate">${escapeHtml(rowMeta)}</div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    ${rowBadges}
+                    ${disabled ? '' : `<button type="button" onclick="removeProviderModelDetail(this)" class="btn btn-ghost text-xs text-red-200 hover:text-red-100">${escapeHtml(t('removeModel'))}</button>`}
+                </div>
+            </div>
             <div class="grid grid-cols-1 xl:grid-cols-[minmax(160px,1fr)_minmax(150px,1fr)_minmax(160px,1fr)_120px_150px] gap-3">
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('modelId'))}</label>
@@ -1043,7 +1055,6 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false) 
                     <input data-model-field="native_approval" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${model.native_approval ? 'checked' : ''}${disabledAttr}>
                     <span>${escapeHtml(t('nativeApprovalCapability'))}</span>
                 </label>
-                ${disabled ? '' : `<button type="button" onclick="removeProviderModelDetail(this)" class="text-xs text-red-300 hover:text-red-200">${escapeHtml(t('removeModel'))}</button>`}
             </div>
             <div class="mt-3">
                 <div class="text-xs text-dark-500 mb-2">${escapeHtml(t('modelCapabilities'))}</div>

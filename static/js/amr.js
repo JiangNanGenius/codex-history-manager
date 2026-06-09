@@ -51,6 +51,34 @@ function mergeProviderModelCapabilities(provider, model) {
     };
 }
 
+function getAmrProviderById(providerId) {
+    const id = String(providerId || '').trim();
+    if (!id) return null;
+    return (providerState.providers || []).find(provider => String(provider.id || '') === id) || null;
+}
+
+function getAmrProviderModel(provider, modelId) {
+    const id = String(modelId || '').trim();
+    if (!provider || !id) return null;
+    return (provider.models || []).find(model => String(model.id || '') === id) || null;
+}
+
+function getAmrCandidateCapabilities(candidate) {
+    const provider = getAmrProviderById(candidate && candidate.provider_id);
+    const model = getAmrProviderModel(provider, candidate && candidate.model_id);
+    const capabilities = model
+        ? mergeProviderModelCapabilities(provider, model)
+        : { ...(candidate && candidate.capabilities ? candidate.capabilities : {}) };
+    capabilities.tools = true;
+    capabilities.streaming = true;
+    return capabilities;
+}
+
+function renderAmrCapabilityBadges(capabilities) {
+    const badges = capabilityBadges(capabilities);
+    return badges.length ? badges.join('') : renderMiniBadge(t('amrCapabilitiesUnresolved'));
+}
+
 let amrState = {
     groups: [],
     selectedGroupId: '',
@@ -257,7 +285,7 @@ function renderAmrGroupEditor(group) {
 }
 
 function renderAmrCandidateEditor(candidate, index, candidates = []) {
-    const caps = candidate.capabilities || {};
+    const caps = getAmrCandidateCapabilities(candidate);
     const enabled = candidate.enabled !== false;
     return `
         <div class="rounded-lg border border-dark-700 bg-dark-950/40 p-3 stagger-item" data-amr-candidate-row="${index}" data-candidate-id="${escapeAttr(candidate.id || '')}">
@@ -277,13 +305,14 @@ function renderAmrCandidateEditor(candidate, index, candidates = []) {
                 <button onclick="moveAmrCandidate(${index}, 1)" class="btn btn-secondary text-xs" ${index >= candidates.length - 1 ? 'disabled' : ''}>${escapeHtml(t('moveDownAction'))}</button>
                 <button onclick="removeAmrCandidate(${index})" class="btn btn-danger text-xs">${escapeHtml(t('removeAction'))}</button>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mt-3">
-                ${AMR_CAPABILITIES.map(capability => `
-                    <label class="flex items-center gap-2 text-xs cursor-pointer bg-dark-900/60 border border-dark-700 rounded-md px-2 py-2">
-                        <input data-amr-capability="${escapeAttr(capability)}" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${caps[capability] ? 'checked' : ''}>
-                        <span>${escapeHtml(amrCapabilityLabel(capability))}</span>
-                    </label>
-                `).join('')}
+            <div class="mt-3 rounded-md border border-dark-800 bg-dark-900/45 px-3 py-2" data-amr-derived-capabilities>
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div class="text-xs text-dark-400">${escapeHtml(t('amrCandidateCapabilitiesInherited'))}</div>
+                    <button type="button" onclick="navigateTo('providers')" class="btn btn-ghost text-xs">${escapeHtml(t('amrEditCapabilitiesInProviders'))}</button>
+                </div>
+                <div class="flex flex-wrap gap-1 mt-2">
+                    ${renderAmrCapabilityBadges(caps)}
+                </div>
             </div>
         </div>
     `;
@@ -465,21 +494,24 @@ function moveAmrCandidate(index, direction) {
 function readAmrGroupForm(existing) {
     if (!existing) return null;
     const displayName = document.getElementById('amr-group-name')?.value || existing.display_name || existing.id;
-    const candidates = Array.from(document.querySelectorAll('[data-amr-candidate-row]')).map(row => {
-        const capabilities = {};
-        AMR_CAPABILITIES.forEach(capability => {
-            capabilities[capability] = Boolean(row.querySelector(`[data-amr-capability="${capability}"]`)?.checked);
-        });
-        capabilities.tools = true;
-        capabilities.streaming = true;
-        return {
+    const existingCandidates = Array.isArray(existing.candidates) ? existing.candidates : [];
+    const candidates = Array.from(document.querySelectorAll('[data-amr-candidate-row]')).map((row, index) => {
+        const candidateId = row.querySelector('[data-amr-field="id"]')?.value || '';
+        const previous = existingCandidates[index]
+            || existingCandidates.find(candidate => String(candidate.id || '') === String(candidateId || ''))
+            || {};
+        const draft = {
+            ...previous,
             id: row.querySelector('[data-amr-field="id"]')?.value || '',
             provider_id: row.querySelector('[data-amr-field="provider_id"]')?.value || '',
             model_id: row.querySelector('[data-amr-field="model_id"]')?.value || '',
             priority: parseInt(row.querySelector('[data-amr-field="priority"]')?.value || '2', 10) || 2,
             enabled: row.querySelector('[data-amr-field="enabled"]')?.checked !== false,
             context_window: parseInt(row.querySelector('[data-amr-field="context_window"]')?.value || '0', 10) || 0,
-            capabilities,
+        };
+        return {
+            ...draft,
+            capabilities: getAmrCandidateCapabilities(draft),
         };
     });
     return {

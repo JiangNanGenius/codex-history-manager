@@ -246,6 +246,8 @@ class CodexIntegrationApiTest(unittest.TestCase):
         with (
             patch("app._run_sync_with_backup") as sync_with_backup,
             patch("app.disable_codex_enhance_provider_config", return_value={"success": True, "changed": True}) as disable_proxy,
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
             patch("app.start_codex", return_value=(True, "started")) as start,
         ):
             response = app.test_client().post("/api/codex/start", json={"official_mode": True})
@@ -271,6 +273,8 @@ class CodexIntegrationApiTest(unittest.TestCase):
         with (
             patch("app._run_sync_with_backup") as sync_with_backup,
             patch("app.disable_codex_enhance_provider_config", return_value={"success": True, "changed": True}),
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
             patch("app.start_codex", return_value=(True, "started")) as start,
         ):
             response = app.test_client().post("/api/codex/start", json={
@@ -297,6 +301,8 @@ class CodexIntegrationApiTest(unittest.TestCase):
         with (
             patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)) as sync_with_backup,
             patch("app.disable_codex_enhance_provider_config") as disable_proxy,
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
             patch("app.start_codex", return_value=(True, "started")) as start,
         ):
             response = app.test_client().post("/api/codex/start", json={"start_mode": "preserve_login_proxy"})
@@ -313,6 +319,50 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertTrue(start.call_args.kwargs["enable_cdp_injection"])
         self.assertEqual(start.call_args.kwargs["cdp_port"], 51236)
 
+    def test_start_codex_restarts_running_codex_before_injection(self):
+        app = self._app()
+        with (
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)),
+            patch("app.is_codex_running", return_value=(True, [123, 456])) as running,
+            patch("app.kill_codex", return_value=(True, "closed")) as kill,
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", return_value=(True, "started")) as start,
+        ):
+            response = app.test_client().post("/api/codex/start", json={
+                "start_mode": "preserve_login_proxy",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertFalse(data["restart"]["skipped"])
+        self.assertEqual(data["restart"]["pids"], [123, 456])
+        running.assert_called_once()
+        kill.assert_called_once_with(timeout=8)
+        start.assert_called_once()
+
+    def test_start_codex_backs_off_occupied_cdp_port(self):
+        app = self._app()
+        with (
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)),
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", side_effect=lambda port, host="127.0.0.1": int(port) != 61234),
+            patch("app.start_codex", return_value=(True, "started")) as start,
+        ):
+            response = app.test_client().post("/api/codex/start", json={
+                "start_mode": "preserve_login_proxy",
+                "cdp_port": 61234,
+            })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["codex_cdp_port"], 61235)
+        self.assertEqual(start.call_args.kwargs["cdp_port"], 61235)
+        self.last_config.update.assert_any_call({
+            "codex_injection_enabled": True,
+            "codex_cdp_port": 61235,
+        })
+
     def test_start_codex_runs_optional_sandbox_repair_when_enabled(self):
         app = self._app()
         self.last_config.get.side_effect = lambda key, default=None: (
@@ -325,6 +375,8 @@ class CodexIntegrationApiTest(unittest.TestCase):
                 "restart_required": True,
             }) as repair,
             patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)),
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
             patch("app.start_codex", return_value=(True, "started")),
         ):
             response = app.test_client().post("/api/codex/start", json={

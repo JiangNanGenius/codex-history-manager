@@ -27,6 +27,7 @@ import copy
 import json
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -195,6 +196,28 @@ def _coerce_port(value: Any, default: int = DEFAULT_CDP_PORT) -> int:
         return default
 
 
+def _tcp_port_is_available(port: int, host: str = "127.0.0.1") -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.2)
+            return sock.connect_ex((host, int(port))) != 0
+    except Exception:
+        return False
+
+
+def _select_available_cdp_port(preferred: int, scan_limit: int = 40) -> int:
+    preferred = _coerce_port(preferred, DEFAULT_CDP_PORT)
+    if _tcp_port_is_available(preferred):
+        return preferred
+    for offset in range(1, max(int(scan_limit), 1) + 1):
+        candidate = preferred + offset
+        if candidate > 65535:
+            break
+        if _tcp_port_is_available(candidate):
+            return candidate
+    return preferred
+
+
 def _resolve_codex_injection_settings(
     config_obj: Config,
     body: Dict[str, Any],
@@ -202,11 +225,14 @@ def _resolve_codex_injection_settings(
     use_codex_plus_plus: bool,
     official_mode: bool = False,
     persist: bool = False,
+    avoid_occupied_port: bool = False,
 ) -> Dict[str, Any]:
     configured_enabled = _coerce_bool(config_obj.get("codex_injection_enabled", True), True)
     requested_enabled = _coerce_bool(body.get("enable_cdp_injection"), configured_enabled)
     enabled = requested_enabled and not use_codex_plus_plus
     cdp_port = _coerce_port(body.get("cdp_port"), _coerce_port(config_obj.get("codex_cdp_port", DEFAULT_CDP_PORT)))
+    if enabled and avoid_occupied_port:
+        cdp_port = _select_available_cdp_port(cdp_port)
     if persist:
         config_obj.update({
             "codex_injection_enabled": requested_enabled,
@@ -1377,8 +1403,9 @@ def create_app() -> Flask:
         start_mode = _normalize_codex_start_mode(body, login_defaults)
         official_mode = start_mode == START_MODE_OFFICIAL_DIRECT
         sandbox_repair_payload = {"success": True, "skipped": True, "reason": "disabled"}
+        restart_payload = {"success": True, "skipped": True, "reason": "not_required"}
         if _coerce_bool(config.get("codex_sandbox_auto_repair_enabled", False), False):
-            _set_codex_start_progress(job_id, "sandbox_repair", 8, "姝ｅ湪淇 Codex sandbox/approval 閰嶇疆...")
+            _set_codex_start_progress(job_id, "sandbox_repair", 8, "正在修复 Codex sandbox/approval 配置...")
             sandbox_repair_payload = repair_codex_sandbox_permissions(mgr)
             if not sandbox_repair_payload.get("success"):
                 result = {
@@ -1466,7 +1493,37 @@ def create_app() -> Flask:
             use_codex_plus_plus=bool(use_cpp),
             official_mode=official_mode,
             persist=True,
+            avoid_occupied_port=True,
         )
+        _set_codex_start_progress(job_id, "prelaunch", 74, "正在确认 Codex 进程和增强注入端口...")
+        if injection_settings["enabled"]:
+            try:
+                running, pids = is_codex_running(timeout=1)
+            except Exception:
+                running, pids = False, []
+            if running:
+                _set_codex_start_progress(
+                    job_id,
+                    "restarting_codex",
+                    76,
+                    "检测到 Codex 正在运行，正在重启以确保增强注入能够附加。",
+                    pids=pids,
+                )
+                kill_ok, kill_msg = kill_codex(timeout=8)
+                restart_payload = {
+                    "success": bool(kill_ok),
+                    "skipped": False,
+                    "pids": pids,
+                    "message": kill_msg,
+                }
+                if not kill_ok:
+                    result = {
+                        "success": False,
+                        "error": "Codex 正在运行，但自动重启失败；增强注入无法保证生效。",
+                        "restart": restart_payload,
+                    }
+                    _set_codex_start_progress(job_id, "restart_failed", 100, result["error"], result=result)
+                    return result
         _set_codex_start_progress(job_id, "launching", 82, "正在启动 Codex 并确认进程...")
         ok, msg = start_codex(
             use_codex_plus_plus=use_cpp,
@@ -1493,6 +1550,7 @@ def create_app() -> Flask:
             "proxy": proxy_payload if not official_mode else {},
             "provider_config": provider_write if not official_mode else {},
             "sandbox_repair": sandbox_repair_payload,
+            "restart": restart_payload,
             "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
             "codex_injection_enabled": injection_settings["requested_enabled"],
             "codex_cdp_port": injection_settings["cdp_port"],

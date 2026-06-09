@@ -161,6 +161,19 @@ def test_provider_request_preview_ui_is_wired():
     assert "上下文窗口" in i18n
 
 
+def test_provider_model_details_are_single_editing_surface():
+    js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+    assert "renderProviderModelBulkActions" in js
+    assert "providerModelSingleSourceHint" in js
+    assert "providerModelBulkActions" in i18n
+    assert "modelDraftLabel" in i18n
+    assert "renderTextarea('provider-models-text'" not in js
+    assert "parseModelsText(document.getElementById('provider-models-text')" in js
+    assert "请求头与高级策略" in i18n
+
+
 def test_native_responses_and_codex_login_provider_locks_are_wired():
     js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
     app_js = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
@@ -259,6 +272,18 @@ def test_amr_frontend_context_window_keeps_unknown_zero_as_limiter():
 
     assert "Number.isFinite(value) && value >= 0" in amr_js
     assert "value > 0" not in amr_js
+
+
+def test_amr_candidate_capabilities_are_inherited_from_providers():
+    amr_js = (ROOT / "static" / "js" / "amr.js").read_text(encoding="utf-8")
+    i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+    assert "getAmrCandidateCapabilities" in amr_js
+    assert "data-amr-derived-capabilities" in amr_js
+    assert "amrCandidateCapabilitiesInherited" in i18n
+    assert "amrEditCapabilitiesInProviders" in i18n
+    assert "data-amr-capability" not in amr_js
+    assert "data-amr-route-capability" in amr_js
 
 
 def test_monitor_uses_dense_sampling_and_official_usage_fallback():
