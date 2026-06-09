@@ -324,7 +324,11 @@ def _official_login_defaults(mgr: CodexConfigManager) -> Dict[str, Any]:
 def _official_provider_extra(mgr: CodexConfigManager | None = None) -> list[Dict[str, Any]]:
     try:
         manager = mgr or CodexConfigManager()
-        provider = build_official_login_provider(manager.read_config(), manager.read_auth())
+        provider = build_official_login_provider(
+            manager.read_config(),
+            manager.read_auth(),
+            allow_placeholder=True,
+        )
         return [provider] if provider else []
     except Exception:
         return []
@@ -2973,17 +2977,34 @@ def create_app() -> Flask:
             )
             if not result.get("success"):
                 return jsonify(result), 404
+            confirmed_payload = _provider_payload(include_secrets=False)
+            confirmed_focus = str(confirmed_payload.get("focus_provider_id") or "")
+            result["store_path"] = confirmed_payload.get("store_path", "")
+            result["verified_focus_provider_id"] = confirmed_focus
+            if confirmed_focus != provider_id:
+                return jsonify({
+                    **result,
+                    "success": False,
+                    "error": "Provider focus did not persist to providers.json.",
+                }), 500
             selected_provider = None
             if provider_id:
-                payload = _provider_payload(include_secrets=False)
                 selected_provider = next(
-                    (p for p in payload.get("providers", []) if isinstance(p, dict) and p.get("id") == provider_id),
+                    (p for p in confirmed_payload.get("providers", []) if isinstance(p, dict) and p.get("id") == provider_id),
                     None,
                 )
             result["proxy"] = {"started": False, "skipped": True}
             if selected_provider and provider_allows_local_routing(selected_provider):
+                try:
+                    config.set("codex_last_start_mode", START_MODE_PRESERVE_LOGIN_PROXY)
+                except Exception:
+                    pass
                 result["proxy"] = _ensure_proxy_for_current_provider("provider_focus")
             elif selected_provider:
+                try:
+                    config.set("codex_last_start_mode", START_MODE_OFFICIAL_DIRECT)
+                except Exception:
+                    pass
                 result["routing_mode"] = selected_provider.get("routing_mode") or "official_direct"
                 result["switch_only"] = bool(selected_provider.get("switch_only"))
             return jsonify(result)

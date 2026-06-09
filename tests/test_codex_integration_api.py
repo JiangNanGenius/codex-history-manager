@@ -318,6 +318,40 @@ class CodexIntegrationApiTest(unittest.TestCase):
             "plugin_unlock_enabled": False,
         })
 
+    def test_provider_focus_official_persists_and_updates_local_start_mode(self):
+        app = self._app()
+        official = {
+            "id": "codex_official",
+            "display_name": "OpenAI Official Login",
+            "switch_only": True,
+            "codex_login": True,
+            "local_proxy_routing": False,
+            "routing_mode": "official_direct",
+        }
+        self.provider_registry.set_focus_provider.return_value = {
+            "success": True,
+            "focus_provider_id": "codex_official",
+            "changed": True,
+        }
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "store_path": "C:/demo/providers.json",
+            "focus_provider_id": "codex_official",
+            "providers": [official],
+        }
+        with patch("app._official_provider_extra", return_value=[official]):
+            response = app.test_client().post("/api/providers/focus", json={
+                "provider_id": "codex_official",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["verified_focus_provider_id"], "codex_official")
+        self.assertEqual(data["store_path"], "C:/demo/providers.json")
+        self.assertTrue(data["switch_only"])
+        self.last_config.set.assert_any_call("codex_last_start_mode", "official_direct")
+
     def test_start_codex_official_mode_allows_safe_injection(self):
         app = self._app()
         with (

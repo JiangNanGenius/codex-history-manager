@@ -150,7 +150,6 @@ function renderAmrPage() {
             </div>
             <div class="2xl:col-span-2 space-y-4">
                 ${selected ? renderAmrGroupEditor(selected) : renderAmrEmptyEditor()}
-                ${selected ? renderAmrRoutePreview(selected) : renderAmrRoutePreviewEmpty()}
             </div>
         </div>
         </div>
@@ -318,50 +317,6 @@ function renderAmrCandidateEditor(candidate, index, candidates = []) {
     `;
 }
 
-function renderAmrRoutePreview(group) {
-    const result = amrState.routeResult;
-    const resultText = result ? JSON.stringify(result, null, 2) : t('noRoutePreviewYet');
-    return `
-        <div class="card">
-            <div class="flex items-center justify-between gap-3">
-                <h3 class="card-title">${escapeHtml(t('routePreview'))}</h3>
-                <span class="text-xs text-emerald-300">${escapeHtml(t('readOnlyLabel'))}</span>
-            </div>
-            <div class="text-xs text-dark-500 mt-1">${escapeHtml(t('amrRoutePreviewDesc'))}</div>
-            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mt-3">
-                ${AMR_CAPABILITIES.map(capability => renderAmrRouteCapabilityToggle(capability, capability === 'text')).join('')}
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                <input id="amr-route-context" class="input text-sm" type="number" min="0" step="1000" value="${escapeAttr(getAmrGroupSummary(group).effectiveContext || 0)}" placeholder="${escapeAttr(t('requiredContextPlaceholder'))}">
-                <button id="amr-route-btn" onclick="runAmrRoutePreview()" class="btn btn-secondary text-xs">${escapeHtml(t('previewRoute'))}</button>
-            </div>
-            <pre id="amr-route-result" class="preview-code mt-3">${escapeHtml(resultText)}</pre>
-        </div>
-    `;
-}
-
-function renderAmrRoutePreviewEmpty() {
-    return `
-        <div class="card">
-            <div class="flex items-center justify-between gap-3">
-                <h3 class="card-title">${escapeHtml(t('routePreview'))}</h3>
-                <span class="text-xs text-emerald-300">${escapeHtml(t('readOnlyLabel'))}</span>
-            </div>
-            ${renderEmptyState(t('amrRouteEmpty'))}
-        </div>
-    `;
-}
-
-function renderAmrRouteCapabilityToggle(capability, checked) {
-    return `
-        <label class="flex items-center gap-2 text-xs cursor-pointer bg-dark-900/60 border border-dark-700 rounded-md px-2 py-2">
-            <input data-amr-route-capability="${escapeAttr(capability)}" type="checkbox"
-                class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${checked ? 'checked' : ''}>
-            <span>${escapeHtml(amrCapabilityLabel(capability))}</span>
-        </label>
-    `;
-}
-
 function amrCapabilityLabel(capability) {
     const labels = {
         text: t('textCapability'),
@@ -519,35 +474,6 @@ function readAmrGroupForm(existing) {
         display_name: displayName,
         candidates,
     };
-}
-
-async function runAmrRoutePreview() {
-    const group = getSelectedAmrGroup();
-    if (!group) return;
-    const btn = document.getElementById('amr-route-btn');
-    const resultEl = document.getElementById('amr-route-result');
-    const capabilities = Array.from(document.querySelectorAll('[data-amr-route-capability]:checked'))
-        .map(input => input.getAttribute('data-amr-route-capability'))
-        .filter(Boolean);
-    const context = parseInt(document.getElementById('amr-route-context')?.value || '0', 10) || 0;
-    if (btn) btn.disabled = true;
-    if (resultEl) resultEl.textContent = t('previewing');
-    try {
-        amrState.routeResult = await api('/api/amr/route', {
-            method: 'POST',
-            body: JSON.stringify({
-                group_id: group.id,
-                capabilities: capabilities.length ? capabilities : ['text'],
-                context,
-            }),
-        });
-        renderAmrPage();
-    } catch (err) {
-        amrState.routeResult = { success: false, error: err.message };
-        renderAmrPage();
-    } finally {
-        if (btn) btn.disabled = false;
-    }
 }
 
 function getAmrGroupSummary(group) {

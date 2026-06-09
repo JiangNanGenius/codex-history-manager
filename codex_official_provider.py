@@ -59,9 +59,14 @@ def resolve_effective_codex_settings(config_data: Dict[str, Any], auth_mode: str
     }
 
 
-def build_official_login_provider(config_data: Dict[str, Any], auth_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def build_official_login_provider(
+    config_data: Dict[str, Any],
+    auth_data: Dict[str, Any],
+    allow_placeholder: bool = False,
+) -> Optional[Dict[str, Any]]:
     auth_mode = detect_auth_mode(auth_data if isinstance(auth_data, dict) else {})
-    if auth_mode != "official_oauth":
+    official_oauth_detected = auth_mode == "official_oauth"
+    if not official_oauth_detected and not allow_placeholder:
         return None
 
     settings = resolve_effective_codex_settings(config_data if isinstance(config_data, dict) else {}, auth_mode)
@@ -118,13 +123,14 @@ def build_official_login_provider(config_data: Dict[str, Any], auth_data: Dict[s
             },
         }],
         "status": {
-            "last_success": True,
-            "last_error": "",
+            "last_success": official_oauth_detected,
+            "last_error": "" if official_oauth_detected else "Official login was not detected in Codex auth.json.",
             "needs_restart": False,
         },
         "notes": "Read-only provider derived from Codex auth.json. OAuth tokens stay in Codex and are never copied here.",
         "caveat": "Use this entry to switch back to Codex official login. It is not a third-party API-key provider.",
     })
+    provider["official_oauth_detected"] = official_oauth_detected
     provider["official_oauth_implied_provider"] = settings.get("official_oauth_implied_provider", False)
     provider["current_model_provider"] = settings.get("model_provider", "")
     provider["current_model_provider_source"] = settings.get("model_provider_source", "")

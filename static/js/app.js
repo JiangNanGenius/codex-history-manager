@@ -206,6 +206,52 @@ function setStatus(text) {
     if (el) el.textContent = text;
 }
 
+let codexStartProgressHideTimer = null;
+
+function updateCodexStartProgressOverlay(job = {}) {
+    let overlay = document.getElementById('codex-start-progress-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'codex-start-progress-overlay';
+        overlay.className = 'fixed left-1/2 bottom-6 z-[9999] w-[min(92vw,420px)] -translate-x-1/2 rounded-xl border border-dark-700 bg-dark-950/95 p-4 shadow-2xl backdrop-blur';
+        overlay.innerHTML = `
+            <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                    <div data-codex-start-title class="text-sm font-semibold text-white">Codex</div>
+                    <div data-codex-start-message class="mt-1 truncate text-xs text-dark-300"></div>
+                </div>
+                <div data-codex-start-percent class="font-mono text-xs text-accent-200">0%</div>
+            </div>
+            <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-dark-800">
+                <div data-codex-start-bar class="h-full rounded-full bg-accent-500 transition-all duration-300" style="width:0%"></div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+    }
+    if (codexStartProgressHideTimer) {
+        clearTimeout(codexStartProgressHideTimer);
+        codexStartProgressHideTimer = null;
+    }
+    const progress = Math.max(0, Math.min(100, Number(job.progress || 0)));
+    const title = overlay.querySelector('[data-codex-start-title]');
+    const message = overlay.querySelector('[data-codex-start-message]');
+    const percent = overlay.querySelector('[data-codex-start-percent]');
+    const bar = overlay.querySelector('[data-codex-start-bar]');
+    if (title) title.textContent = t('codexStartRequested');
+    if (message) message.textContent = job.message || t('codexStartRequested');
+    if (percent) percent.textContent = `${progress}%`;
+    if (bar) bar.style.width = `${progress}%`;
+}
+
+function hideCodexStartProgressOverlay(delay = 0) {
+    if (codexStartProgressHideTimer) clearTimeout(codexStartProgressHideTimer);
+    codexStartProgressHideTimer = setTimeout(() => {
+        const overlay = document.getElementById('codex-start-progress-overlay');
+        if (overlay) overlay.remove();
+        codexStartProgressHideTimer = null;
+    }, delay);
+}
+
 async function startCodexFromQuickAction() {
     try {
         const status = await api('/api/codex/status');
@@ -233,30 +279,42 @@ async function startCodexFromQuickAction() {
 
 async function startCodexWithProgress(payload = {}, options = {}) {
     const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
-    const started = await api('/api/codex/start', {
-        method: 'POST',
-        body: JSON.stringify({ ...payload, async: true }),
-    });
-    let latest = started;
-    if (onProgress) onProgress(latest);
-    if (!started.async || !started.status_url) return started;
-
-    const deadline = Date.now() + (Number(options.timeoutMs || 10 * 60 * 1000));
-    while (Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, Number(options.intervalMs || 900)));
-        latest = await api(started.status_url);
-        const message = latest.message || started.message || t('codexStartRequested');
-        setStatus(`${message} ${Number(latest.progress || 0)}%`);
+    try {
+        const started = await api('/api/codex/start', {
+            method: 'POST',
+            body: JSON.stringify({ ...payload, async: true }),
+        });
+        let latest = started;
+        updateCodexStartProgressOverlay(latest);
         if (onProgress) onProgress(latest);
-        if (latest.status === 'complete' || latest.status === 'failed') {
-            return latest.result || {
-                success: latest.status === 'complete',
-                message: latest.message,
-                error: latest.error,
-            };
+        if (!started.async || !started.status_url) {
+            hideCodexStartProgressOverlay(2500);
+            return started;
         }
+
+        const deadline = Date.now() + (Number(options.timeoutMs || 10 * 60 * 1000));
+        while (Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, Number(options.intervalMs || 900)));
+            latest = await api(started.status_url);
+            const message = latest.message || started.message || t('codexStartRequested');
+            setStatus(`${message} ${Number(latest.progress || 0)}%`);
+            updateCodexStartProgressOverlay(latest);
+            if (onProgress) onProgress(latest);
+            if (latest.status === 'complete' || latest.status === 'failed') {
+                hideCodexStartProgressOverlay(2500);
+                return latest.result || {
+                    success: latest.status === 'complete',
+                    message: latest.message,
+                    error: latest.error,
+                };
+            }
+        }
+        hideCodexStartProgressOverlay(4000);
+        throw new Error(t('codexStartStillRunning'));
+    } catch (err) {
+        hideCodexStartProgressOverlay(4000);
+        throw err;
     }
-    throw new Error(t('codexStartStillRunning'));
 }
 
 // ─────────────── Toast Notification ───────────────

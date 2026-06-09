@@ -149,6 +149,7 @@ def test_monitor_context_menu_exposes_desktop_actions():
     assert "switch_provider" in js
     assert "autoProvider" in js
     assert "/api/providers/focus" in js
+    assert "codex-start-progress-overlay" in app_js
 
 
 def test_provider_request_preview_ui_is_wired():
@@ -166,6 +167,19 @@ def test_provider_request_preview_ui_is_wired():
     assert "renderSecretInput('provider-api-key'" in js
     assert "revealProviderSecret" in js
     assert "/secret" in js
+
+
+def test_official_provider_switch_and_amr_choice_check_ui_are_clean():
+    providers_js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    amr_js = (ROOT / "static" / "js" / "amr.js").read_text(encoding="utf-8")
+    i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+    assert "providerState.focus_provider_id = focusedProviderId" in providers_js
+    assert "providerState.focusProviderId" not in providers_js
+    assert "renderAmrRoutePreview" not in amr_js
+    assert "runAmrRoutePreview" not in amr_js
+    assert "选择结果检查" not in i18n
+    assert "使用已保存的轮换组检查下一个新会话会选哪个模型" not in i18n
 
 
 def test_provider_model_details_are_single_editing_surface():
@@ -290,7 +304,7 @@ def test_amr_candidate_capabilities_are_inherited_from_providers():
     assert "amrCandidateCapabilitiesInherited" in i18n
     assert "amrEditCapabilitiesInProviders" in i18n
     assert "data-amr-capability" not in amr_js
-    assert "data-amr-route-capability" in amr_js
+    assert "data-amr-route-capability" not in amr_js
 
 
 def test_monitor_uses_dense_sampling_and_official_usage_fallback():

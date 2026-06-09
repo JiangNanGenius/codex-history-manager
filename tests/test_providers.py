@@ -134,6 +134,16 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertTrue(official["capabilities"][capability])
             self.assertTrue(official["models"][0]["capabilities"][capability])
 
+    def test_official_login_placeholder_can_still_be_switch_target(self):
+        self.assertIsNone(build_official_login_provider({}, {}))
+        official = build_official_login_provider({}, {}, allow_placeholder=True)
+
+        self.assertIsNotNone(official)
+        self.assertFalse(official["official_oauth_detected"])
+        self.assertTrue(official["switch_only"])
+        self.assertTrue(official["amr_excluded"])
+        self.assertFalse(provider_allows_local_routing(official))
+
     def test_registry_extra_official_provider_can_be_focused_without_catalog_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))

@@ -875,7 +875,7 @@ function renderProviderEditor(provider) {
 }
 
 function renderCodexOfficialProviderViewer(provider) {
-    const focused = providerState.focusProviderId === provider.id;
+    const focused = providerState.focus_provider_id === provider.id;
     const loginStatus = provider.official_oauth_detected || provider.auth_mode === 'official_oauth'
         ? t('officialLoginDetected')
         : t('officialLoginStatusUnknown');
@@ -2083,15 +2083,17 @@ async function switchSelectedProvider(providerId = '') {
     const provider = providerId
         ? (providerState.providers || []).find(item => item.id === providerId)
         : getSelectedProvider();
-    if (!provider) return;
+    const targetProviderId = provider ? provider.id : String(providerId || '').trim();
+    if (!targetProviderId) return;
     try {
         const result = await api('/api/providers/focus', {
             method: 'POST',
-            body: JSON.stringify({ provider_id: provider.id }),
+            body: JSON.stringify({ provider_id: targetProviderId }),
         });
-        providerState.focusProviderId = result.focus_provider_id || provider.id;
+        const focusedProviderId = result.focus_provider_id || targetProviderId;
+        providerState.focus_provider_id = focusedProviderId;
         await ensureProviderData();
-        await refreshCatalogPreview(providerState.focusProviderId);
+        await refreshCatalogPreview(providerState.focus_provider_id || focusedProviderId);
         await refreshProxyStatus();
         renderProvidersPage();
         const proxy = result.proxy || {};
