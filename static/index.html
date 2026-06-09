@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="appTitle">Codex 鍘嗗彶璁板綍绠＄悊鍣</title>
+    <title data-i18n="appTitle">Codex 历史记录管理器</title>
     <script src="/js/tailwindcss.js"></script>
     <script src="/js/chart.js"></script>
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -59,7 +59,7 @@
                 </span>
                 Codex Manager
             </h1>
-            <p class="text-xs text-dark-400 mt-1" data-i18n="appSubtitle">History &middot; Sync &middot; Backup</p>
+            <p class="text-xs text-dark-400 mt-1" data-i18n="appSubtitle">历史 · 同步 · 备份</p>
         </div>
         <!-- Language Switcher -->
         <div class="px-5 py-2 border-b border-dark-700">
@@ -76,63 +76,63 @@
         <nav class="flex-1 py-4 px-3 space-y-1">
             <button onclick="navigateTo('overview')" data-nav="overview" class="nav-btn active w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 13h6V4H4v9zm10 7h6V4h-6v16zM4 20h6v-4H4v4z"/></svg>
-                <span data-i18n="navOverview">Overview</span>
+                <span data-i18n="navOverview">总览</span>
             </button>
             <button onclick="navigateTo('quick-setup')" data-nav="quick-setup" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                <span data-i18n="navQuickSetup">Quick Setup</span>
+                <span data-i18n="navQuickSetup">快速设置</span>
             </button>
             <button onclick="navigateTo('providers')" data-nav="providers" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M6 7v10a2 2 0 002 2h8a2 2 0 002-2V7M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                <span data-i18n="navProviders">Providers</span>
+                <span data-i18n="navProviders">供应商</span>
             </button>
             <button onclick="navigateTo('amr')" data-nav="amr" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h7m0 0L8 3m3 3L8 9m8 9h4m-4 0l3-3m-3 3l3 3M4 18h7a4 4 0 004-4V6h5"/></svg>
-                <span data-i18n="amrTitle">鏅鸿兘璺敱</span>
+                <span data-i18n="amrTitle">智能路由</span>
             </button>
             <button onclick="navigateTo('codex-integration')" data-nav="codex-integration" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-                <span data-i18n="navCodexIntegration">Codex Integration</span>
+                <span data-i18n="navCodexIntegration">连接 Codex</span>
             </button>
             <button onclick="navigateTo('stats')" data-nav="stats" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-                <span data-i18n="navStats">Token Dashboard</span>
+                <span data-i18n="navStats">统计面板</span>
             </button>
             <button onclick="navigateTo('sessions')" data-nav="sessions" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-                <span data-i18n="navSessions">Sessions</span>
+                <span data-i18n="navSessions">会话浏览</span>
             </button>
             <button onclick="navigateTo('sync')" data-nav="sync" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                <span data-i18n="navSync">Sync</span>
+                <span data-i18n="navSync">账户同步</span>
             </button>
             <button onclick="navigateTo('backup')" data-nav="backup" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                <span data-i18n="navBackup">Backup</span>
+                <span data-i18n="navBackup">备份管理</span>
             </button>
             <button onclick="navigateTo('diagnostics')" data-nav="diagnostics" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/></svg>
-                <span data-i18n="navDiagnostics">Diagnostics</span>
+                <span data-i18n="navDiagnostics">检查与恢复</span>
             </button>
             <button onclick="navigateTo('settings')" data-nav="settings" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                <span data-i18n="navSettings">Settings</span>
+                <span data-i18n="navSettings">设置</span>
             </button>
         </nav>
         <!-- Desktop quick actions -->
         <div id="desktop-quick-actions" class="px-3 py-3 border-t border-dark-700/60 space-y-2">
             <button id="sidebar-open-monitor" onclick="showDesktopTokenMonitor()" class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold bg-accent-600/20 text-accent-100 border border-accent-500/30 hover:bg-accent-600/30 transition-all">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h16v10H4zM8 19h8M12 15v4"/></svg>
-                <span data-i18n="toggleMonitor">鎮诞绐</span>
+                <span data-i18n="toggleMonitor">悬浮窗</span>
             </button>
             <button id="sidebar-start-codex" onclick="startCodexFromQuickAction()" class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold bg-dark-900/80 text-dark-200 border border-dark-700 hover:bg-dark-800 transition-all">
                 <svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3l14 9-14 9V3z"/></svg>
-                <span data-i18n="startCodex">鍚姩 Codex</span>
+                <span data-i18n="startCodex">启动 Codex</span>
             </button>
         </div>
         <!-- Status bar -->
         <div id="sidebar-status" class="px-5 py-3 border-t border-dark-700 text-xs text-dark-400">
-            <span id="status-text" data-i18n="ready">灏辩华</span>
+            <span id="status-text" data-i18n="ready">就绪</span>
         </div>
     </aside>
 
@@ -169,12 +169,12 @@
             <div class="card bg-dark-950/50 border-accent-500/20">
                 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
-                        <h2 class="text-lg font-semibold text-white" data-i18n="realtimeStats">Token 瀹炴椂缁熻</h2>
-                        <p class="text-sm text-dark-400 mt-1" data-i18n="realtimeDesc">鐢ㄩ噺浼氳嚜鍔ㄨ窡闅?Codex 鏇存柊锛涘惎鐢ㄦ湰鍦拌繛鎺ュ悗锛岀紦瀛樿妭鐪佷篃浼氫竴璧疯褰曘€</p>
+                        <h2 class="text-lg font-semibold text-white" data-i18n="realtimeStats">Token 实时统计</h2>
+                        <p class="text-sm text-dark-400 mt-1" data-i18n="realtimeDesc">用量会自动跟随 Codex 更新；启用本地连接后，缓存节省也会一起记录。</p>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
                         <span class="status-dot bg-emerald-500 pulse-dot"></span>
-                        <span class="text-xs text-emerald-400" data-i18n="autoRefreshActive">鑷姩鍒锋柊涓紙20 绉掞級</span>
+                        <span class="text-xs text-emerald-400" data-i18n="autoRefreshActive">自动刷新中（20 秒）</span>
                     </div>
                 </div>
             </div>
@@ -183,39 +183,39 @@
             <div class="card">
                 <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
                     <div>
-                        <h3 class="card-title" data-i18n="stopwatch">Token 鐢ㄩ噺杩借釜</h3>
-                        <p class="text-sm text-dark-400" data-i18n="stopwatchDesc">璁板綍涓€娈靛伐浣滄椂闂村唴鐨?Token 澧為噺</p>
+                        <h3 class="card-title" data-i18n="stopwatch">Token 用量追踪</h3>
+                        <p class="text-sm text-dark-400" data-i18n="stopwatchDesc">记录一段工作时间内的 Token 增量</p>
                     </div>
                     <div class="flex flex-wrap items-end gap-3">
                         <div class="min-w-[160px]">
-                            <label class="text-xs text-dark-400" data-i18n="alertThreshold">鎶ヨ闃堝€</label>
+                            <label class="text-xs text-dark-400" data-i18n="alertThreshold">报警阈值</label>
                             <input id="token-alert-threshold" type="number" class="input mt-1 w-full" min="0" step="1000" value="100000" onchange="saveTokenMonitorSettings()">
                         </div>
-                        <button id="stopwatch-start-btn" onclick="startStopwatch()" class="btn btn-primary" data-i18n="start">寮€濮嬭拷韪</button>
-                        <button id="stopwatch-stop-btn" onclick="stopStopwatch()" class="btn btn-warning" disabled data-i18n="stop">缁撴潫杩借釜</button>
-                        <button onclick="resetStopwatch()" class="btn btn-secondary" data-i18n="reset">閲嶇疆</button>
-                        <button onclick="showDesktopTokenMonitor()" class="btn btn-ghost" data-i18n="toggleMonitor">鎮诞绐</button>
+                        <button id="stopwatch-start-btn" onclick="startStopwatch()" class="btn btn-primary" data-i18n="start">开始追踪</button>
+                        <button id="stopwatch-stop-btn" onclick="stopStopwatch()" class="btn btn-warning" disabled data-i18n="stop">结束追踪</button>
+                        <button onclick="resetStopwatch()" class="btn btn-secondary" data-i18n="reset">重置</button>
+                        <button onclick="showDesktopTokenMonitor()" class="btn btn-ghost" data-i18n="toggleMonitor">悬浮窗</button>
                     </div>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label" data-i18n="elapsed">宸茬敤鏃</div>
+                        <div class="card-label" data-i18n="elapsed">持续时间</div>
                         <div id="stopwatch-elapsed" class="card-value font-mono">00:00:00</div>
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label" data-i18n="tokenDiff">鏈鏂板 Token</div>
+                        <div class="card-label" data-i18n="tokenDiff">本次新增 Token</div>
                         <div id="stopwatch-token-diff" class="card-value text-accent-400">0</div>
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label" data-i18n="currentTotalTokens">褰撳墠鎬?Tokens</div>
+                        <div class="card-label" data-i18n="currentTotalTokens">当前总 Tokens</div>
                         <div id="stopwatch-current-total" class="card-value">0</div>
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label" data-i18n="cacheUsage">澶嶇敤鑺傜渷</div>
-                        <div id="stopwatch-cache-hits" class="card-value text-dark-400" data-i18n="cacheUsageUnavailable">澶嶇敤: -- 路 鏂板: -- 路 鍚堣: -- 路 涓嶆敮鎸</div>
+                        <div class="card-label" data-i18n="cacheUsage">复用节省</div>
+                        <div id="stopwatch-cache-hits" class="card-value text-dark-400" data-i18n="cacheUsageUnavailable">复用: -- · 新增: -- · 合计: -- · 不支持</div>
                     </div>
                 </div>
-                <div id="stopwatch-note" class="text-xs text-dark-500 mt-3" data-i18n="noDataYet">鏆傛棤鏁版嵁锛岃鐐瑰嚮"寮€濮嬭拷韪?銆</div>
+                <div id="stopwatch-note" class="text-xs text-dark-500 mt-3" data-i18n="noDataYet">暂无数据，请点击"开始追踪"</div>
                 <div id="stopwatch-source-badges" class="usage-source-badges" aria-label="Usage sources"></div>
             </div>
 
@@ -224,52 +224,52 @@
                 <div class="flex flex-col xl:flex-row xl:items-end gap-4">
                     <div class="flex-1 grid grid-cols-1 md:grid-cols-4 gap-3">
                         <div>
-                            <label class="text-xs text-dark-400" data-i18n="startDate">寮€濮嬫棩鏈</label>
+                            <label class="text-xs text-dark-400" data-i18n="startDate">开始日期</label>
                             <input id="range-start" type="date" class="input mt-1 w-full" onchange="restartRangeRealtime()">
                         </div>
                         <div>
-                            <label class="text-xs text-dark-400" data-i18n="endDate">缁撴潫鏃ユ湡</label>
+                            <label class="text-xs text-dark-400" data-i18n="endDate">结束日期</label>
                             <input id="range-end" type="date" class="input mt-1 w-full" onchange="restartRangeRealtime()">
                         </div>
                         <div>
-                            <label class="text-xs text-dark-400" data-i18n="granularity">绮掑害</label>
+                            <label class="text-xs text-dark-400" data-i18n="granularity">粒度</label>
                             <select id="range-granularity" class="input mt-1 w-full" onchange="restartRangeRealtime()">
-                                <option value="day" data-i18n="granularityDay">鎸夊ぉ</option>
-                                <option value="hour" data-i18n="granularityHour">鎸夊皬鏃</option>
-                                <option value="total" data-i18n="granularityTotal">浠呮€绘暟</option>
+                                <option value="day" data-i18n="granularityDay">按天</option>
+                                <option value="hour" data-i18n="granularityHour">按小时</option>
+                                <option value="total" data-i18n="granularityTotal">仅总数</option>
                             </select>
                         </div>
                         <div>
-                            <label class="text-xs text-dark-400" data-i18n="rangeTotalTokens">鏃堕棿娈?Token 鎬绘暟</label>
+                            <label class="text-xs text-dark-400" data-i18n="rangeTotalTokens">时间段 Token 总数</label>
                             <div id="range-total-tokens" class="text-2xl font-bold text-white mt-1">0</div>
                         </div>
                     </div>
                     <div class="flex flex-wrap items-center gap-3">
-                        <button onclick="refreshRangeStats()" class="btn btn-secondary" data-i18n="refresh">鍒锋柊</button>
-                        <span class="text-xs text-emerald-400" data-i18n="autoRefreshShort">鑷姩鍒锋柊</span>
+                        <button onclick="refreshRangeStats()" class="btn btn-secondary" data-i18n="refresh">刷新</button>
+                        <span class="text-xs text-emerald-400" data-i18n="autoRefreshShort">自动刷新</span>
                     </div>
                 </div>
-                <div id="range-note" class="text-xs text-dark-500 mt-3" data-i18n="rangeNote">鏌ヨ鍙傛暟鍙樺寲鏃朵細閲嶅惎杞骞剁珛鍗冲埛鏂般€</div>
+                <div id="range-note" class="text-xs text-dark-500 mt-3" data-i18n="rangeNote">查询参数变化时会重启轮询并立即刷新。</div>
                 <div id="range-chart-wrapper" class="chart-container mt-4"><canvas id="chart-range-trend"></canvas></div>
             </div>
 
             <!-- Hero Cards -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div class="card bg-gradient-to-br from-accent-600/20 to-accent-700/10 border-accent-500/20">
-                    <div class="card-label" data-i18n="totalTokens">Total Tokens</div>
+                    <div class="card-label" data-i18n="totalTokens">总 Token 数</div>
                     <div class="card-value" id="stat-total-tokens">0</div>
                 </div>
                 <div class="card bg-gradient-to-br from-emerald-600/20 to-emerald-700/10 border-emerald-500/20">
-                    <div class="card-label" data-i18n="totalSessions">Total Sessions</div>
+                    <div class="card-label" data-i18n="totalSessions">总会话数</div>
                     <div class="card-value" id="stat-total-sessions">0</div>
                 </div>
                 <div class="card bg-gradient-to-br from-amber-600/20 to-amber-700/10 border-amber-500/20">
-                    <div class="card-label" data-i18n="todayUsage">Today</div>
+                    <div class="card-label" data-i18n="todayUsage">今日使用</div>
                     <div class="card-value" id="stat-today-tokens">0</div>
                     <div class="card-sub" id="stat-today-sessions">0 sessions</div>
                 </div>
                 <div class="card bg-gradient-to-br from-purple-600/20 to-purple-700/10 border-purple-500/20">
-                    <div class="card-label" data-i18n="weekUsage">This Week</div>
+                    <div class="card-label" data-i18n="weekUsage">本周使用</div>
                     <div class="card-value" id="stat-week-tokens">0</div>
                     <div class="card-sub" id="stat-week-sessions">0 sessions</div>
                 </div>
@@ -277,36 +277,36 @@
             <!-- Charts Row 1 -->
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <div class="lg:col-span-2 card">
-                    <h3 class="card-title" data-i18n="dailyTrend">Daily Trend (30d)</h3>
+                    <h3 class="card-title" data-i18n="dailyTrend">每日 Token 趋势</h3>
                     <div class="chart-container"><canvas id="chart-daily-trend"></canvas></div>
                 </div>
                 <div class="card">
-                    <h3 class="card-title" data-i18n="modelDist">By Model</h3>
+                    <h3 class="card-title" data-i18n="modelDist">模型分布</h3>
                     <div class="chart-container"><canvas id="chart-by-model"></canvas></div>
                 </div>
             </div>
             <!-- Charts Row 2 -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div class="card">
-                    <h3 class="card-title" data-i18n="providerDist">By Provider</h3>
+                    <h3 class="card-title" data-i18n="providerDist">提供商分布</h3>
                     <div class="chart-container"><canvas id="chart-by-provider"></canvas></div>
                 </div>
                 <div class="card">
-                    <h3 class="card-title" data-i18n="hourlyDist">Hourly Distribution</h3>
+                    <h3 class="card-title" data-i18n="hourlyDist">每小时使用分布</h3>
                     <div class="chart-container"><canvas id="chart-hourly"></canvas></div>
                 </div>
             </div>
             <!-- Top Sessions -->
             <div class="card">
-                <h3 class="card-title" data-i18n="topSessions">Top 10 Token-Heavy Sessions</h3>
+                <h3 class="card-title" data-i18n="topSessions">Token 用量排行</h3>
                 <div class="overflow-x-auto">
                     <table class="w-full text-sm">
                         <thead>
                             <tr class="text-dark-400 border-b border-dark-700">
-                                <th class="text-left py-2 px-3" data-i18n="rank">#</th>
-                                <th class="text-left py-2 px-3" data-i18n="title">Title</th>
-                                <th class="text-left py-2 px-3" data-i18n="model">Model</th>
-                                <th class="text-right py-2 px-3" data-i18n="tokensUsed">Tokens</th>
+                                <th class="text-left py-2 px-3" data-i18n="rank">排名</th>
+                                <th class="text-left py-2 px-3" data-i18n="title">标题</th>
+                                <th class="text-left py-2 px-3" data-i18n="model">模型</th>
+                                <th class="text-right py-2 px-3" data-i18n="tokensUsed">已用 Token</th>
                             </tr>
                         </thead>
                         <tbody id="top-sessions-body"></tbody>
@@ -326,28 +326,28 @@
                     <input id="session-search" type="text" placeholder="Search sessions..." class="input w-full" data-i18n-placeholder="searchPlaceholder">
                 </div>
                 <select id="filter-status" class="input w-32" onchange="resetSessionsAndLoad()">
-                    <option value="all" data-i18n="filterAll">All</option>
-                    <option value="active" data-i18n="filterActive">Active</option>
-                    <option value="archived" data-i18n="filterArchived">Archived</option>
+                    <option value="all" data-i18n="filterAll">全部</option>
+                    <option value="active" data-i18n="filterActive">活跃</option>
+                    <option value="archived" data-i18n="filterArchived">已归档</option>
                 </select>
                 <select id="filter-source" class="input w-32" onchange="resetSessionsAndLoad()">
-                    <option value="all" data-i18n="filterSourceAll">All Sources</option>
-                    <option value="user" data-i18n="filterSourceUser">User</option>
-                    <option value="agent" data-i18n="filterSourceAgent">Agent</option>
+                    <option value="all" data-i18n="filterSourceAll">所有来源</option>
+                    <option value="user" data-i18n="filterSourceUser">用户</option>
+                    <option value="agent" data-i18n="filterSourceAgent">助手</option>
                 </select>
                 <select id="filter-model" class="input w-40" onchange="resetSessionsAndLoad()">
-                    <option value="" data-i18n="filterModelAll">All Models</option>
+                    <option value="" data-i18n="filterModelAll">所有模型</option>
                 </select>
                 <select id="filter-provider" class="input w-36" onchange="resetSessionsAndLoad()">
-                    <option value="" data-i18n="filterProviderAll">All Providers</option>
+                    <option value="" data-i18n="filterProviderAll">所有提供商</option>
                 </select>
                 <select id="sort-by" class="input w-36" onchange="resetSessionsAndLoad()">
-                    <option value="created_at_ms" data-i18n="created">Created</option>
-                    <option value="updated_at" data-i18n="updated">Updated</option>
-                    <option value="tokens_used" data-i18n="tokensUsed">Tokens</option>
-                    <option value="title" data-i18n="title">Title</option>
+                    <option value="created_at_ms" data-i18n="created">创建时间</option>
+                    <option value="updated_at" data-i18n="updated">更新时间</option>
+                    <option value="tokens_used" data-i18n="tokensUsed">已用 Token</option>
+                    <option value="title" data-i18n="title">标题</option>
                 </select>
-                <button onclick="loadSessions()" class="btn btn-primary" data-i18n="refresh">Refresh</button>
+                <button onclick="loadSessions()" class="btn btn-primary" data-i18n="refresh">刷新</button>
             </div>
             <!-- Session Table -->
             <div class="card overflow-hidden">
@@ -355,17 +355,17 @@
                     <table class="w-full text-sm">
                         <thead>
                             <tr class="text-dark-400 border-b border-dark-700 bg-dark-800/50">
-                                <th class="text-left py-3 px-4" data-i18n="title">Title</th>
-                                <th class="text-left py-3 px-4" data-i18n="model">Model</th>
-                                <th class="text-left py-3 px-4" data-i18n="provider">Provider</th>
-                                <th class="text-right py-3 px-4" data-i18n="tokensUsed">Tokens</th>
-                                <th class="text-left py-3 px-4" data-i18n="date">Date</th>
-                                <th class="text-center py-3 px-4" data-i18n="status">Status</th>
-                                <th class="text-center py-3 px-4" data-i18n="actions">Actions</th>
+                                <th class="text-left py-3 px-4" data-i18n="title">标题</th>
+                                <th class="text-left py-3 px-4" data-i18n="model">模型</th>
+                                <th class="text-left py-3 px-4" data-i18n="provider">提供商</th>
+                                <th class="text-right py-3 px-4" data-i18n="tokensUsed">已用 Token</th>
+                                <th class="text-left py-3 px-4" data-i18n="date">日期</th>
+                                <th class="text-center py-3 px-4" data-i18n="status">状态</th>
+                                <th class="text-center py-3 px-4" data-i18n="actions">操作</th>
                             </tr>
                         </thead>
                         <tbody id="sessions-table-body">
-                            <tr><td colspan="7" class="text-center py-8 text-dark-400" data-i18n="loading">Loading...</td></tr>
+                            <tr><td colspan="7" class="text-center py-8 text-dark-400" data-i18n="loading">加载中...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -374,8 +374,8 @@
             <div class="flex items-center justify-between">
                 <span id="sessions-info" class="text-sm text-dark-400"></span>
                 <div class="flex gap-2">
-                    <button id="btn-prev-page" onclick="prevPage()" class="btn btn-secondary" disabled data-i18n="prevPage">Previous</button>
-                    <button id="btn-next-page" onclick="nextPage()" class="btn btn-secondary" data-i18n="nextPage">Next</button>
+                    <button id="btn-prev-page" onclick="prevPage()" class="btn btn-secondary" disabled data-i18n="prevPage">上一页</button>
+                    <button id="btn-next-page" onclick="nextPage()" class="btn btn-secondary" data-i18n="nextPage">下一页</button>
                 </div>
             </div>
             <!-- Session Detail Modal -->
@@ -388,9 +388,9 @@
                         </button>
                     </div>
                     <div class="flex flex-wrap gap-2 mb-4">
-                        <button onclick="exportCurrentSession('md')" class="btn btn-secondary text-xs" data-i18n="exportMarkdown">瀵煎嚭 Markdown</button>
-                        <button onclick="exportCurrentSession('txt')" class="btn btn-secondary text-xs" data-i18n="exportText">瀵煎嚭 Text</button>
-                        <button onclick="exportCurrentSession('json')" class="btn btn-secondary text-xs" data-i18n="exportJson">瀵煎嚭鏁版嵁鏂囦欢</button>
+                        <button onclick="exportCurrentSession('md')" class="btn btn-secondary text-xs" data-i18n="exportMarkdown">导出 Markdown</button>
+                        <button onclick="exportCurrentSession('txt')" class="btn btn-secondary text-xs" data-i18n="exportText">导出 Text</button>
+                        <button onclick="exportCurrentSession('json')" class="btn btn-secondary text-xs" data-i18n="exportJson">导出数据文件</button>
                     </div>
                     <div id="detail-meta" class="flex flex-wrap gap-2 mb-4 text-xs text-dark-400"></div>
                     <div id="detail-messages" class="space-y-3 max-h-[60vh] overflow-y-auto pr-2"></div>
@@ -402,62 +402,62 @@
         <div id="page-sync" class="page p-6 space-y-6">
             <!-- Current Config -->
             <div class="card">
-                <h3 class="card-title" data-i18n="currentConfig">Current Config</h3>
+                <h3 class="card-title" data-i18n="currentConfig">当前设置</h3>
                 <div class="grid grid-cols-2 gap-4 mt-3">
                     <div>
-                        <div class="text-xs text-dark-400 mb-1" data-i18n="modelProvider">妯″瀷鎻愪緵鍟</div>
+                        <div class="text-xs text-dark-400 mb-1" data-i18n="modelProvider">模型提供商</div>
                         <div id="sync-current-provider" class="text-sm font-mono text-accent-400">-</div>
                     </div>
                     <div>
-                        <div class="text-xs text-dark-400 mb-1" data-i18n="modelLabel">妯″瀷</div>
+                        <div class="text-xs text-dark-400 mb-1" data-i18n="modelLabel">模型</div>
                         <div id="sync-current-model" class="text-sm font-mono text-accent-400">-</div>
                     </div>
                 </div>
             </div>
             <!-- Historical usage sources -->
             <div class="card">
-                <h3 class="card-title" data-i18n="dbProviderDist">鍘嗗彶鐢ㄩ噺鏉ユ簮</h3>
+                <h3 class="card-title" data-i18n="dbProviderDist">历史用量来源</h3>
                 <div id="sync-provider-dist" class="mt-3 space-y-2"></div>
             </div>
             <!-- Codex Process -->
             <div class="card">
-                <h3 class="card-title" data-i18n="codexStatus">Codex Process</h3>
+                <h3 class="card-title" data-i18n="codexStatus">Codex 运行状态</h3>
                 <div class="flex items-center gap-4 mt-3">
                     <div id="sync-codex-status" class="flex items-center gap-2">
                         <span class="status-dot bg-dark-500"></span>
-                        <span class="text-sm" data-i18n="loading">Checking...</span>
+                        <span class="text-sm" data-i18n="loading">加载中...</span>
                     </div>
-                    <button onclick="checkCodexStatus()" class="btn btn-secondary text-xs" data-i18n="checkStatus">Refresh</button>
-                    <button onclick="killCodex()" class="btn btn-danger text-xs" data-i18n="killCodex">Kill Codex</button>
+                    <button onclick="checkCodexStatus()" class="btn btn-secondary text-xs" data-i18n="checkStatus">刷新状态</button>
+                    <button onclick="killCodex()" class="btn btn-danger text-xs" data-i18n="killCodex">关闭 Codex</button>
                 </div>
             </div>
             <!-- Sync Target -->
             <div class="card">
-                <h3 class="card-title" data-i18n="syncTarget">Sync Target</h3>
+                <h3 class="card-title" data-i18n="syncTarget">同步目标</h3>
                 <div class="grid grid-cols-2 gap-4 mt-3">
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="targetProvider">鐩爣渚涘簲鍟嗭紙鐣欑┖鍒欎娇鐢ㄥ綋鍓嶈缃級</label>
+                        <label class="text-xs text-dark-400" data-i18n="targetProvider">目标供应商（留空则使用当前设置）</label>
                         <input id="sync-target-provider" type="text" class="input mt-1" placeholder="e.g. custom">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="targetModel">鐩爣妯″瀷锛堢暀绌哄垯浣跨敤褰撳墠璁剧疆锛</label>
+                        <label class="text-xs text-dark-400" data-i18n="targetModel">目标模型（留空则使用当前设置）</label>
                         <input id="sync-target-model" type="text" class="input mt-1" placeholder="e.g. gpt-5">
                     </div>
                 </div>
             </div>
             <!-- Actions -->
             <div class="flex flex-wrap items-center gap-3">
-                <button onclick="syncPreview()" class="btn btn-secondary" data-i18n="previewDryRun">棰勮</button>
-                <button onclick="syncExecute()" class="btn btn-warning" data-i18n="executeSync">Execute Sync</button>
-                <button onclick="oneClickSyncRestart()" class="btn btn-primary" data-i18n="oneClickSyncRestartBtn">One-Click Sync + Restart</button>
+                <button onclick="syncPreview()" class="btn btn-secondary" data-i18n="previewDryRun">检查会改哪些记录</button>
+                <button onclick="syncExecute()" class="btn btn-warning" data-i18n="executeSync">开始同步</button>
+                <button onclick="oneClickSyncRestart()" class="btn btn-primary" data-i18n="oneClickSyncRestartBtn">一键同步 + 重启</button>
                 <label class="flex items-center gap-2 text-sm cursor-pointer text-dark-300">
                     <input id="sync-backup-before" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                    <span data-i18n="backupBeforeSync">鍚屾鍓嶅浠</span>
+                    <span data-i18n="backupBeforeSync">同步前备份</span>
                 </label>
             </div>
             <!-- Sync Result -->
             <div id="sync-result" class="card hidden">
-                <h3 class="card-title" data-i18n="reportTitle">Result</h3>
+                <h3 class="card-title" data-i18n="reportTitle">用量追踪报告</h3>
                 <pre id="sync-result-text" class="mt-3 text-sm font-mono text-dark-200 bg-dark-950 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap"></pre>
             </div>
         </div>
@@ -465,25 +465,25 @@
         <!-- Backup Page -->
         <div id="page-backup" class="page p-6 space-y-4">
             <div class="flex flex-wrap gap-3 items-center">
-                <button onclick="createFullBackup()" class="btn btn-primary" data-i18n="createBackup">Full Backup</button>
-                <button onclick="createIncrementalBackup()" class="btn btn-secondary" data-i18n="incrementalBackup">Incremental Backup</button>
-                <button onclick="pruneBackups()" class="btn btn-warning" data-i18n="cleanOldBackups">Clean Old Backups</button>
-                <button onclick="loadBackups()" class="btn btn-ghost" data-i18n="refresh">Refresh</button>
+                <button onclick="createFullBackup()" class="btn btn-primary" data-i18n="createBackup">创建备份</button>
+                <button onclick="createIncrementalBackup()" class="btn btn-secondary" data-i18n="incrementalBackup">增量备份</button>
+                <button onclick="pruneBackups()" class="btn btn-warning" data-i18n="cleanOldBackups">清理旧备份</button>
+                <button onclick="loadBackups()" class="btn btn-ghost" data-i18n="refresh">刷新</button>
             </div>
             <div id="backup-info" class="text-sm text-dark-400"></div>
             <div class="card overflow-hidden">
                 <table class="w-full text-sm">
                     <thead>
                         <tr class="text-dark-400 border-b border-dark-700 bg-dark-800/50">
-                            <th class="text-left py-3 px-4" data-i18n="name">Name</th>
-                            <th class="text-right py-3 px-4" data-i18n="backupSize">Size (MB)</th>
-                            <th class="text-left py-3 px-4" data-i18n="backupTime">Time</th>
-                            <th class="text-left py-3 px-4" data-i18n="backupType">Type</th>
-                            <th class="text-center py-3 px-4" data-i18n="actions">Actions</th>
+                            <th class="text-left py-3 px-4" data-i18n="name">名称</th>
+                            <th class="text-right py-3 px-4" data-i18n="backupSize">大小</th>
+                            <th class="text-left py-3 px-4" data-i18n="backupTime">时间</th>
+                            <th class="text-left py-3 px-4" data-i18n="backupType">类型</th>
+                            <th class="text-center py-3 px-4" data-i18n="actions">操作</th>
                         </tr>
                     </thead>
                     <tbody id="backups-table-body">
-                        <tr><td colspan="5" class="text-center py-8 text-dark-400" data-i18n="loading">Loading...</td></tr>
+                        <tr><td colspan="5" class="text-center py-8 text-dark-400" data-i18n="loading">加载中...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -499,55 +499,55 @@
             <div class="card settings-wizard-shell">
                 <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
                     <div>
-                        <p class="text-xs font-semibold uppercase tracking-[0.18em] text-accent-300" data-i18n="settingsWizardKicker">璁剧疆鍚戝</p>
-                        <h2 class="text-2xl font-bold text-white mt-1" data-i18n="settingsWizardTitle">鎸夋楠ゅ畬鎴愯缃</h2>
-                        <p class="text-sm text-dark-400 mt-2 max-w-2xl" data-i18n="settingsWizardDesc">浠庤嚜鍔ㄦ娴嬪紑濮嬶紝渚濇琛ヨ矾寰勩€佷緵搴斿晢銆佽矾鐢便€佸浘鐗囧厹搴曘€佺敤閲忔彁閱掑拰鍚姩閫夐」锛涗互鍚庝篃鑳界洿鎺ュ洖鏉ヤ慨鏀逛换涓€姝ャ€</p>
+                        <p class="text-xs font-semibold uppercase tracking-[0.18em] text-accent-300" data-i18n="settingsWizardKicker">设置向导</p>
+                        <h2 class="text-2xl font-bold text-white mt-1" data-i18n="settingsWizardTitle">按步骤完成设置</h2>
+                        <p class="text-sm text-dark-400 mt-2 max-w-2xl" data-i18n="settingsWizardDesc">从自动检测开始，依次补路径、供应商、路由、图片兜底、用量提醒和启动选项；以后也能直接回来修改任一步。</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="saveSettings()" class="btn btn-primary" data-i18n="saveSettings">淇濆瓨璁剧疆</button>
-                        <button onclick="resetSettings()" class="btn btn-danger" data-i18n="resetDefaults">鎭㈠榛樿</button>
+                        <button onclick="saveSettings()" class="btn btn-primary" data-i18n="saveSettings">保存设置</button>
+                        <button onclick="resetSettings()" class="btn btn-danger" data-i18n="resetDefaults">恢复默认</button>
                     </div>
                 </div>
                 <div id="settings-wizard-steps" class="settings-wizard-steps mt-5" aria-label="Settings wizard steps">
                     <button type="button" class="settings-wizard-step active" data-settings-step-button="0" onclick="showSettingsWizardStep(0)">
                         <span class="settings-wizard-index">1</span>
-                        <span data-i18n="settingsWizardDetect">鑷姩妫€娴</span>
+                        <span data-i18n="settingsWizardDetect">自动检测</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="1" onclick="showSettingsWizardStep(1)">
                         <span class="settings-wizard-index">2</span>
-                        <span data-i18n="settingsWizardBasics">璺緞涓庡亸濂</span>
+                        <span data-i18n="settingsWizardBasics">路径与偏好</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="2" onclick="showSettingsWizardStep(2)">
                         <span class="settings-wizard-index">3</span>
-                        <span data-i18n="settingsWizardProviders">渚涘簲鍟嗕笌妯″瀷</span>
+                        <span data-i18n="settingsWizardProviders">供应商与模型</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="3" onclick="showSettingsWizardStep(3)">
                         <span class="settings-wizard-index">4</span>
-                        <span data-i18n="settingsWizardRouting">璺敱涓庡獟浣</span>
+                        <span data-i18n="settingsWizardRouting">路由与媒体</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="4" onclick="showSettingsWizardStep(4)">
                         <span class="settings-wizard-index">5</span>
-                        <span data-i18n="settingsWizardCost">鐢ㄩ噺涓庢彁閱</span>
+                        <span data-i18n="settingsWizardCost">用量与提醒</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="5" onclick="showSettingsWizardStep(5)">
                         <span class="settings-wizard-index">6</span>
-                        <span data-i18n="settingsWizardStartup">鍚姩涓庡鎵</span>
+                        <span data-i18n="settingsWizardStartup">启动与审批</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="6" onclick="showSettingsWizardStep(6)">
                         <span class="settings-wizard-index">7</span>
-                        <span data-i18n="settingsWizardCleanup">鏁寸悊涓庢潵婧</span>
+                        <span data-i18n="settingsWizardCleanup">整理与来源</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="7" onclick="showSettingsWizardStep(7)">
                         <span class="settings-wizard-index">8</span>
-                        <span data-i18n="settingsWizardFinishStep">淇濆瓨妫€鏌</span>
+                        <span data-i18n="settingsWizardFinishStep">保存检查</span>
                     </button>
                 </div>
                 <div class="settings-wizard-toolbar mt-5">
                     <div>
                         <div id="settings-wizard-progress" class="text-sm font-semibold text-dark-100">1 / 8</div>
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="settingsWizardChecklistDesc">鎸夐『搴忓畬鎴愶紝涔熷彲浠ョ洿鎺ヨ烦鍒伴渶瑕佷慨鏀圭殑姝ラ銆</p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="settingsWizardChecklistDesc">按顺序完成，也可以直接跳到需要修改的步骤。</p>
                     </div>
-                    <button type="button" onclick="fillSettingsWizardDefaults()" class="btn btn-secondary text-xs" data-i18n="wizardFillDefaults">濉叆鎺ㄨ崘榛樿鍊</button>
+                    <button type="button" onclick="fillSettingsWizardDefaults()" class="btn btn-secondary text-xs" data-i18n="wizardFillDefaults">填入推荐默认值</button>
                 </div>
                 <div class="settings-wizard-current mt-4">
                     <div class="settings-wizard-progress-track" aria-hidden="true">
@@ -566,87 +566,87 @@
             </div>
 
             <div class="card settings-step-panel active" data-settings-step-panel="0">
-                <h3 class="card-title" data-i18n="autoDetectedPaths">Auto-Detected Paths</h3>
+                <h3 class="card-title" data-i18n="autoDetectedPaths">自动检测路径</h3>
                 <div class="mt-3">
-                    <button onclick="runAutoDetect()" class="btn btn-secondary mb-4" data-i18n="reDetect">Re-Detect All Paths</button>
+                    <button onclick="runAutoDetect()" class="btn btn-secondary mb-4" data-i18n="reDetect">重新检测</button>
                     <div id="detect-results" class="space-y-3"></div>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="1">
-                <h3 class="card-title" data-i18n="configuration">鍩虹璁剧疆</h3>
+                <h3 class="card-title" data-i18n="configuration">基础设置</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="dbPath">鏁版嵁鏂囦欢璺緞</label>
+                        <label class="text-xs text-dark-400" data-i18n="dbPath">本地数据位置</label>
                         <input id="setting-db-path" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="sessionsDir">Sessions Dir</label>
+                        <label class="text-xs text-dark-400" data-i18n="sessionsDir">会话保存位置</label>
                         <input id="setting-sessions-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="archivedDir">Archived Dir</label>
+                        <label class="text-xs text-dark-400" data-i18n="archivedDir">归档保存位置</label>
                         <input id="setting-archived-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="backupDir">Backup Dir</label>
+                        <label class="text-xs text-dark-400" data-i18n="backupDir">备份保存位置</label>
                         <input id="setting-backup-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="codexCliPath">Codex CLI Path</label>
+                        <label class="text-xs text-dark-400" data-i18n="codexCliPath">Codex 启动位置</label>
                         <input id="setting-codex-cli" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="codexPPPath">Enhanced Launcher Path</label>
+                        <label class="text-xs text-dark-400" data-i18n="codexPPPath">增强启动器路径</label>
                         <input id="setting-codex-pp" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="ccSwitchDbPath">鏈湴澶嶇敤璁板綍浣嶇疆锛堝彲閫夛級</label>
+                        <label class="text-xs text-dark-400" data-i18n="ccSwitchDbPath">本地缓存记录路径（可选）</label>
                         <input id="setting-cc-switch-db" type="text" class="input mt-1" placeholder="鏈湴澶嶇敤璁板綍浣嶇疆" data-i18n-placeholder="ccSwitchDbPlaceholder">
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">鐢ㄤ簬琛ュ厖澶嶇敤鑺傜渷缁熻锛涚暀绌轰篃涓嶅奖鍝嶅熀纭€鐢ㄩ噺缁熻銆</p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">用于补充缓存节省统计；留空也不影响基础用量统计。</p>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="providerStorePath">渚涘簲鍟嗕繚瀛樹綅缃</label>
+                        <label class="text-xs text-dark-400" data-i18n="providerStorePath">供应商保存位置</label>
                         <input id="setting-provider-store-path" type="text" class="input mt-1">
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="providerStoreDesc">鍙繚瀛樻湰搴旂敤鐨勪緵搴斿晢璁剧疆锛屼笉浼氱洿鎺ユ敼鍔?Codex 鐧诲綍淇℃伅銆</p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="providerStoreDesc">只保存本应用的供应商设置，不会直接改动 Codex 登录信息。</p>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="tempDir">涓存椂鏂囦欢浣嶇疆</label>
+                        <label class="text-xs text-dark-400" data-i18n="tempDir">临时文件位置</label>
                         <input id="setting-temp-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="diagnosticsDir">妫€鏌ユ枃浠朵綅缃</label>
+                        <label class="text-xs text-dark-400" data-i18n="diagnosticsDir">检查文件位置</label>
                         <input id="setting-diagnostics-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="exportsDir">瀵煎嚭淇濆瓨浣嶇疆</label>
+                        <label class="text-xs text-dark-400" data-i18n="exportsDir">导出保存位置</label>
                         <input id="setting-exports-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="requestLogPath">浣跨敤璁板綍浣嶇疆</label>
+                        <label class="text-xs text-dark-400" data-i18n="requestLogPath">使用记录位置</label>
                         <input id="setting-request-log-path" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="requestLogRetentionDays">璁板綍淇濈暀澶╂暟</label>
+                        <label class="text-xs text-dark-400" data-i18n="requestLogRetentionDays">记录保留天数</label>
                         <input id="setting-request-log-retention-days" type="number" min="1" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="requestLogMaxMb">璁板綍鏈€澶уぇ灏忥紙MB锛</label>
+                        <label class="text-xs text-dark-400" data-i18n="requestLogMaxMb">记录最大大小（MB）</label>
                         <input id="setting-request-log-max-mb" type="number" min="1" step="1" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="proxyUpstreamTimeout">渚涘簲鍟嗗搷搴旇秴鏃</label>
+                        <label class="text-xs text-dark-400" data-i18n="proxyUpstreamTimeout">供应商响应超时</label>
                         <input id="setting-proxy-upstream-timeout" type="number" min="1" max="3600" step="1" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="proxyRetryAttempts">澶辫触閲嶈瘯娆℃暟</label>
+                        <label class="text-xs text-dark-400" data-i18n="proxyRetryAttempts">失败重试次数</label>
                         <input id="setting-proxy-retry-attempts" type="number" min="0" max="5" step="1" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="proxyRetryBackoffMs">閲嶈瘯绛夊緟鏃堕棿</label>
+                        <label class="text-xs text-dark-400" data-i18n="proxyRetryBackoffMs">重试等待时间</label>
                         <input id="setting-proxy-retry-backoff-ms" type="number" min="0" max="30000" step="50" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="themePreset">Theme Preset</label>
+                        <label class="text-xs text-dark-400" data-i18n="themePreset">主题预设</label>
                         <select id="setting-theme-preset" class="input mt-1 w-full">
                             <option value="dark">Dark</option>
                             <option value="midnight">Midnight</option>
@@ -661,339 +661,339 @@
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="customAccent">Custom Accent</label>
+                        <label class="text-xs text-dark-400" data-i18n="customAccent">自定义强调色</label>
                         <input id="setting-theme-accent" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="customDeep">Custom Deep</label>
+                        <label class="text-xs text-dark-400" data-i18n="customDeep">自定义深色底色</label>
                         <input id="setting-theme-deep" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="customBackground">Custom Background</label>
+                        <label class="text-xs text-dark-400" data-i18n="customBackground">自定义背景</label>
                         <input id="setting-theme-background" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="customElevated">Custom Elevated</label>
+                        <label class="text-xs text-dark-400" data-i18n="customElevated">自定义浮层</label>
                         <input id="setting-theme-elevated" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="customSurface">Custom Surface</label>
+                        <label class="text-xs text-dark-400" data-i18n="customSurface">自定义表面</label>
                         <input id="setting-theme-surface" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="customBorder">Custom Border</label>
+                        <label class="text-xs text-dark-400" data-i18n="customBorder">自定义边框</label>
                         <input id="setting-theme-border" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="textPrimary">Text Primary</label>
+                        <label class="text-xs text-dark-400" data-i18n="textPrimary">主文字</label>
                         <input id="setting-theme-text-primary" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="textSecondary">Text Secondary</label>
+                        <label class="text-xs text-dark-400" data-i18n="textSecondary">次级文字</label>
                         <input id="setting-theme-text-secondary" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="textMuted">Text Muted</label>
+                        <label class="text-xs text-dark-400" data-i18n="textMuted">弱化文字</label>
                         <input id="setting-theme-text-muted" type="color" class="input mt-1 w-full h-10">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="pageSize">Page Size</label>
+                        <label class="text-xs text-dark-400" data-i18n="pageSize">每页条数</label>
                         <input id="setting-page-size" type="number" class="input mt-1" min="10" max="200">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="backupInterval">Backup Interval (hours)</label>
+                        <label class="text-xs text-dark-400" data-i18n="backupInterval">备份间隔（小时）</label>
                         <input id="setting-backup-interval" type="number" class="input mt-1" min="1" max="168">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="maxBackups">Max Backups</label>
+                        <label class="text-xs text-dark-400" data-i18n="maxBackups">最大备份数</label>
                         <input id="setting-max-backups" type="number" class="input mt-1" min="1" max="100">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="largeFileThreshold">Large File Threshold (MB)</label>
+                        <label class="text-xs text-dark-400" data-i18n="largeFileThreshold">大文件阈值（MB）</label>
                         <input id="setting-large-threshold" type="number" class="input mt-1" min="100">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="maxMessages">Max Messages (Large Files)</label>
+                        <label class="text-xs text-dark-400" data-i18n="maxMessages">大文件最大消息数</label>
                         <input id="setting-max-lines" type="number" class="input mt-1" min="100">
                     </div>
                 </div>
                 <div class="flex items-center gap-4 mt-4">
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-auto-backup" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="autoBackup">Auto Backup</span>
+                        <span data-i18n="autoBackup">自动备份</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-use-codex-pp" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="useCodexPPSetting">Use Enhanced Launcher</span>
+                        <span data-i18n="useCodexPPSetting">使用增强启动器</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-codex-goals-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="codexGoalsEnabled">Codex 鐩爣</span>
+                        <span data-i18n="codexGoalsEnabled">Codex 目标</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-dark-mode" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="darkMode">Dark Mode</span>
+                        <span data-i18n="darkMode">暗色模式</span>
                     </label>
                 </div>
-                <p class="text-xs text-dark-500 mt-2" data-i18n="codexGoalsEnabledDesc">鍚敤 Codex 瀹樻柟 Goal mode锛涗繚瀛樺悗鍚屾鍒?config.toml 鐨?features.goals銆</p>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="codexGoalsEnabledDesc">启用 Codex 官方 Goal mode；保存后会同步写入 config.toml 的 features.goals。</p>
                 <div class="mt-4 flex flex-wrap gap-2">
-                    <button onclick="exportTheme()" class="btn btn-secondary text-xs" data-i18n="exportTheme">Export Theme</button>
-                    <button onclick="document.getElementById('theme-import-file').click()" class="btn btn-secondary text-xs" data-i18n="importTheme">Import Theme</button>
+                    <button onclick="exportTheme()" class="btn btn-secondary text-xs" data-i18n="exportTheme">导出主题</button>
+                    <button onclick="document.getElementById('theme-import-file').click()" class="btn btn-secondary text-xs" data-i18n="importTheme">导入主题</button>
                     <input id="theme-import-file" type="file" accept="application/json,.json" class="hidden" onchange="importThemeFromFile(this)">
                 </div>
                 <div class="mt-4">
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-desktop-monitor-enabled" type="checkbox" checked class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="desktopMonitorEnabled">鍚姩鏃舵樉绀烘闈㈡偓娴獥</span>
+                        <span data-i18n="desktopMonitorEnabled">启动时显示桌面悬浮窗</span>
                     </label>
-                    <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorEnabledDesc">妗岄潰鐗堝惎鍔ㄥ悗鑷姩鏄剧ず Token 鎮诞绐楋紱浠嶅彲閫氳繃鎵樼洏鎴栧彸閿彍鍗曢殣钘忋€</p>
+                    <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorEnabledDesc">桌面版启动后自动显示 Token 悬浮窗；仍可通过托盘或右键菜单隐藏。</p>
                     <div class="mt-3 max-w-md">
                         <div class="flex items-center justify-between gap-3">
-                            <label for="setting-desktop-monitor-opacity" class="text-xs text-dark-400" data-i18n="desktopMonitorOpacity">鎮诞绐椾笉閫忔槑搴</label>
+                            <label for="setting-desktop-monitor-opacity" class="text-xs text-dark-400" data-i18n="desktopMonitorOpacity">悬浮窗不透明度</label>
                             <span id="setting-desktop-monitor-opacity-label" class="text-xs font-semibold text-accent-200">88%</span>
                         </div>
                         <input id="setting-desktop-monitor-opacity" type="range" min="35" max="100" step="1" value="88" oninput="syncMonitorOpacityLabel()" class="w-full mt-2 accent-blue-500">
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorOpacityDesc">鏁板€艰秺浣庤秺閫忔槑锛涗繚瀛樺悗鎮诞绐椾細鑷姩搴旂敤銆</p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorOpacityDesc">数值越低越透明；保存后悬浮窗会自动应用。</p>
                     </div>
                     <div class="flex flex-wrap gap-2 mt-3">
-                        <button onclick="showDesktopTokenMonitor()" class="btn btn-primary text-xs" data-i18n="showFloatingMonitorNow">绔嬪嵆鏄剧ず鎮诞绐</button>
-                        <button onclick="startCodexFromQuickAction()" class="btn btn-secondary text-xs" data-i18n="startCodex">鍚姩 Codex</button>
+                        <button onclick="showDesktopTokenMonitor()" class="btn btn-primary text-xs" data-i18n="showFloatingMonitorNow">立即显示悬浮窗</button>
+                        <button onclick="startCodexFromQuickAction()" class="btn btn-secondary text-xs" data-i18n="startCodex">启动 Codex</button>
                     </div>
-                    <div class="text-xs text-dark-400 mt-4 mb-2" data-i18n="floatingMonitorFields">Floating Monitor Fields</div>
+                    <div class="text-xs text-dark-400 mt-4 mb-2" data-i18n="floatingMonitorFields">悬浮窗字段</div>
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-tokens" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorTokens">Tokens</span></label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-progress" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorProgress">Progress</span></label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-threshold" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorThreshold">Threshold</span></label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-speed" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorSpeed">閫熷害</span></label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-cache" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorCache">澶嶇敤鑺傜渷</span></label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-context" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorContextWindow">Context Window</span></label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-updated" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorUpdatedTime">Updated Time</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-tokens" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorTokens">Token</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-progress" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorProgress">进度</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-threshold" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorThreshold">阈值</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-speed" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorSpeed">速度</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-cache" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorCache">复用节省</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-context" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorContextWindow">上下文长度</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer"><input id="monitor-field-updated" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"><span data-i18n="monitorUpdatedTime">更新时间</span></label>
                     </div>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="2">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
-                        <h3 class="card-title" data-i18n="wizardProviderGuideTitle">娣诲姞渚涘簲鍟嗗拰妯″瀷</h3>
-                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardProviderGuideDesc">鍏堝鍏ヤ竴涓璁撅紝鍐嶈ˉ渚涘簲鍟嗗湴鍧€銆佸瘑閽ュ拰妯″瀷銆備竴涓緵搴斿晢鍙互鏀惧涓笉鍚岃兘鍔涚殑妯″瀷銆</p>
+                        <h3 class="card-title" data-i18n="wizardProviderGuideTitle">添加供应商和模型</h3>
+                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardProviderGuideDesc">先导入一个预设，再补供应商地址、密钥和模型。一个供应商可以放多个不同能力的模型。</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="navigateTo('quick-setup')" class="btn btn-primary text-xs" data-i18n="wizardProviderGuidePrimary">鎵撳紑蹇€熻缃</button>
-                        <button onclick="navigateTo('providers')" class="btn btn-secondary text-xs" data-i18n="wizardProviderGuideSecondary">绠＄悊渚涘簲鍟</button>
+                        <button onclick="navigateTo('quick-setup')" class="btn btn-primary text-xs" data-i18n="wizardProviderGuidePrimary">打开快速设置</button>
+                        <button onclick="navigateTo('providers')" class="btn btn-secondary text-xs" data-i18n="wizardProviderGuideSecondary">管理供应商</button>
                     </div>
                 </div>
                 <div id="settings-provider-wizard-summary" class="mt-5"></div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointDefaults">缂哄皯绔彛銆佽闂爣璇嗐€佽秴鏃剁瓑淇℃伅鏃讹紝浼氫紭鍏堜娇鐢ㄥ畨鍏ㄩ粯璁ゅ€笺€</div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointModels">姣忎釜妯″瀷閮藉彲浠ュ崟鐙缃笂涓嬫枃銆佹帴鍙ｃ€佸浘鐗囪兘鍔涘拰鎺ㄧ悊娣卞害绛栫暐銆</div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointLater">浠ュ悗淇敼鏃剁洿鎺ュ洖鍒颁緵搴斿晢椤碉紝涓嶉渶瑕侀噸璺戞暣涓悜瀵笺€</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointDefaults">缺少端口、访问标识、超时等信息时，会优先使用安全默认值。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointModels">每个模型都可以单独设置上下文、接口、图片能力和推理深度策略。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointLater">以后修改时直接回到供应商页，不需要重跑整个向导。</div>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="3">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
-                        <h3 class="card-title" data-i18n="wizardRoutingGuideTitle">璁剧疆璺敱鍜屽浘鐗囧厹搴</h3>
-                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardRoutingGuideDesc">鍚庡彴璋冩暣妯″瀷椤哄簭鍚庯紝浼氬湪褰撳墠浼氳瘽缁撴潫鍚庡垏鍒版柊鐨勯€夋嫨锛涘浘鐗囧彲鎸囧畾鍏ㄥ眬鍏滃簳渚涘簲鍟嗐€</p>
+                        <h3 class="card-title" data-i18n="wizardRoutingGuideTitle">设置路由和图片兜底</h3>
+                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardRoutingGuideDesc">后台调整模型顺序后，会在当前会话结束后切到新的选择；图片可指定全局兜底供应商。</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="navigateTo('providers')" class="btn btn-primary text-xs" data-i18n="wizardProviderGuideSecondary">绠＄悊渚涘簲鍟</button>
-                        <button onclick="navigateTo('diagnostics')" class="btn btn-secondary text-xs" data-i18n="navDiagnostics">妫€鏌ヤ笌鎭㈠</button>
+                        <button onclick="navigateTo('providers')" class="btn btn-primary text-xs" data-i18n="wizardProviderGuideSecondary">管理供应商</button>
+                        <button onclick="navigateTo('diagnostics')" class="btn btn-secondary text-xs" data-i18n="navDiagnostics">检查与恢复</button>
                     </div>
                 </div>
                 <div id="settings-routing-wizard-summary" class="mt-5"></div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointOrder">鏅鸿兘璺敱鎸夊綋鍓嶉『搴忛€夋嫨锛屽仴搴风姸鎬佸紓甯告椂浼氫紭鍏堥伩寮€銆</div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointMedia">绾枃鏈唬鐞嗕笉浼氳鏍囨垚鈥滃叏閮ㄤ笉鏀寔鈥濓紝鑰屾槸鎻愮ず閰嶇疆濯掍綋渚涘簲鍟嗐€</div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointNative">绾師鐢熶唬鐞嗚纭鍥剧墖鎺ュ彛鏄惁涔熺粡杩囧悓涓€涓緵搴斿晢鍦板潃銆</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointOrder">智能路由按当前顺序选择，健康状态异常时会优先避开。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointMedia">纯文本代理不会被标成“全部不支持”，而是提示配置媒体供应商。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointNative">纯原生代理要确认图片接口是否也经过同一个供应商地址。</div>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="4">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h3 class="card-title" data-i18n="costCurrencyTitle">Cost & Currency</h3>
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="costCurrencyDesc">鍙墜鍔ㄨ缃眹鐜囷紱鍦ㄧ嚎姹囩巼鏆傛椂鍏抽棴锛岄伩鍏嶄笉纭畾缁撴灉銆</p>
+                        <h3 class="card-title" data-i18n="costCurrencyTitle">费用与币种</h3>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="costCurrencyDesc">可手动设置汇率；在线汇率暂时关闭，避免不确定结果。</p>
                     </div>
-                    <button onclick="saveCurrencySettings()" class="btn btn-secondary text-xs" data-i18n="saveCurrency">Save Currency</button>
+                    <button onclick="saveCurrencySettings()" class="btn btn-secondary text-xs" data-i18n="saveCurrency">保存币种</button>
                 </div>
                 <div class="mt-5 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4">
-                    <h4 class="text-sm font-semibold text-amber-100" data-i18n="wizardAlertsGuideTitle">鐢ㄩ噺銆侀搴﹀拰浣欓鎻愰啋</h4>
-                    <p class="text-sm text-amber-100/80 mt-2" data-i18n="wizardAlertsGuideDesc">Token 鐢ㄩ噺浠?Codex 杈撳嚭璁板綍涓哄噯锛涢搴﹀拰浣欓鍙湁鍦ㄨ兘纭鏉ユ簮鏃舵墠寮€鍚€</p>
+                    <h4 class="text-sm font-semibold text-amber-100" data-i18n="wizardAlertsGuideTitle">用量、额度和余额提醒</h4>
+                    <p class="text-sm text-amber-100/80 mt-2" data-i18n="wizardAlertsGuideDesc">Token 用量以 Codex 输出记录为准；额度和余额只有在能确认来源时才开启。</p>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
-                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointUsage">鏈?Codex 浜嬩欢鏃朵紭鍏堜娇鐢ㄤ簨浠讹紱娌℃湁鏃跺彧鏄剧ず鍙‘璁ょ殑鏈湴璁板綍銆</div>
-                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointQuota">棰濆害闇€瑕佸畼鏂规帴鍙ｃ€佸唴缃剼鏈垨浣犲鍏ョ殑鑴氭湰銆</div>
-                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointBalance">浣欓浼樺厛鐢ㄥ畼鏂规墸璐癸紱娌℃湁浠锋牸鏃朵笉浼扮畻璐圭敤銆</div>
+                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointUsage">有 Codex 事件时优先使用事件；没有时只显示可确认的本地记录。</div>
+                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointQuota">额度需要官方接口、内置脚本或你导入的脚本。</div>
+                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointBalance">余额优先用官方扣费；没有价格时不估算费用。</div>
                     </div>
                 </div>
                 <div id="settings-alerts-wizard-summary" class="mt-4"></div>
                 <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 mt-4">
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="displayCurrency">Display Currency</label>
+                        <label class="text-xs text-dark-400" data-i18n="displayCurrency">显示币种</label>
                         <input id="currency-display" class="input mt-1" value="USD" maxlength="3">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="exchangeSource">Exchange Source</label>
+                        <label class="text-xs text-dark-400" data-i18n="exchangeSource">汇率来源</label>
                         <select id="currency-source" class="input mt-1 w-full">
-                            <option value="manual" data-i18n="exchangeSourceManual">Manual</option>
-                            <option value="apiforex" data-i18n="exchangeSourceApiforex">apiforex.cn (disabled until verified)</option>
-                            <option value="disabled" data-i18n="disabled">Disabled</option>
+                            <option value="manual" data-i18n="exchangeSourceManual">手动</option>
+                            <option value="apiforex" data-i18n="exchangeSourceApiforex">apiforex.cn（验证前关闭）</option>
+                            <option value="disabled" data-i18n="disabled">未开启</option>
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="fxApiKey">姹囩巼鏈嶅姟瀵嗛挜</label>
+                        <label class="text-xs text-dark-400" data-i18n="fxApiKey">汇率服务密钥</label>
                         <input id="currency-api-key" type="password" class="input mt-1" placeholder="淇濆瓨鍦ㄦ湰鍦帮紝瀵煎嚭鏃朵細闅愯棌" data-i18n-placeholder="fxApiKeyPlaceholder">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="ttlHours">淇濆瓨灏忔椂鏁</label>
+                        <label class="text-xs text-dark-400" data-i18n="ttlHours">保存小时数</label>
                         <input id="currency-ttl-hours" type="number" class="input mt-1" min="1" value="24">
                     </div>
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="manualFxOverridesJson">鎵嬪姩姹囩巼</label>
+                        <label class="text-xs text-dark-400" data-i18n="manualFxOverridesJson">手动汇率</label>
                         <textarea id="currency-manual-overrides" class="input mt-1 w-full font-mono" rows="7" placeholder='{"USD:CNY": 7.2, "CNY:AUD": 0.21}'></textarea>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="ratePreview">Rate Preview</label>
+                        <label class="text-xs text-dark-400" data-i18n="ratePreview">汇率预览</label>
                         <div class="grid grid-cols-3 gap-2 mt-1">
                             <input id="currency-preview-from" class="input" value="USD" maxlength="3">
                             <input id="currency-preview-to" class="input" value="CNY" maxlength="3">
                             <input id="currency-preview-amount" class="input" type="number" value="1" min="0" step="0.01">
                         </div>
                         <div class="flex flex-wrap gap-2 mt-3">
-                            <button onclick="previewCurrencyRate()" class="btn btn-secondary text-xs" data-i18n="previewRate">Preview Rate</button>
+                            <button onclick="previewCurrencyRate()" class="btn btn-secondary text-xs" data-i18n="previewRate">预览汇率</button>
                         </div>
-                        <pre id="currency-preview-result" class="preview-code mt-3" data-i18n="noPreviewYet">No preview yet.</pre>
+                        <pre id="currency-preview-result" class="preview-code mt-3" data-i18n="noPreviewYet">还没有预览。</pre>
                     </div>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="5">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h3 class="card-title" data-i18n="startupElevation">Startup & Elevation</h3>
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="startupElevationDesc">Windows startup changes require explicit confirmation; preview and status are read-only.</p>
-                        <p class="text-xs text-amber-300 mt-2" data-i18n="startupElevationHelp">鏅€氬紑鏈哄惎鍔ㄤ笉浼氭彁鏉冿紱闇€瑕佺鐞嗗憳鏉冮檺鏃朵細浣跨敤 Windows 浠诲姟璁″垝銆</p>
+                        <h3 class="card-title" data-i18n="startupElevation">开机启动</h3>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="startupElevationDesc">这里可以预览和确认开机启动设置。</p>
+                        <p class="text-xs text-amber-300 mt-2" data-i18n="startupElevationHelp">普通开机启动不会提权；需要管理员权限时会使用 Windows 任务计划。</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="loadStartupStatus()" class="btn btn-secondary text-xs" data-i18n="refreshStatus">Refresh Status</button>
-                        <button onclick="previewStartupSettings()" class="btn btn-secondary text-xs" data-i18n="previewAction">Preview</button>
+                        <button onclick="loadStartupStatus()" class="btn btn-secondary text-xs" data-i18n="refreshStatus">刷新状态</button>
+                        <button onclick="previewStartupSettings()" class="btn btn-secondary text-xs" data-i18n="previewAction">预览</button>
                     </div>
                 </div>
-                <div id="startup-status-strip" class="mt-4 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-2 text-sm text-dark-300" data-i18n="startupStatusNotLoaded">Status not loaded.</div>
+                <div id="startup-status-strip" class="mt-4 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-2 text-sm text-dark-300" data-i18n="startupStatusNotLoaded">还没有加载状态。</div>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="startupMode">Mode</label>
+                        <label class="text-xs text-dark-400" data-i18n="startupMode">模式</label>
                         <select id="setting-startup-mode" class="input mt-1 w-full">
-                            <option value="disabled" data-i18n="startupModeDisabled">Disabled</option>
-                            <option value="startup_folder" data-i18n="startupModeFolder">Startup Folder</option>
-                            <option value="scheduled_task_highest" data-i18n="startupModeScheduled">Task Scheduler: Highest</option>
+                            <option value="disabled" data-i18n="startupModeDisabled">关闭</option>
+                            <option value="startup_folder" data-i18n="startupModeFolder">启动文件夹</option>
+                            <option value="scheduled_task_highest" data-i18n="startupModeScheduled">任务计划：最高权限</option>
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="desktopLaunchAction">Launch behavior</label>
+                        <label class="text-xs text-dark-400" data-i18n="desktopLaunchAction">启动软件时</label>
                         <select id="setting-desktop-launch-action" class="input mt-1 w-full">
-                            <option value="show_window" data-i18n="desktopLaunchShowWindow">Show Manager Window</option>
-                            <option value="start_codex" data-i18n="desktopLaunchStartCodex">Start Codex Directly</option>
+                            <option value="show_window" data-i18n="desktopLaunchShowWindow">打开管理窗口</option>
+                            <option value="start_codex" data-i18n="desktopLaunchStartCodex">直接启动 Codex</option>
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="closeButtonAction">鍏抽棴绐楀彛鏃</label>
+                        <label class="text-xs text-dark-400" data-i18n="closeButtonAction">关闭窗口时</label>
                         <select id="setting-close-button-action" class="input mt-1 w-full">
-                            <option value="ask" data-i18n="closeAction_ask">姣忔璇㈤棶</option>
-                            <option value="exit" data-i18n="closeAction_exit">鐩存帴閫€鍑虹▼搴</option>
-                            <option value="tray" data-i18n="closeAction_tray">缂╁皬鍒版墭鐩</option>
+                            <option value="ask" data-i18n="closeAction_ask">每次询问</option>
+                            <option value="exit" data-i18n="closeAction_exit">直接退出程序</option>
+                            <option value="tray" data-i18n="closeAction_tray">缩小到托盘</option>
                         </select>
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="closeButtonActionDesc">榛樿璇㈤棶鏃讹細鏄€€鍑虹▼搴忥紝鍚︾缉灏忓埌鎵樼洏銆</p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="closeButtonActionDesc">默认询问时：是退出程序，否缩小到托盘。</p>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="taskName">Task Name</label>
+                        <label class="text-xs text-dark-400" data-i18n="taskName">任务名称</label>
                         <input id="setting-startup-task-name" type="text" class="input mt-1" placeholder="CodexEnhanceManager">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="startupFileName">Startup File Name</label>
+                        <label class="text-xs text-dark-400" data-i18n="startupFileName">启动文件名</label>
                         <input id="setting-startup-shortcut-name" type="text" class="input mt-1" placeholder="CodexEnhanceManager.cmd">
                     </div>
                     <div class="lg:col-span-2">
-                        <label class="text-xs text-dark-400" data-i18n="targetPath">Target Path</label>
+                        <label class="text-xs text-dark-400" data-i18n="targetPath">目标路径</label>
                         <input id="setting-startup-target-path" type="text" class="input mt-1" placeholder="Leave empty to use this app" data-i18n-placeholder="targetPathPlaceholder">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="argumentsLabel">Arguments</label>
+                        <label class="text-xs text-dark-400" data-i18n="argumentsLabel">启动参数</label>
                         <input id="setting-startup-arguments" type="text" class="input mt-1" placeholder="Optional" data-i18n-placeholder="optionalPlaceholder">
                     </div>
                 </div>
                 <div class="flex flex-wrap items-center gap-4 mt-4">
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-startup-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="enableAtLogon">Enable at Logon</span>
+                        <span data-i18n="enableAtLogon">登录时启动</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-startup-auto-elevate" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="requestHighestPrivileges">Request Highest Privileges</span>
+                        <span data-i18n="requestHighestPrivileges">需要管理员权限时启动</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-plugin-unlock-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="pluginUnlockEnabled">Plugin unlock for non-official mode</span>
+                        <span data-i18n="pluginUnlockEnabled">非官方模式插件增强</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-codex-sandbox-auto-repair-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="codexSandboxAutoRepairEnabled">Auto repair sandbox permissions before starting Codex</span>
+                        <span data-i18n="codexSandboxAutoRepairEnabled">启动 Codex 前自动修复沙盒权限</span>
                     </label>
                     <div class="lg:col-span-2 rounded-lg border border-dark-800 bg-dark-950/40 p-3">
                         <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                             <div>
-                                <div class="text-sm font-semibold text-dark-100" data-i18n="secretRevealPasswordTitle">Secondary password for secret reveal</div>
+                                <div class="text-sm font-semibold text-dark-100" data-i18n="secretRevealPasswordTitle">密钥查看二级密码</div>
                                 <div id="setting-secret-reveal-status" class="text-xs text-dark-500 mt-1">Not configured</div>
                             </div>
-                            <button type="button" onclick="clearSecretRevealPassword()" class="btn btn-danger text-xs" data-i18n="clearSecretRevealPassword">Clear Password</button>
+                            <button type="button" onclick="clearSecretRevealPassword()" class="btn btn-danger text-xs" data-i18n="clearSecretRevealPassword">清除二级密码</button>
                         </div>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                             <input id="setting-secret-reveal-password" type="password" class="input" autocomplete="new-password" data-i18n-placeholder="secretRevealPasswordPlaceholder" placeholder="New secondary password">
                             <input id="setting-secret-reveal-password-confirm" type="password" class="input" autocomplete="new-password" data-i18n-placeholder="secretRevealPasswordConfirmPlaceholder" placeholder="Confirm secondary password">
                         </div>
                         <div class="flex flex-wrap items-center gap-2 mt-3">
-                            <button type="button" onclick="saveSecretRevealPassword()" class="btn btn-secondary text-xs" data-i18n="saveSecretRevealPassword">Save Secondary Password</button>
-                            <span class="text-xs text-dark-500" data-i18n="secretRevealPasswordDesc">Optional. When unset, local provider keys can be revealed directly.</span>
+                            <button type="button" onclick="saveSecretRevealPassword()" class="btn btn-secondary text-xs" data-i18n="saveSecretRevealPassword">保存二级密码</button>
+                            <span class="text-xs text-dark-500" data-i18n="secretRevealPasswordDesc">可选。不设置时，本地供应商密钥可以直接查看。</span>
                         </div>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="applyStartupSettings()" class="btn btn-warning text-xs" data-i18n="applyStartupChange">Apply Startup Change</button>
-                        <button onclick="removeStartupSettings()" class="btn btn-danger text-xs" data-i18n="removeStartupEntry">Remove Startup Entry</button>
-                        <button onclick="createDesktopShortcut('normal')" class="btn btn-secondary text-xs" data-i18n="createNormalShortcut">Create Manager Shortcut</button>
-                        <button onclick="createDesktopShortcut('start_codex')" class="btn btn-secondary text-xs" data-i18n="createStartCodexShortcut">Create Start Codex Shortcut</button>
+                        <button onclick="applyStartupSettings()" class="btn btn-warning text-xs" data-i18n="applyStartupChange">应用开机启动</button>
+                        <button onclick="removeStartupSettings()" class="btn btn-danger text-xs" data-i18n="removeStartupEntry">移除启动项</button>
+                        <button onclick="createDesktopShortcut('normal')" class="btn btn-secondary text-xs" data-i18n="createNormalShortcut">创建普通桌面快捷方式</button>
+                        <button onclick="createDesktopShortcut('start_codex')" class="btn btn-secondary text-xs" data-i18n="createStartCodexShortcut">创建启动 Codex 快捷方式</button>
                     </div>
                 </div>
-                <p class="text-xs text-dark-500 mt-2" data-i18n="pluginUnlockEnabledDesc">鎺у埗鏈湴/闈炲畼鏂逛緵搴斿晢鐨勬彃浠剁被澧炲己銆傚畼鏂圭櫥褰曟€佷笉浼氳繘鍏ユ湰鍦拌矾鐢辨垨 AMR锛屼絾浠嶅厑璁稿畨鍏ㄧ殑鐣岄潰娉ㄥ叆澧炲己銆</p>
-                <p class="text-xs text-dark-500 mt-2" data-i18n="desktopShortcutDesc">Desktop shortcuts are optional: one opens this manager, the other starts Codex through this app.</p>
-                <pre id="startup-preview-result" class="preview-code mt-4" data-i18n="noPreviewYet">No preview yet.</pre>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="pluginUnlockEnabledDesc">控制本地/非官方供应商的插件类增强。官方登录态不会进入本地路由或 AMR，但仍允许安全的界面注入增强。</p>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="desktopShortcutDesc">桌面快捷方式是可选项：普通版打开管理窗口，启动 Codex 版会带参数直接进入启动流程。</p>
+                <pre id="startup-preview-result" class="preview-code mt-4" data-i18n="noPreviewYet">还没有预览。</pre>
                 <div class="mt-5 border-t border-dark-800 pt-5">
                     <div class="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                            <h4 class="text-sm font-semibold text-dark-100" data-i18n="autoApprovalPromptTitle">鑷姩瀹℃壒瑙勫垯</h4>
-                            <p class="text-xs text-dark-500 mt-1" data-i18n="autoApprovalPromptDesc">杩欓噷鍙互璋冩暣鏈湴鍔╂墜鐨勫垽鏂鍒欙紝鐢ㄦ潵鍐冲畾浣庨闄╂搷浣滄槸鍚﹁嚜鍔ㄧ户缁紱鏁忔劅鍐呭浼氬厛闅愯棌銆</p>
+                            <h4 class="text-sm font-semibold text-dark-100" data-i18n="autoApprovalPromptTitle">自动审批规则</h4>
+                            <p class="text-xs text-dark-500 mt-1" data-i18n="autoApprovalPromptDesc">这里可以调整本地助手的判断规则，用来决定低风险操作是否自动继续；敏感内容会先隐藏。</p>
                         </div>
-                        <button onclick="restoreAutoApprovalPromptDefault()" class="btn btn-secondary text-xs" data-i18n="restoreDefaultPrompt">鎭㈠榛樿</button>
+                        <button onclick="restoreAutoApprovalPromptDefault()" class="btn btn-secondary text-xs" data-i18n="restoreDefaultPrompt">恢复默认</button>
                     </div>
                     <textarea id="setting-auto-approval-system-prompt" class="input mt-3 w-full font-mono min-h-[170px]" rows="8" spellcheck="false"></textarea>
-                    <p class="text-xs text-dark-500 mt-2" data-i18n="autoApprovalPromptHint">寤鸿淇濈暀锛氶珮椋庨櫓鍋滀笅鏉ラ棶浣狅紝浣庨闄╁啀鑷姩缁х画銆</p>
+                    <p class="text-xs text-dark-500 mt-2" data-i18n="autoApprovalPromptHint">建议保留：高风险停下来问你，低风险再自动继续。</p>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="6">
                 <div class="flex flex-wrap items-center justify-between gap-3">
-                    <h3 class="card-title" data-i18n="storageCleanup">Storage & Cleanup</h3>
+                    <h3 class="card-title" data-i18n="storageCleanup">存储与清理</h3>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="loadStorageInfo()" class="btn btn-secondary text-xs" data-i18n="refresh">Refresh</button>
-                        <button onclick="exportSettings()" class="btn btn-secondary text-xs" data-i18n="exportConfig">Export Config</button>
-                        <button onclick="document.getElementById('settings-import-file').click()" class="btn btn-secondary text-xs" data-i18n="importConfig">Import Config</button>
+                        <button onclick="loadStorageInfo()" class="btn btn-secondary text-xs" data-i18n="refresh">刷新</button>
+                        <button onclick="exportSettings()" class="btn btn-secondary text-xs" data-i18n="exportConfig">导出设置</button>
+                        <button onclick="document.getElementById('settings-import-file').click()" class="btn btn-secondary text-xs" data-i18n="importConfig">导入设置</button>
                         <input id="settings-import-file" type="file" accept="application/json,.json" class="hidden" onchange="importSettingsFromFile(this)">
                     </div>
                 </div>
                 <div id="storage-locations" class="mt-4 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-2"></div>
                 <div class="mt-5">
                     <div class="flex flex-wrap items-center justify-between gap-3">
-                        <h4 class="text-sm font-semibold text-dark-200" data-i18n="localCleanup">Local Cleanup</h4>
+                        <h4 class="text-sm font-semibold text-dark-200" data-i18n="localCleanup">本地清理</h4>
                         <div class="flex flex-wrap gap-2">
-                            <button onclick="loadCleanupPreview()" class="btn btn-secondary text-xs" data-i18n="previewAction">Preview</button>
-                            <button onclick="executeCleanup()" class="btn btn-warning text-xs" data-i18n="cleanSelected">Clean Selected</button>
+                            <button onclick="loadCleanupPreview()" class="btn btn-secondary text-xs" data-i18n="previewAction">预览</button>
+                            <button onclick="executeCleanup()" class="btn btn-warning text-xs" data-i18n="cleanSelected">清理选中项</button>
                         </div>
                     </div>
                     <div id="cleanup-targets" class="mt-3 rounded-md border border-dark-800 bg-dark-950/40 px-4 py-1"></div>
@@ -1001,10 +1001,10 @@
                 </div>
                 <div class="mt-5 border-t border-dark-800 pt-5">
                     <div class="flex flex-wrap items-center justify-between gap-3">
-                        <h4 class="text-sm font-semibold text-amber-200" data-i18n="uninstallCleanup">Uninstall Cleanup</h4>
+                        <h4 class="text-sm font-semibold text-amber-200" data-i18n="uninstallCleanup">卸载前清理</h4>
                         <div class="flex flex-wrap gap-2">
-                            <button onclick="loadUninstallPreview()" class="btn btn-secondary text-xs" data-i18n="previewAction">Preview</button>
-                            <button onclick="executeUninstallCleanup()" class="btn btn-danger text-xs" data-i18n="cleanAndLockWrites">Clean & Lock Writes</button>
+                            <button onclick="loadUninstallPreview()" class="btn btn-secondary text-xs" data-i18n="previewAction">预览</button>
+                            <button onclick="executeUninstallCleanup()" class="btn btn-danger text-xs" data-i18n="cleanAndLockWrites">清理并暂停写入</button>
                         </div>
                     </div>
                     <div id="uninstall-write-lock-state" class="mt-3"></div>
@@ -1012,8 +1012,8 @@
                     <div id="uninstall-cleanup-result" class="mt-3"></div>
                 </div>
                 <div class="mt-5 border-t border-dark-800 pt-5">
-                    <h4 class="text-sm font-semibold text-dark-200" data-i18n="sourceInfoTitle">椤圭洰鏉ユ簮</h4>
-                    <p class="text-xs text-dark-500 mt-1" data-i18n="sourceInfoDesc">鏈蒋浠舵潵鑷叕寮€浠撳簱锛屼笅杞姐€佸弽棣堝拰鏌ョ湅鏇存柊閮藉彲浠ヤ粠杩欓噷杩涘叆銆</p>
+                    <h4 class="text-sm font-semibold text-dark-200" data-i18n="sourceInfoTitle">项目来源</h4>
+                    <p class="text-xs text-dark-500 mt-1" data-i18n="sourceInfoDesc">本软件来自公开仓库，下载、反馈和查看更新都可以从这里进入。</p>
                     <div class="flex flex-wrap items-center gap-3 mt-3">
                         <a href="https://github.com/JiangNanGenius/Codex-Enhance-Manager" target="_blank" rel="noopener noreferrer" class="inline-flex items-center text-sm font-semibold text-accent-300 hover:text-accent-200">
                             GitHub: JiangNanGenius/Codex-Enhance-Manager
@@ -1023,50 +1023,50 @@
                     <div class="mt-5 rounded-xl border border-dark-800 bg-dark-950/45 p-4">
                         <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                             <div>
-                                <h5 class="text-sm font-semibold text-dark-100" data-i18n="updateTitle">鑷姩鏇存柊</h5>
-                                <p class="text-xs text-dark-500 mt-1" data-i18n="updateDesc">妫€鏌?GitHub Releases 涓殑鏂扮増 EXE锛屼笅杞藉悗鍏抽棴鏈▼搴忓苟杩愯鏂扮増鍗冲彲銆</p>
+                                <h5 class="text-sm font-semibold text-dark-100" data-i18n="updateTitle">自动更新</h5>
+                                <p class="text-xs text-dark-500 mt-1" data-i18n="updateDesc">检查 GitHub Releases 中的新版 EXE，下载后关闭本程序并运行新版即可。</p>
                             </div>
                             <div class="flex flex-wrap gap-2">
-                                <button onclick="checkForUpdates(true)" class="btn btn-secondary text-xs" data-i18n="checkUpdates">妫€鏌ユ洿鏂</button>
-                                <button id="download-update-btn" onclick="downloadLatestUpdate()" class="btn btn-primary text-xs" data-i18n="downloadUpdate" disabled>涓嬭浇鏇存柊</button>
+                                <button onclick="checkForUpdates(true)" class="btn btn-secondary text-xs" data-i18n="checkUpdates">检查更新</button>
+                                <button id="download-update-btn" onclick="downloadLatestUpdate()" class="btn btn-primary text-xs" data-i18n="downloadUpdate" disabled>下载更新</button>
                             </div>
                         </div>
                         <div class="flex flex-wrap items-center gap-4 mt-4">
                             <label class="flex items-center gap-2 text-sm cursor-pointer">
                                 <input id="setting-update-check-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                                <span data-i18n="updateCheckEnabled">鎵撳紑璁剧疆鏃惰嚜鍔ㄦ鏌</span>
+                                <span data-i18n="updateCheckEnabled">打开设置时自动检查</span>
                             </label>
                             <label class="flex items-center gap-2 text-sm cursor-pointer">
                                 <input id="setting-update-include-prerelease" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                                <span data-i18n="updateIncludePrerelease">鍖呭惈棰勫彂甯冪増鏈</span>
+                                <span data-i18n="updateIncludePrerelease">包含预发布版本</span>
                             </label>
                         </div>
-                        <div id="update-status" class="mt-4 text-sm text-dark-300" data-i18n="updateStatusIdle">杩樻病鏈夋鏌ユ洿鏂般€</div>
+                        <div id="update-status" class="mt-4 text-sm text-dark-300" data-i18n="updateStatusIdle">还没有检查更新。</div>
                     </div>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="7">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
-                        <h3 class="card-title" data-i18n="wizardFinishGuideTitle">淇濆瓨鍓嶆鏌</h3>
-                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardFinishGuideDesc">纭璺緞銆佷緵搴斿晢銆佽矾鐢卞拰鎻愰啋閮借兘鐞嗚В鍚庡啀淇濆瓨锛涚己椤瑰彲浠ュ厛鐢ㄩ粯璁ゅ€笺€</p>
+                        <h3 class="card-title" data-i18n="wizardFinishGuideTitle">保存前检查</h3>
+                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardFinishGuideDesc">确认路径、供应商、路由和提醒都能理解后再保存；缺项可以先用默认值。</p>
                     </div>
-                    <button onclick="saveSettings()" class="btn btn-primary text-xs" data-i18n="saveSettings">淇濆瓨璁剧疆</button>
+                    <button onclick="saveSettings()" class="btn btn-primary text-xs" data-i18n="saveSettings">保存设置</button>
                 </div>
                 <div id="settings-finish-wizard-summary" class="mt-5"></div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSave">淇濆瓨鍙啓鍏ユ湰搴旂敤閰嶇疆锛屽奖鍝?Codex 鐨勬搷浣滀細鍗曠嫭纭銆</div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSource">椤圭洰鏉ユ簮鍜屾洿鏂板叆鍙ｅ湪鏁寸悊涓庢潵婧愭楠や腑銆</div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointReturn">鍚庣画淇敼鍙洿鎺ヨ烦鍒颁换鎰忔楠ゃ€</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSave">保存只写入本应用配置，影响 Codex 的操作会单独确认。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSource">项目来源和更新入口在整理与来源步骤中。</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointReturn">后续修改可直接跳到任意步骤。</div>
                 </div>
             </div>
             <div class="card settings-wizard-actions">
                 <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                    <p class="text-sm text-dark-400" data-i18n="settingsWizardSaveHint">姣忎竴姝ラ兘鍙互鍏堥瑙堟垨璋冩暣锛屾渶鍚庣偣鍑讳繚瀛樿缃€</p>
+                    <p class="text-sm text-dark-400" data-i18n="settingsWizardSaveHint">可以跳到任意步骤修改；缺项会提示，能用默认值的会先帮你填好。</p>
                     <div class="flex flex-wrap gap-2">
-                        <button id="settings-wizard-prev" onclick="showPreviousSettingsWizardStep()" class="btn btn-secondary" data-i18n="settingsWizardPrevious">涓婁竴姝</button>
-                        <button id="settings-wizard-next" onclick="showNextSettingsWizardStep()" class="btn btn-secondary" data-i18n="settingsWizardNext">涓嬩竴姝</button>
-                        <button onclick="saveSettings()" class="btn btn-primary" data-i18n="saveSettings">淇濆瓨璁剧疆</button>
+                        <button id="settings-wizard-prev" onclick="showPreviousSettingsWizardStep()" class="btn btn-secondary" data-i18n="settingsWizardPrevious">上一步</button>
+                        <button id="settings-wizard-next" onclick="showNextSettingsWizardStep()" class="btn btn-secondary" data-i18n="settingsWizardNext">下一步</button>
+                        <button onclick="saveSettings()" class="btn btn-primary" data-i18n="saveSettings">保存设置</button>
                     </div>
                 </div>
             </div>

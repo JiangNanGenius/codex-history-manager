@@ -9,6 +9,9 @@ class CodexInjectorTest(unittest.TestCase):
 
         self.assertIn("codex-enhance-manager-menu", script)
         self.assertIn("Codex Enhance", script)
+        self.assertIn("codex-enhance-manager-v3", script)
+        self.assertIn("bottom: 16px", script)
+        self.assertIn("class=\"cem-launch\"", script)
         self.assertIn("http://127.0.0.1:51234", script)
         self.assertIn("/api/codex-injection/status", script)
         self.assertIn("/api/codex-injection/quick-settings", script)

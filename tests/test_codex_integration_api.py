@@ -1,4 +1,6 @@
 import unittest
+import hashlib
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -277,6 +279,58 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertEqual(data["provider_config"]["reason"], "deferred_until_codex_start")
         fake_mgr.write_provider_config.assert_not_called()
 
+    def test_proxy_status_auto_starts_when_focused_provider_needs_proxy(self):
+        app = self._app()
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "volcengine-plan",
+            "providers": [{
+                "id": "volcengine-plan",
+                "enabled": True,
+                "local_proxy_routing": True,
+                "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+            }],
+        }
+        self.proxy_server.start.return_value = True
+        self.proxy_server.status.side_effect = [
+            {"running": False, "port": 51235},
+            {"running": False, "port": 51235},
+            {"running": True, "port": 51236, "base_url": "http://127.0.0.1:51236/v1"},
+        ]
+
+        response = app.test_client().get("/api/proxy/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["running"])
+        self.assertTrue(data["auto_start"]["success"])
+        self.assertTrue(data["auto_start"]["started"])
+        self.proxy_server.start.assert_called_once()
+        self.last_config.set.assert_any_call("proxy_port", 51236)
+
+    def test_proxy_status_does_not_auto_start_when_official_focused(self):
+        app = self._app()
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "codex_official",
+            "providers": [{
+                "id": "codex_official",
+                "switch_only": True,
+                "codex_login": True,
+                "local_proxy_routing": False,
+            }],
+        }
+        self.proxy_server.start.reset_mock()
+        self.proxy_server.status.return_value = {"running": False, "port": 51235}
+
+        response = app.test_client().get("/api/proxy/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertFalse(data["running"])
+        self.assertNotIn("auto_start", data)
+        self.proxy_server.start.assert_not_called()
+
     def test_desktop_shortcut_endpoint_creates_selected_kind_only(self):
         app = self._app()
 
@@ -293,8 +347,12 @@ class CodexIntegrationApiTest(unittest.TestCase):
 
     def test_start_codex_official_mode_skips_provider_sync_and_cpp(self):
         app = self._app()
+        fake_mgr = MagicMock()
+        fake_mgr.read_auth.return_value = {"auth_mode": "chatgpt", "tokens": {"access_token": "official"}}
+        fake_mgr.read_config.return_value = {"model": "gpt-5.5"}
         with (
-            patch("app._run_sync_with_backup") as sync_with_backup,
+            patch("app.CodexConfigManager", return_value=fake_mgr),
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)) as sync_with_backup,
             patch("app.disable_codex_enhance_provider_config", return_value={"success": True, "changed": True}) as disable_proxy,
             patch("app.is_codex_running", return_value=(False, [])),
             patch("app._tcp_port_is_available", return_value=True),
@@ -307,8 +365,9 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertTrue(data["official_mode"])
         self.assertEqual(data["start_mode"], "official_direct")
-        self.assertTrue(data["sync"]["skipped"])
-        sync_with_backup.assert_not_called()
+        self.assertEqual(data["sync"]["target_provider"], "openai")
+        self.assertEqual(data["sync"]["target_model"], "gpt-5.5")
+        sync_with_backup.assert_called_once()
         disable_proxy.assert_called_once()
         start.assert_called_once()
         self.assertFalse(start.call_args.kwargs["use_codex_plus_plus"])
@@ -317,6 +376,180 @@ class CodexIntegrationApiTest(unittest.TestCase):
             "use_codex_plus_plus": False,
             "plugin_unlock_enabled": False,
         })
+
+    def test_start_codex_current_focus_official_uses_official_direct(self):
+        app = self._app()
+        official = {
+            "id": "codex_official",
+            "display_name": "OpenAI Official Login",
+            "switch_only": True,
+            "codex_login": True,
+            "local_proxy_routing": False,
+            "routing_mode": "official_direct",
+        }
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "codex_official",
+            "providers": [official],
+        }
+        self.proxy_server.start.reset_mock()
+        fake_mgr = MagicMock()
+        fake_mgr.read_auth.return_value = {"access_token": "official"}
+        fake_mgr.read_config.return_value = {"model": "gpt-5.5"}
+        with (
+            patch("app.CodexConfigManager", return_value=fake_mgr),
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)) as sync_with_backup,
+            patch("app.disable_codex_enhance_provider_config", return_value={"success": True, "changed": False}) as disable_proxy,
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", return_value=(True, "started")),
+        ):
+            response = app.test_client().post("/api/codex/start", json={"start_mode": "current_focus"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["start_mode"], "official_direct")
+        self.assertTrue(data["official_mode"])
+        self.assertEqual(data["sync"]["target_provider"], "openai")
+        self.assertEqual(data["sync"]["target_model"], "gpt-5.5")
+        sync_with_backup.assert_called_once()
+        disable_proxy.assert_called_once()
+        self.proxy_server.start.assert_not_called()
+
+    def test_start_codex_current_focus_official_skips_history_when_signature_current(self):
+        app = self._app()
+        official = {
+            "id": "codex_official",
+            "display_name": "OpenAI Official Login",
+            "switch_only": True,
+            "codex_login": True,
+            "local_proxy_routing": False,
+            "routing_mode": "official_direct",
+        }
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "codex_official",
+            "providers": [official],
+        }
+        codex_home = str(Path(os.path.expandvars(os.environ.get("CODEX_HOME") or str(Path.home() / ".codex"))).expanduser())
+        payload = {
+            "version": 1,
+            "start_mode": "official_direct",
+            "target_provider": "openai",
+            "target_model": "gpt-5.5",
+            "codex_home": codex_home,
+            "paths": {"db_path": "", "sessions_dir": "", "archived_dir": ""},
+        }
+        signature = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        self.last_config.get.side_effect = lambda key, default=None: signature if key == "history_sync_signature" else default
+        fake_mgr = MagicMock()
+        fake_mgr.read_auth.return_value = {"access_token": "official"}
+        fake_mgr.read_config.return_value = {"model": "gpt-5.5"}
+        with (
+            patch("app.CodexConfigManager", return_value=fake_mgr),
+            patch("app._run_sync_with_backup") as sync_with_backup,
+            patch("app.disable_codex_enhance_provider_config", return_value={"success": True, "changed": False}),
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", return_value=(True, "started")),
+        ):
+            response = app.test_client().post("/api/codex/start", json={"start_mode": "current_focus"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["start_mode"], "official_direct")
+        self.assertTrue(data["sync"]["skipped"])
+        self.assertEqual(data["sync"]["target_provider"], "openai")
+        self.assertEqual(data["sync"]["target_model"], "gpt-5.5")
+        sync_with_backup.assert_not_called()
+
+    def test_start_codex_current_focus_third_party_uses_proxy_mode(self):
+        app = self._app()
+        provider = {
+            "id": "volcengine-plan",
+            "display_name": "Ark Coding Plan",
+            "enabled": True,
+            "switch_only": False,
+            "local_proxy_routing": True,
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        }
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "volcengine-plan",
+            "providers": [provider],
+        }
+        self.proxy_server.status.return_value = {
+            "running": True,
+            "port": 51235,
+            "base_url": "http://127.0.0.1:51235/v1",
+        }
+        with (
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)) as sync_with_backup,
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", return_value=(True, "started")),
+        ):
+            response = app.test_client().post("/api/codex/start", json={"start_mode": "current_focus"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["start_mode"], "preserve_login_proxy")
+        self.assertFalse(data["official_mode"])
+        sync_with_backup.assert_called_once()
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_provider"], "codex_enhance_manager")
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_model"], "auto")
+
+    def test_start_codex_skips_history_sync_when_signature_is_current(self):
+        app = self._app()
+        provider = {
+            "id": "volcengine-plan",
+            "display_name": "Ark Coding Plan",
+            "enabled": True,
+            "local_proxy_routing": True,
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        }
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "volcengine-plan",
+            "providers": [provider],
+        }
+        self.proxy_server.status.return_value = {
+            "running": True,
+            "port": 51235,
+            "base_url": "http://127.0.0.1:51235/v1",
+        }
+        codex_home = str(Path(os.path.expandvars(os.environ.get("CODEX_HOME") or str(Path.home() / ".codex"))).expanduser())
+        payload = {
+            "version": 1,
+            "start_mode": "preserve_login_proxy",
+            "target_provider": "codex_enhance_manager",
+            "target_model": "auto",
+            "codex_home": codex_home,
+            "paths": {"db_path": "", "sessions_dir": "", "archived_dir": ""},
+        }
+        signature = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        self.last_config.get.side_effect = lambda key, default=None: signature if key == "history_sync_signature" else default
+        with (
+            patch("app._run_sync_with_backup") as sync_with_backup,
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", return_value=(True, "started")),
+        ):
+            response = app.test_client().post("/api/codex/start", json={"start_mode": "current_focus"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["sync"]["skipped"])
+        self.assertEqual(data["sync"]["reason"], "history_sync_signature_unchanged")
+        sync_with_backup.assert_not_called()
 
     def test_provider_focus_official_persists_and_updates_local_start_mode(self):
         app = self._app()
@@ -354,8 +587,12 @@ class CodexIntegrationApiTest(unittest.TestCase):
 
     def test_start_codex_official_mode_allows_safe_injection(self):
         app = self._app()
+        fake_mgr = MagicMock()
+        fake_mgr.read_auth.return_value = {"access_token": "official"}
+        fake_mgr.read_config.return_value = {"model": "gpt-5.5"}
         with (
-            patch("app._run_sync_with_backup") as sync_with_backup,
+            patch("app.CodexConfigManager", return_value=fake_mgr),
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)) as sync_with_backup,
             patch("app.disable_codex_enhance_provider_config", return_value={"success": True, "changed": True}),
             patch("app.is_codex_running", return_value=(False, [])),
             patch("app._tcp_port_is_available", return_value=True),
@@ -372,7 +609,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertTrue(data["codex_injection_enabled"])
         self.assertTrue(data["codex_injection_active"])
         self.assertEqual(data["codex_cdp_port"], 51240)
-        sync_with_backup.assert_not_called()
+        sync_with_backup.assert_called_once()
         self.assertTrue(start.call_args.kwargs["enable_cdp_injection"])
         self.assertEqual(start.call_args.kwargs["cdp_port"], 51240)
         self.last_config.update.assert_any_call({
@@ -593,6 +830,28 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertIn("openai", saved["providers"])
         self.assertNotIn("codex_enhance_manager", saved["model_providers"])
         self.assertIn("openai", saved["model_providers"])
+
+    def test_disable_codex_enhance_provider_config_skips_backup_when_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text("model = \"gpt-5\"\n", encoding="utf-8")
+            mgr = MagicMock()
+            mgr.config_path = config_path
+            mgr.backup_dir = Path(tmp) / "backups"
+            mgr.read_config.return_value = {
+                "model": "gpt-5",
+                "features": {"goals": True},
+            }
+
+            with patch("app.backup_file") as backup, patch("app.save_config_toml") as save:
+                from app import disable_codex_enhance_provider_config
+
+                result = disable_codex_enhance_provider_config(mgr, goals_enabled=True)
+
+        self.assertTrue(result["success"])
+        self.assertFalse(result["changed"])
+        backup.assert_not_called()
+        save.assert_not_called()
 
     def test_reset_for_official_login_requires_risk_confirmation(self):
         app = self._app()

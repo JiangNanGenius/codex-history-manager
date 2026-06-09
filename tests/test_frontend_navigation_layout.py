@@ -7,6 +7,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 BROKEN_HTML_CLOSER_RE = re.compile(r"\?/[A-Za-z][A-Za-z0-9-]*>")
 MOJIBAKE_FLAG_MARKERS = ("馃", "рџ")
+MOJIBAKE_TEXT_MARKERS = (
+    "鍘嗗彶",
+    "绠＄悊",
+    "鏅鸿兘",
+    "鎮诞",
+    "鐢ㄩ噺",
+    "涓€",
+    "�",
+)
 
 
 def test_static_html_has_no_mojibake_broken_closing_tags():
@@ -25,7 +34,7 @@ def test_language_switcher_keeps_real_flag_emoji():
 
     assert "🇨🇳" in index
     assert "🇬🇧" in index
-    for marker in MOJIBAKE_FLAG_MARKERS:
+    for marker in MOJIBAKE_FLAG_MARKERS + MOJIBAKE_TEXT_MARKERS:
         assert marker not in index
 
 
@@ -258,6 +267,7 @@ def test_official_login_start_keeps_safe_enhancement_copy_wired():
     assert "setCodexStartMode" in js
     assert "renderCodexEnhancementModeCard" in js
     assert "/api/codex/start" in app_js
+    assert "start_mode: 'current_focus'" in app_js
     assert "ci-start-mode" in js
     assert "'preserve_login_proxy'" in js
     assert "start_mode: 'official_direct'" in js

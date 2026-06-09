@@ -456,12 +456,18 @@ def build_codex_enhance_provider_config(
 class CodexConfigManager:
     """High-level manager for safe Codex config/auth operations."""
 
-    def __init__(self, codex_home: str = ""):
+    def __init__(self, codex_home: str = "", backup_dir: Optional[Path | str] = None):
+        has_custom_codex_home = bool(str(codex_home or "").strip())
         self.codex_home = resolve_codex_home(codex_home)
         self.config_path = self.codex_home / "config.toml"
         self.auth_path = self.codex_home / "auth.json"
         self.model_catalog_path = self.codex_home / "model_catalog.json"
-        self.backup_dir = CODEX_CONFIG_BACKUP_DIR
+        if backup_dir:
+            self.backup_dir = Path(backup_dir)
+        elif has_custom_codex_home:
+            self.backup_dir = self.codex_home / "backups"
+        else:
+            self.backup_dir = CODEX_CONFIG_BACKUP_DIR
 
     def read_config(self) -> Dict[str, Any]:
         return load_config_toml(str(self.config_path))

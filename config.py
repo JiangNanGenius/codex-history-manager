@@ -61,6 +61,9 @@ DEFAULT_CONFIG = {
     "codex_cdp_port": 51236,
     "codex_injection_enabled": True,
     "codex_last_start_mode": "",
+    "history_sync_signature": "",
+    "history_sync_last_at": "",
+    "history_sync_last_result": {},
     "codex_goals_enabled": True,
     "codex_sandbox_auto_repair_enabled": False,
     "secret_reveal_password_hash": "",
@@ -285,6 +288,10 @@ class Config:
             self._data["codex_cdp_port"] = DEFAULT_CONFIG["codex_cdp_port"]
         if self._data.get("codex_last_start_mode") not in {"", "proxy_injection", "preserve_login_proxy", "official_direct"}:
             self._data["codex_last_start_mode"] = ""
+        for key in ("history_sync_signature", "history_sync_last_at"):
+            self._data[key] = str(self._data.get(key) or "")
+        if not isinstance(self._data.get("history_sync_last_result"), dict):
+            self._data["history_sync_last_result"] = {}
         for key in (
             "startup_enabled",
             "startup_mode",

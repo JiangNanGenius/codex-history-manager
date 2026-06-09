@@ -174,7 +174,7 @@ async function oneClickSyncRestart() {
         // Step 2: Start endpoint auto-syncs current provider/model before launching.
         setStatus(t('oneClickStepStart'));
         const startData = await startCodexWithProgress({
-            start_mode: 'preserve_login_proxy',
+            start_mode: 'current_focus',
             backup_before_sync: backupBeforeSync,
         }, {
             onProgress: (job) => {

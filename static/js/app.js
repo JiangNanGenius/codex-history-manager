@@ -266,7 +266,7 @@ async function startCodexFromQuickAction() {
             await new Promise(resolve => setTimeout(resolve, 1200));
         }
         setStatus(t('codexStartRequested'));
-        const data = await startCodexWithProgress({ start_mode: 'preserve_login_proxy' });
+        const data = await startCodexWithProgress({ start_mode: 'current_focus' });
         const ok = !data || data.success !== false;
         const message = (data && (data.message || data.error)) || (ok ? t('codexStartRequested') : t('failed'));
         showToast(message, ok ? 'success' : 'error');

@@ -213,7 +213,7 @@ def _desktop_backend_port_candidates() -> list[int]:
 
 def _request_existing_desktop_start_codex(port: int) -> dict:
     try:
-        body = json.dumps({"start_mode": "preserve_login_proxy", "async": True}).encode("utf-8")
+        body = json.dumps({"start_mode": "current_focus", "async": True}).encode("utf-8")
         request = urllib.request.Request(
             f"http://127.0.0.1:{int(port)}/api/codex/start",
             data=body,
@@ -613,7 +613,7 @@ def _set_focus_provider(provider_id: str = "") -> dict:
 
 def _start_codex_from_desktop() -> dict:
     def worker():
-        result = _local_post_json("/api/codex/start", {"start_mode": "preserve_login_proxy"})
+        result = _local_post_json("/api/codex/start", {"start_mode": "current_focus"})
         try:
             if tray_icon is not None:
                 if result.get("success"):

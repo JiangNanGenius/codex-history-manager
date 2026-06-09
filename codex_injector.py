@@ -711,26 +711,26 @@ def build_injection_script(backend_url: str = "") -> str:
     backend = (backend_url or backend_url_from_env()).rstrip("/")
     payload = {
         "backend": backend,
-        "marker": "codex-enhance-manager-v2",
+        "marker": "codex-enhance-manager-v3",
     }
     config_json = json.dumps(payload, ensure_ascii=False)
     return f"""
 (() => {{
   const config = {config_json};
-  if (window.__codexEnhanceManagerInjected === config.marker) return;
+  const rootId = 'codex-enhance-manager-menu';
+  if (window.__codexEnhanceManagerInjected === config.marker && document.getElementById(rootId)) return;
   window.__codexEnhanceManagerInjected = config.marker;
 
 {_renderer_enhancement_runtime()}
 
-  const rootId = 'codex-enhance-manager-menu';
   document.getElementById(rootId)?.remove();
 
   const style = document.createElement('style');
   style.textContent = `
     #${{rootId}} {{
       position: fixed;
-      top: 12px;
-      right: 14px;
+      right: 16px;
+      bottom: 16px;
       z-index: 2147483647;
       font: 12px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: #e5e7eb;
@@ -739,12 +739,14 @@ def build_injection_script(backend_url: str = "") -> str:
     #${{rootId}} > .cem-launch {{
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      justify-content: center;
       border: 1px solid rgba(148, 163, 184, .35);
       background: linear-gradient(135deg, rgba(15, 23, 42, .96), rgba(8, 47, 73, .94));
       color: #f8fafc;
       border-radius: 999px;
-      padding: 7px 11px;
+      width: 38px;
+      height: 38px;
+      padding: 0;
       cursor: pointer;
       box-shadow: 0 10px 32px rgba(2, 6, 23, .32);
     }}
@@ -757,7 +759,9 @@ def build_injection_script(backend_url: str = "") -> str:
     }}
     #${{rootId}} .cem-panel {{
       display: none;
-      margin-top: 8px;
+      position: absolute;
+      right: 0;
+      bottom: 46px;
       width: 374px;
       border: 1px solid rgba(148, 163, 184, .25);
       border-radius: 10px;
@@ -924,7 +928,7 @@ def build_injection_script(backend_url: str = "") -> str:
   const root = document.createElement('div');
   root.id = rootId;
   root.innerHTML = `
-    <button type="button" class="cem-launch" aria-label="Codex Enhance Manager"><span class="cem-dot"></span><span>Codex Enhance</span></button>
+    <button type="button" class="cem-launch" aria-label="Codex Enhance Manager" title="Codex Enhance Manager"><span class="cem-dot"></span></button>
     <div class="cem-panel">
       <div class="cem-head">
         <div>
@@ -1119,7 +1123,9 @@ def build_injection_script(backend_url: str = "") -> str:
     return data;
   }});
 
-  root.querySelector('.cem-launch').addEventListener('click', () => {{
+  root.querySelector('.cem-launch').addEventListener('click', (event) => {{
+    event.preventDefault();
+    event.stopPropagation();
     root.classList.toggle('open');
     if (root.classList.contains('open')) {{
       cemSetStatus('Loading...');
@@ -1129,6 +1135,7 @@ def build_injection_script(backend_url: str = "") -> str:
     }}
   }});
   root.addEventListener('click', (event) => {{
+    event.stopPropagation();
     const refreshButton = event.target.closest?.('[data-cem-refresh]');
     if (refreshButton) {{
       event.preventDefault();

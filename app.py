@@ -123,10 +123,17 @@ UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
 START_MODE_PROXY_INJECTION = "proxy_injection"
 START_MODE_PRESERVE_LOGIN_PROXY = "preserve_login_proxy"
 START_MODE_OFFICIAL_DIRECT = "official_direct"
+START_MODE_CURRENT_FOCUS = "current_focus"
 START_MODES = {
     START_MODE_PROXY_INJECTION,
     START_MODE_PRESERVE_LOGIN_PROXY,
     START_MODE_OFFICIAL_DIRECT,
+}
+START_MODE_FOCUS_ALIASES = {
+    "",
+    START_MODE_CURRENT_FOCUS,
+    "auto",
+    "focused_provider",
 }
 SECRET_REVEAL_FIELDS = {"api_key", "secondary_usage_key"}
 CHAT_HISTORY_RISK_CONFIRMATION = "CHAT_HISTORY_MAY_BE_LOST"
@@ -173,12 +180,21 @@ FETCHED_MODEL_DEFAULT_CONTEXT_WINDOW = 200000
 MODEL_LIST_FETCH_TIMEOUT_SECONDS = 30
 
 
-def _normalize_codex_start_mode(body: Dict[str, Any], login_defaults: Dict[str, Any]) -> str:
+def _normalize_codex_start_mode(
+    body: Dict[str, Any],
+    login_defaults: Dict[str, Any],
+    provider_payload: Dict[str, Any] | None = None,
+) -> str:
     raw_mode = str(body.get("start_mode") or "").strip()
     if raw_mode in START_MODES:
         return raw_mode
     if body.get("official_mode") is True:
         return START_MODE_OFFICIAL_DIRECT
+    if raw_mode in START_MODE_FOCUS_ALIASES and isinstance(provider_payload, dict):
+        if _provider_focus_is_official_login(provider_payload):
+            return START_MODE_OFFICIAL_DIRECT
+        if _provider_focus_uses_other_api(provider_payload):
+            return START_MODE_PRESERVE_LOGIN_PROXY
     return str(login_defaults.get("default_start_mode") or START_MODE_PROXY_INJECTION)
 
 
@@ -419,11 +435,6 @@ def disable_codex_enhance_provider_config(
         "backups": {},
         "message": "本地代理 provider 已禁用。需要重启 Codex 使变更生效。",
     }
-    if mgr.config_path.exists():
-        backup_path = backup_file(str(mgr.config_path), mgr.backup_dir)
-        if backup_path:
-            result["backups"]["config_toml"] = backup_path
-
     current_config = mgr.read_config()
     next_config = dict(current_config)
     if next_config.get("model_provider") == "codex_enhance_manager":
@@ -453,6 +464,10 @@ def disable_codex_enhance_provider_config(
     changed = next_config != current_config
     result["changed"] = changed
     if changed:
+        if mgr.config_path.exists():
+            backup_path = backup_file(str(mgr.config_path), mgr.backup_dir)
+            if backup_path:
+                result["backups"]["config_toml"] = backup_path
         save_config_toml(str(mgr.config_path), next_config)
     else:
         result["message"] = "当前已是官方登录优先配置。"
@@ -1316,8 +1331,11 @@ def create_app() -> Flask:
     ) -> Dict[str, Any]:
         if os.environ.get("CODEX_ENHANCE_MANAGER_DISABLE_CODEX_AUTOWRITE") == "1":
             return {"success": True, "changed": False, "skipped": True, "reason": "disabled_by_env"}
-        if reason == "app_start" and os.environ.get("PYTEST_CURRENT_TEST"):
-            return {"success": True, "changed": False, "skipped": True, "reason": "pytest_app_start_skip"}
+        if (
+            (os.environ.get("PYTEST_CURRENT_TEST") or app.config.get("TESTING"))
+            and os.environ.get("CODEX_ENHANCE_MANAGER_ALLOW_PYTEST_CODEX_AUTOWRITE") != "1"
+        ):
+            return {"success": True, "changed": False, "skipped": True, "reason": "pytest_codex_autowrite_skip"}
         mgr = CodexConfigManager()
         login_defaults = _official_login_defaults(mgr)
         preserve_auth = (
@@ -1415,6 +1433,139 @@ def create_app() -> Flask:
             "archived_dir": config.get("archived_dir", ""),
         }
 
+    def _history_sync_signature(
+        path_config: Dict[str, str],
+        target_provider: str,
+        target_model: str,
+        start_mode: str,
+    ) -> tuple[str, Dict[str, Any]]:
+        def normalize_path(value: Any) -> str:
+            raw = str(value or "").strip()
+            if not raw:
+                return ""
+            try:
+                return str(Path(os.path.expandvars(raw)).expanduser())
+            except Exception:
+                return raw
+
+        try:
+            codex_home = str(resolve_codex_home())
+        except Exception:
+            codex_home = ""
+        payload = {
+            "version": 1,
+            "start_mode": start_mode,
+            "target_provider": str(target_provider or ""),
+            "target_model": str(target_model or ""),
+            "codex_home": codex_home,
+            "paths": {
+                "db_path": normalize_path(path_config.get("db_path")),
+                "sessions_dir": normalize_path(path_config.get("sessions_dir")),
+                "archived_dir": normalize_path(path_config.get("archived_dir")),
+            },
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest(), payload
+
+    def _history_sync_skip_payload(signature: str, signature_payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "success": True,
+            "skipped": True,
+            "reason": "history_sync_signature_unchanged",
+            "message": "历史同步目标未变化，已跳过全量扫描。",
+            "backup_path": "",
+            "skipped_backup": True,
+            "backup_before_sync": False,
+            "signature": signature,
+            "signature_payload": signature_payload,
+        }
+
+    def _official_history_sync_target(mgr: CodexConfigManager) -> tuple[str, str, Dict[str, Any]]:
+        try:
+            effective = _effective_codex_settings(mgr.read_config(), mgr.read_auth())
+        except Exception as exc:
+            diagnostics_collector.record_error("history_sync.official_target", str(exc))
+            effective = {"model_provider": "openai", "model": "gpt-5"}
+        target_provider = str(effective.get("model_provider") or "openai")
+        if target_provider == "codex_enhance_manager":
+            target_provider = "openai"
+        target_model = str(effective.get("model") or "gpt-5")
+        return target_provider, target_model, effective
+
+    def _run_conditional_history_sync(
+        job_id: str,
+        body: Dict[str, Any],
+        start_mode: str,
+        target_provider: str,
+        target_model: str,
+        *,
+        progress: int,
+        changed_message: str,
+        skipped_message: str = "历史同步目标未变化，已跳过全量扫描。",
+    ) -> tuple[Dict[str, Any], int]:
+        backup_before = _coerce_bool(body.get("backup_before_sync"), False)
+        force_history_sync = (
+            _coerce_bool(body.get("force_history_sync"), False)
+            or _coerce_bool(body.get("force_sync"), False)
+        )
+        path_config = _sync_paths_from_config()
+        sync_signature, sync_signature_payload = _history_sync_signature(
+            path_config,
+            target_provider=target_provider,
+            target_model=target_model,
+            start_mode=start_mode,
+        )
+        previous_signature = str(config.get("history_sync_signature", "") or "")
+        if not force_history_sync and not backup_before and previous_signature == sync_signature:
+            sync_payload = _history_sync_skip_payload(sync_signature, sync_signature_payload)
+            sync_payload["target_provider"] = target_provider
+            sync_payload["target_model"] = target_model
+            _set_codex_start_progress(
+                job_id,
+                "history_sync_skipped",
+                68,
+                skipped_message,
+                sync=sync_payload,
+            )
+            return sync_payload, 200
+
+        _set_codex_start_progress(job_id, "history_sync", progress, changed_message)
+        sync_payload, sync_status = _run_sync_with_backup(
+            backup_mgr,
+            path_config=path_config,
+            target_provider=target_provider,
+            target_model=target_model,
+            backup_before=backup_before,
+        )
+        if sync_status >= 400:
+            return sync_payload, sync_status
+
+        sync_payload["signature"] = sync_signature
+        sync_payload["signature_payload"] = sync_signature_payload
+        sync_payload["target_provider"] = target_provider
+        sync_payload["target_model"] = target_model
+        try:
+            config.update({
+                "history_sync_signature": sync_signature,
+                "history_sync_last_at": _codex_start_now(),
+                "history_sync_last_result": {
+                    "target_provider": target_provider,
+                    "target_model": target_model,
+                    "changed": bool(sync_payload.get("changed")),
+                    "db_threads_seen": sync_payload.get("db_threads_seen", 0),
+                    "db_threads_updated": sync_payload.get("db_threads_updated", 0),
+                    "rollout_files_seen": sync_payload.get("rollout_files_seen", 0),
+                    "rollout_files_updated": sync_payload.get("rollout_files_updated", 0),
+                    "index_rows_seen": sync_payload.get("index_rows_seen", 0),
+                    "index_rows_updated": sync_payload.get("index_rows_updated", 0),
+                    "malformed_lines": sync_payload.get("malformed_lines", 0),
+                },
+            })
+        except Exception as exc:
+            diagnostics_collector.record_error("history_sync.signature_persist", str(exc))
+        _set_codex_start_progress(job_id, "history_synced", 68, "历史同步完成，正在准备启动 Codex...", sync=sync_payload)
+        return sync_payload, sync_status
+
     def _move_repair_manager() -> MoveRepairManager:
         return MoveRepairManager(
             db_path=config.get("db_path", ""),
@@ -1466,7 +1617,12 @@ def create_app() -> Flask:
         _set_codex_start_progress(job_id, "preparing", 5, "正在读取 Codex 登录态和启动配置...")
         mgr = CodexConfigManager()
         login_defaults = _official_login_defaults(mgr)
-        start_mode = _normalize_codex_start_mode(body, login_defaults)
+        try:
+            provider_payload_for_start = _provider_payload(include_secrets=False)
+        except Exception as exc:
+            provider_payload_for_start = {}
+            diagnostics_collector.record_error("codex.start_provider_focus", str(exc))
+        start_mode = _normalize_codex_start_mode(body, login_defaults, provider_payload_for_start)
         official_mode = start_mode == START_MODE_OFFICIAL_DIRECT
         sandbox_repair_payload = {"success": True, "skipped": True, "reason": "disabled"}
         restart_payload = {"success": True, "skipped": True, "reason": "not_required"}
@@ -1498,13 +1654,21 @@ def create_app() -> Flask:
                 "plugin_unlock_enabled": False,
             })
             use_cpp = False
-            sync_payload = {
-                "success": True,
-                "skipped": True,
-                "reason": "official_mode_preserves_login",
-                "message": "官方登录启动已跳过供应商同步，保留 token/上下文等安全增强。",
-            }
-            _set_codex_start_progress(job_id, "sync_skipped", 60, "官方直连不进入本地代理/AMR，已跳过历史同步。", sync=sync_payload)
+            target_provider, target_model, official_effective = _official_history_sync_target(mgr)
+            sync_payload, sync_status = _run_conditional_history_sync(
+                job_id,
+                body,
+                start_mode,
+                target_provider=target_provider,
+                target_model=target_model,
+                progress=42,
+                changed_message="正在按官方登录态检查聊天记录同步；目标未变化时会自动跳过...",
+            )
+            sync_payload["official_effective_settings"] = official_effective
+            if sync_status >= 400:
+                result = {"success": False, "error": "同步失败，取消启动", "sync": sync_payload}
+                _set_codex_start_progress(job_id, "sync_failed", 100, "历史同步失败，已取消启动。", result=result, sync=sync_payload)
+                return result
         else:
             use_cpp = body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
             _set_codex_start_progress(job_id, "proxy_start", 12, "正在启动本地代理并自动退避端口...")
@@ -1535,23 +1699,21 @@ def create_app() -> Flask:
                 }
                 _set_codex_start_progress(job_id, "provider_config_failed", 100, result["error"], result=result)
                 return result
-            backup_before = _coerce_bool(body.get("backup_before_sync"), False)
-            _set_codex_start_progress(
+            target_provider = "codex_enhance_manager"
+            target_model = str(body.get("proxy_model", "auto") or "auto")
+            sync_payload, sync_status = _run_conditional_history_sync(
                 job_id,
-                "history_sync",
-                20,
-                "正在完整同步历史记录；默认不做完整备份，避免启动被备份拖慢...",
-            )
-            sync_payload, sync_status = _run_sync_with_backup(
-                backup_mgr,
-                path_config=_sync_paths_from_config(),
-                backup_before=backup_before,
+                body,
+                start_mode,
+                target_provider=target_provider,
+                target_model=target_model,
+                progress=20,
+                changed_message="正在同步历史记录；大历史可能需要几分钟，默认不做完整备份...",
             )
             if sync_status >= 400:
                 result = {"success": False, "error": "同步失败，取消启动", "sync": sync_payload}
                 _set_codex_start_progress(job_id, "sync_failed", 100, "历史同步失败，已取消启动。", result=result, sync=sync_payload)
                 return result
-            _set_codex_start_progress(job_id, "history_synced", 68, "历史同步完成，正在准备启动 Codex...", sync=sync_payload)
 
         injection_settings = _resolve_codex_injection_settings(
             config,
@@ -3733,7 +3895,15 @@ def create_app() -> Flask:
     def proxy_status():
         """获取本地代理状态。"""
         try:
-            return jsonify(proxy_server.status())
+            status = proxy_server.status()
+            if not isinstance(status, dict):
+                status = {}
+            if not status.get("running") and _focused_or_enabled_provider_needs_proxy():
+                recovery = _ensure_proxy_for_current_provider("proxy_status_auto_recover", sync_codex_config=False)
+                recovered_status = recovery.get("status") if isinstance(recovery.get("status"), dict) else proxy_server.status()
+                status = dict(recovered_status) if isinstance(recovered_status, dict) else {}
+                status["auto_start"] = recovery
+            return jsonify(status)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

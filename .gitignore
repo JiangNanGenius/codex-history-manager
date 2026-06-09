@@ -10,6 +10,8 @@ codex_backups/
 .env
 .venv/
 venv/
+.test_deps/
+runtime_deps_local/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
@@ -17,6 +19,8 @@ node_modules/
 .DS_Store
 Thumbs.db
 .pytest_cache/
+_pytest_tmp/
+_pytest_run_tmp*/
 kimi-export-*.md
 
 # Local-only research and planning notes. Do not push these.
