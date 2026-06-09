@@ -1583,6 +1583,7 @@ def _create_main_window(api, hidden: bool = False):
         hidden=bool(hidden),
         confirm_close=False,
         text_select=True,
+        background_color="#0f172a",
     )
     try:
         window.events.shown += lambda window=window: _apply_main_window_icon(window)
@@ -1670,6 +1671,26 @@ def run_smoke_test() -> int:
                 elif not response.get_data():
                     print(f"Smoke test failed: {path} returned an empty body")
                     return 1
+                elif expected == "html":
+                    body = response.get_data(as_text=True)
+                    broken_markers = (
+                        "?/title>",
+                        "?/span>",
+                        "?/button>",
+                        "?/div>",
+                        "?/p>",
+                        "?/label>",
+                        "?/option>",
+                        "?/h1>",
+                        "?/h2>",
+                        "?/h3>",
+                    )
+                    if any(marker in body for marker in broken_markers):
+                        print(f"Smoke test failed: {path} contains broken HTML closing tags")
+                        return 1
+                    if path == "/" and "</title>" not in body.split("</head>", 1)[0]:
+                        print("Smoke test failed: / is missing a valid </title> before </head>")
+                        return 1
         print("Packaged EXE smoke test passed.")
         return 0
     except Exception:
@@ -1732,7 +1753,13 @@ def main():
     main_window = window
     _setup_tray(window)
     try:
-        webview.start(_on_webview_started, gui="edgechromium")
+        from app_paths import app_data_path, ensure_app_dirs
+        ensure_app_dirs()
+        webview.start(
+            _on_webview_started,
+            gui="edgechromium",
+            storage_path=str(app_data_path("webview_data")),
+        )
     finally:
         # If the WebView loop returns without going through the tray Exit item,
         # ensure background tray/Flask threads do not keep a ghost process alive.

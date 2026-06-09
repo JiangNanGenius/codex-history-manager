@@ -1,16 +1,20 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="appTitle">Codex 鍘嗗彶璁板綍绠＄悊鍣?/title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <title data-i18n="appTitle">Codex 鍘嗗彶璁板綍绠＄悊鍣</title>
+    <script src="/js/tailwindcss.js"></script>
+    <script src="/js/chart.js"></script>
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="apple-touch-icon" href="/app-icon.png">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="fonts/inter.css">
     <link rel="stylesheet" href="css/style.css">
+    <style>
+      /* Critical fallback: dark background so the window never shows white while resources load */
+      html, body { background-color: #0f172a; color: #f8fafc; }
+      body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; min-height: 100vh; }
+    </style>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -27,6 +31,24 @@
     </script>
 </head>
 <body class="bg-dark-900 text-dark-100 font-sans min-h-screen flex">
+    <!-- Boot debug overlay: always visible until JS initializes -->
+    <div id="boot-overlay" style="position:fixed;inset:0;background:#0f172a;z-index:99999;display:flex;align-items:center;justify-content:center;flex-direction:column;transition:opacity .4s;">
+        <h1 style="color:#f8fafc;font-family:system-ui,sans-serif;font-size:22px;margin:0;">Codex Manager</h1>
+        <p id="boot-status" style="color:#94a3b8;font-family:system-ui,sans-serif;font-size:13px;margin-top:8px;">Loading interface...</p>
+    </div>
+    <script>
+        window.onerror = function(msg, url, line, col, err) {
+            var el = document.getElementById('boot-status');
+            if (el) el.textContent = 'JS Error: ' + msg + ' (line ' + line + ')';
+            console.error('Window error:', msg, url, line, col, err);
+            return false;
+        };
+        window.addEventListener('unhandledrejection', function(e) {
+            var el = document.getElementById('boot-status');
+            if (el) el.textContent = 'Promise Error: ' + e.reason;
+            console.error('Unhandled rejection:', e.reason);
+        });
+    </script>
     <!-- Sidebar -->
     <aside id="sidebar" class="w-60 bg-gradient-to-b from-dark-950 to-dark-900 border-r border-dark-700/60 flex flex-col shrink-0 h-screen sticky top-0">
         <!-- Logo -->
@@ -101,7 +123,7 @@
         <div id="desktop-quick-actions" class="px-3 py-3 border-t border-dark-700/60 space-y-2">
             <button id="sidebar-open-monitor" onclick="showDesktopTokenMonitor()" class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold bg-accent-600/20 text-accent-100 border border-accent-500/30 hover:bg-accent-600/30 transition-all">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h16v10H4zM8 19h8M12 15v4"/></svg>
-                <span data-i18n="toggleMonitor">鎮诞绐?/span>
+                <span data-i18n="toggleMonitor">鎮诞绐</span>
             </button>
             <button id="sidebar-start-codex" onclick="startCodexFromQuickAction()" class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold bg-dark-900/80 text-dark-200 border border-dark-700 hover:bg-dark-800 transition-all">
                 <svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3l14 9-14 9V3z"/></svg>
@@ -148,7 +170,7 @@
                 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
                         <h2 class="text-lg font-semibold text-white" data-i18n="realtimeStats">Token 瀹炴椂缁熻</h2>
-                        <p class="text-sm text-dark-400 mt-1" data-i18n="realtimeDesc">鐢ㄩ噺浼氳嚜鍔ㄨ窡闅?Codex 鏇存柊锛涘惎鐢ㄦ湰鍦拌繛鎺ュ悗锛岀紦瀛樿妭鐪佷篃浼氫竴璧疯褰曘€?/p>
+                        <p class="text-sm text-dark-400 mt-1" data-i18n="realtimeDesc">鐢ㄩ噺浼氳嚜鍔ㄨ窡闅?Codex 鏇存柊锛涘惎鐢ㄦ湰鍦拌繛鎺ュ悗锛岀紦瀛樿妭鐪佷篃浼氫竴璧疯褰曘€</p>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
                         <span class="status-dot bg-emerald-500 pulse-dot"></span>
@@ -166,18 +188,18 @@
                     </div>
                     <div class="flex flex-wrap items-end gap-3">
                         <div class="min-w-[160px]">
-                            <label class="text-xs text-dark-400" data-i18n="alertThreshold">鎶ヨ闃堝€?/label>
+                            <label class="text-xs text-dark-400" data-i18n="alertThreshold">鎶ヨ闃堝€</label>
                             <input id="token-alert-threshold" type="number" class="input mt-1 w-full" min="0" step="1000" value="100000" onchange="saveTokenMonitorSettings()">
                         </div>
-                        <button id="stopwatch-start-btn" onclick="startStopwatch()" class="btn btn-primary" data-i18n="start">寮€濮嬭拷韪?/button>
+                        <button id="stopwatch-start-btn" onclick="startStopwatch()" class="btn btn-primary" data-i18n="start">寮€濮嬭拷韪</button>
                         <button id="stopwatch-stop-btn" onclick="stopStopwatch()" class="btn btn-warning" disabled data-i18n="stop">缁撴潫杩借釜</button>
                         <button onclick="resetStopwatch()" class="btn btn-secondary" data-i18n="reset">閲嶇疆</button>
-                        <button onclick="showDesktopTokenMonitor()" class="btn btn-ghost" data-i18n="toggleMonitor">鎮诞绐?/button>
+                        <button onclick="showDesktopTokenMonitor()" class="btn btn-ghost" data-i18n="toggleMonitor">鎮诞绐</button>
                     </div>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
-                        <div class="card-label" data-i18n="elapsed">宸茬敤鏃?/div>
+                        <div class="card-label" data-i18n="elapsed">宸茬敤鏃</div>
                         <div id="stopwatch-elapsed" class="card-value font-mono">00:00:00</div>
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
@@ -190,10 +212,10 @@
                     </div>
                     <div class="bg-dark-900 rounded-lg p-4 border border-dark-700">
                         <div class="card-label" data-i18n="cacheUsage">澶嶇敤鑺傜渷</div>
-                        <div id="stopwatch-cache-hits" class="card-value text-dark-400" data-i18n="cacheUsageUnavailable">澶嶇敤: -- 路 鏂板: -- 路 鍚堣: -- 路 涓嶆敮鎸?/div>
+                        <div id="stopwatch-cache-hits" class="card-value text-dark-400" data-i18n="cacheUsageUnavailable">澶嶇敤: -- 路 鏂板: -- 路 鍚堣: -- 路 涓嶆敮鎸</div>
                     </div>
                 </div>
-                <div id="stopwatch-note" class="text-xs text-dark-500 mt-3" data-i18n="noDataYet">鏆傛棤鏁版嵁锛岃鐐瑰嚮"寮€濮嬭拷韪?銆?/div>
+                <div id="stopwatch-note" class="text-xs text-dark-500 mt-3" data-i18n="noDataYet">鏆傛棤鏁版嵁锛岃鐐瑰嚮"寮€濮嬭拷韪?銆</div>
                 <div id="stopwatch-source-badges" class="usage-source-badges" aria-label="Usage sources"></div>
             </div>
 
@@ -202,7 +224,7 @@
                 <div class="flex flex-col xl:flex-row xl:items-end gap-4">
                     <div class="flex-1 grid grid-cols-1 md:grid-cols-4 gap-3">
                         <div>
-                            <label class="text-xs text-dark-400" data-i18n="startDate">寮€濮嬫棩鏈?/label>
+                            <label class="text-xs text-dark-400" data-i18n="startDate">寮€濮嬫棩鏈</label>
                             <input id="range-start" type="date" class="input mt-1 w-full" onchange="restartRangeRealtime()">
                         </div>
                         <div>
@@ -213,7 +235,7 @@
                             <label class="text-xs text-dark-400" data-i18n="granularity">绮掑害</label>
                             <select id="range-granularity" class="input mt-1 w-full" onchange="restartRangeRealtime()">
                                 <option value="day" data-i18n="granularityDay">鎸夊ぉ</option>
-                                <option value="hour" data-i18n="granularityHour">鎸夊皬鏃?/option>
+                                <option value="hour" data-i18n="granularityHour">鎸夊皬鏃</option>
                                 <option value="total" data-i18n="granularityTotal">浠呮€绘暟</option>
                             </select>
                         </div>
@@ -227,7 +249,7 @@
                         <span class="text-xs text-emerald-400" data-i18n="autoRefreshShort">鑷姩鍒锋柊</span>
                     </div>
                 </div>
-                <div id="range-note" class="text-xs text-dark-500 mt-3" data-i18n="rangeNote">鏌ヨ鍙傛暟鍙樺寲鏃朵細閲嶅惎杞骞剁珛鍗冲埛鏂般€?/div>
+                <div id="range-note" class="text-xs text-dark-500 mt-3" data-i18n="rangeNote">鏌ヨ鍙傛暟鍙樺寲鏃朵細閲嶅惎杞骞剁珛鍗冲埛鏂般€</div>
                 <div id="range-chart-wrapper" class="chart-container mt-4"><canvas id="chart-range-trend"></canvas></div>
             </div>
 
@@ -383,7 +405,7 @@
                 <h3 class="card-title" data-i18n="currentConfig">Current Config</h3>
                 <div class="grid grid-cols-2 gap-4 mt-3">
                     <div>
-                        <div class="text-xs text-dark-400 mb-1" data-i18n="modelProvider">妯″瀷鎻愪緵鍟?/div>
+                        <div class="text-xs text-dark-400 mb-1" data-i18n="modelProvider">妯″瀷鎻愪緵鍟</div>
                         <div id="sync-current-provider" class="text-sm font-mono text-accent-400">-</div>
                     </div>
                     <div>
@@ -418,7 +440,7 @@
                         <input id="sync-target-provider" type="text" class="input mt-1" placeholder="e.g. custom">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="targetModel">鐩爣妯″瀷锛堢暀绌哄垯浣跨敤褰撳墠璁剧疆锛?/label>
+                        <label class="text-xs text-dark-400" data-i18n="targetModel">鐩爣妯″瀷锛堢暀绌哄垯浣跨敤褰撳墠璁剧疆锛</label>
                         <input id="sync-target-model" type="text" class="input mt-1" placeholder="e.g. gpt-5">
                     </div>
                 </div>
@@ -430,7 +452,7 @@
                 <button onclick="oneClickSyncRestart()" class="btn btn-primary" data-i18n="oneClickSyncRestartBtn">One-Click Sync + Restart</button>
                 <label class="flex items-center gap-2 text-sm cursor-pointer text-dark-300">
                     <input id="sync-backup-before" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                    <span data-i18n="backupBeforeSync">鍚屾鍓嶅浠?/span>
+                    <span data-i18n="backupBeforeSync">鍚屾鍓嶅浠</span>
                 </label>
             </div>
             <!-- Sync Result -->
@@ -478,8 +500,8 @@
                 <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-[0.18em] text-accent-300" data-i18n="settingsWizardKicker">璁剧疆鍚戝</p>
-                        <h2 class="text-2xl font-bold text-white mt-1" data-i18n="settingsWizardTitle">鎸夋楠ゅ畬鎴愯缃?/h2>
-                        <p class="text-sm text-dark-400 mt-2 max-w-2xl" data-i18n="settingsWizardDesc">浠庤嚜鍔ㄦ娴嬪紑濮嬶紝渚濇琛ヨ矾寰勩€佷緵搴斿晢銆佽矾鐢便€佸浘鐗囧厹搴曘€佺敤閲忔彁閱掑拰鍚姩閫夐」锛涗互鍚庝篃鑳界洿鎺ュ洖鏉ヤ慨鏀逛换涓€姝ャ€?/p>
+                        <h2 class="text-2xl font-bold text-white mt-1" data-i18n="settingsWizardTitle">鎸夋楠ゅ畬鎴愯缃</h2>
+                        <p class="text-sm text-dark-400 mt-2 max-w-2xl" data-i18n="settingsWizardDesc">浠庤嚜鍔ㄦ娴嬪紑濮嬶紝渚濇琛ヨ矾寰勩€佷緵搴斿晢銆佽矾鐢便€佸浘鐗囧厹搴曘€佺敤閲忔彁閱掑拰鍚姩閫夐」锛涗互鍚庝篃鑳界洿鎺ュ洖鏉ヤ慨鏀逛换涓€姝ャ€</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button onclick="saveSettings()" class="btn btn-primary" data-i18n="saveSettings">淇濆瓨璁剧疆</button>
@@ -489,11 +511,11 @@
                 <div id="settings-wizard-steps" class="settings-wizard-steps mt-5" aria-label="Settings wizard steps">
                     <button type="button" class="settings-wizard-step active" data-settings-step-button="0" onclick="showSettingsWizardStep(0)">
                         <span class="settings-wizard-index">1</span>
-                        <span data-i18n="settingsWizardDetect">鑷姩妫€娴?/span>
+                        <span data-i18n="settingsWizardDetect">鑷姩妫€娴</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="1" onclick="showSettingsWizardStep(1)">
                         <span class="settings-wizard-index">2</span>
-                        <span data-i18n="settingsWizardBasics">璺緞涓庡亸濂?/span>
+                        <span data-i18n="settingsWizardBasics">璺緞涓庡亸濂</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="2" onclick="showSettingsWizardStep(2)">
                         <span class="settings-wizard-index">3</span>
@@ -501,31 +523,31 @@
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="3" onclick="showSettingsWizardStep(3)">
                         <span class="settings-wizard-index">4</span>
-                        <span data-i18n="settingsWizardRouting">璺敱涓庡獟浣?/span>
+                        <span data-i18n="settingsWizardRouting">璺敱涓庡獟浣</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="4" onclick="showSettingsWizardStep(4)">
                         <span class="settings-wizard-index">5</span>
-                        <span data-i18n="settingsWizardCost">鐢ㄩ噺涓庢彁閱?/span>
+                        <span data-i18n="settingsWizardCost">鐢ㄩ噺涓庢彁閱</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="5" onclick="showSettingsWizardStep(5)">
                         <span class="settings-wizard-index">6</span>
-                        <span data-i18n="settingsWizardStartup">鍚姩涓庡鎵?/span>
+                        <span data-i18n="settingsWizardStartup">鍚姩涓庡鎵</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="6" onclick="showSettingsWizardStep(6)">
                         <span class="settings-wizard-index">7</span>
-                        <span data-i18n="settingsWizardCleanup">鏁寸悊涓庢潵婧?/span>
+                        <span data-i18n="settingsWizardCleanup">鏁寸悊涓庢潵婧</span>
                     </button>
                     <button type="button" class="settings-wizard-step" data-settings-step-button="7" onclick="showSettingsWizardStep(7)">
                         <span class="settings-wizard-index">8</span>
-                        <span data-i18n="settingsWizardFinishStep">淇濆瓨妫€鏌?/span>
+                        <span data-i18n="settingsWizardFinishStep">淇濆瓨妫€鏌</span>
                     </button>
                 </div>
                 <div class="settings-wizard-toolbar mt-5">
                     <div>
                         <div id="settings-wizard-progress" class="text-sm font-semibold text-dark-100">1 / 8</div>
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="settingsWizardChecklistDesc">鎸夐『搴忓畬鎴愶紝涔熷彲浠ョ洿鎺ヨ烦鍒伴渶瑕佷慨鏀圭殑姝ラ銆?/p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="settingsWizardChecklistDesc">鎸夐『搴忓畬鎴愶紝涔熷彲浠ョ洿鎺ヨ烦鍒伴渶瑕佷慨鏀圭殑姝ラ銆</p>
                     </div>
-                    <button type="button" onclick="fillSettingsWizardDefaults()" class="btn btn-secondary text-xs" data-i18n="wizardFillDefaults">濉叆鎺ㄨ崘榛樿鍊?/button>
+                    <button type="button" onclick="fillSettingsWizardDefaults()" class="btn btn-secondary text-xs" data-i18n="wizardFillDefaults">濉叆鎺ㄨ崘榛樿鍊</button>
                 </div>
                 <div class="settings-wizard-current mt-4">
                     <div class="settings-wizard-progress-track" aria-hidden="true">
@@ -533,8 +555,8 @@
                     </div>
                     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-3">
                         <div>
-                            <div id="settings-wizard-current-title" class="text-sm font-semibold text-white">鑷姩妫€娴?/div>
-                            <div id="settings-wizard-current-detail" class="text-xs text-dark-400 mt-1">鍏堢‘璁?Codex 璺緞銆?/div>
+                            <div id="settings-wizard-current-title" class="text-sm font-semibold text-white">鑷姩妫€娴</div>
+                            <div id="settings-wizard-current-detail" class="text-xs text-dark-400 mt-1">鍏堢‘璁?Codex 璺緞銆</div>
                         </div>
                         <div id="settings-wizard-current-badge" class="text-xs font-semibold text-accent-200">1 / 8</div>
                     </div>
@@ -580,19 +602,19 @@
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="ccSwitchDbPath">鏈湴澶嶇敤璁板綍浣嶇疆锛堝彲閫夛級</label>
                         <input id="setting-cc-switch-db" type="text" class="input mt-1" placeholder="鏈湴澶嶇敤璁板綍浣嶇疆" data-i18n-placeholder="ccSwitchDbPlaceholder">
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">鐢ㄤ簬琛ュ厖澶嶇敤鑺傜渷缁熻锛涚暀绌轰篃涓嶅奖鍝嶅熀纭€鐢ㄩ噺缁熻銆?/p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">鐢ㄤ簬琛ュ厖澶嶇敤鑺傜渷缁熻锛涚暀绌轰篃涓嶅奖鍝嶅熀纭€鐢ㄩ噺缁熻銆</p>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="providerStorePath">渚涘簲鍟嗕繚瀛樹綅缃?/label>
+                        <label class="text-xs text-dark-400" data-i18n="providerStorePath">渚涘簲鍟嗕繚瀛樹綅缃</label>
                         <input id="setting-provider-store-path" type="text" class="input mt-1">
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="providerStoreDesc">鍙繚瀛樻湰搴旂敤鐨勪緵搴斿晢璁剧疆锛屼笉浼氱洿鎺ユ敼鍔?Codex 鐧诲綍淇℃伅銆?/p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="providerStoreDesc">鍙繚瀛樻湰搴旂敤鐨勪緵搴斿晢璁剧疆锛屼笉浼氱洿鎺ユ敼鍔?Codex 鐧诲綍淇℃伅銆</p>
                     </div>
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="tempDir">涓存椂鏂囦欢浣嶇疆</label>
                         <input id="setting-temp-dir" type="text" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="diagnosticsDir">妫€鏌ユ枃浠朵綅缃?/label>
+                        <label class="text-xs text-dark-400" data-i18n="diagnosticsDir">妫€鏌ユ枃浠朵綅缃</label>
                         <input id="setting-diagnostics-dir" type="text" class="input mt-1">
                     </div>
                     <div>
@@ -608,11 +630,11 @@
                         <input id="setting-request-log-retention-days" type="number" min="1" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="requestLogMaxMb">璁板綍鏈€澶уぇ灏忥紙MB锛?/label>
+                        <label class="text-xs text-dark-400" data-i18n="requestLogMaxMb">璁板綍鏈€澶уぇ灏忥紙MB锛</label>
                         <input id="setting-request-log-max-mb" type="number" min="1" step="1" class="input mt-1">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="proxyUpstreamTimeout">渚涘簲鍟嗗搷搴旇秴鏃?/label>
+                        <label class="text-xs text-dark-400" data-i18n="proxyUpstreamTimeout">渚涘簲鍟嗗搷搴旇秴鏃</label>
                         <input id="setting-proxy-upstream-timeout" type="number" min="1" max="3600" step="1" class="input mt-1">
                     </div>
                     <div>
@@ -713,7 +735,7 @@
                         <span data-i18n="darkMode">Dark Mode</span>
                     </label>
                 </div>
-                <p class="text-xs text-dark-500 mt-2" data-i18n="codexGoalsEnabledDesc">鍚敤 Codex 瀹樻柟 Goal mode锛涗繚瀛樺悗鍚屾鍒?config.toml 鐨?features.goals銆?/p>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="codexGoalsEnabledDesc">鍚敤 Codex 瀹樻柟 Goal mode锛涗繚瀛樺悗鍚屾鍒?config.toml 鐨?features.goals銆</p>
                 <div class="mt-4 flex flex-wrap gap-2">
                     <button onclick="exportTheme()" class="btn btn-secondary text-xs" data-i18n="exportTheme">Export Theme</button>
                     <button onclick="document.getElementById('theme-import-file').click()" class="btn btn-secondary text-xs" data-i18n="importTheme">Import Theme</button>
@@ -724,17 +746,17 @@
                         <input id="setting-desktop-monitor-enabled" type="checkbox" checked class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
                         <span data-i18n="desktopMonitorEnabled">鍚姩鏃舵樉绀烘闈㈡偓娴獥</span>
                     </label>
-                    <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorEnabledDesc">妗岄潰鐗堝惎鍔ㄥ悗鑷姩鏄剧ず Token 鎮诞绐楋紱浠嶅彲閫氳繃鎵樼洏鎴栧彸閿彍鍗曢殣钘忋€?/p>
+                    <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorEnabledDesc">妗岄潰鐗堝惎鍔ㄥ悗鑷姩鏄剧ず Token 鎮诞绐楋紱浠嶅彲閫氳繃鎵樼洏鎴栧彸閿彍鍗曢殣钘忋€</p>
                     <div class="mt-3 max-w-md">
                         <div class="flex items-center justify-between gap-3">
-                            <label for="setting-desktop-monitor-opacity" class="text-xs text-dark-400" data-i18n="desktopMonitorOpacity">鎮诞绐椾笉閫忔槑搴?/label>
+                            <label for="setting-desktop-monitor-opacity" class="text-xs text-dark-400" data-i18n="desktopMonitorOpacity">鎮诞绐椾笉閫忔槑搴</label>
                             <span id="setting-desktop-monitor-opacity-label" class="text-xs font-semibold text-accent-200">88%</span>
                         </div>
                         <input id="setting-desktop-monitor-opacity" type="range" min="35" max="100" step="1" value="88" oninput="syncMonitorOpacityLabel()" class="w-full mt-2 accent-blue-500">
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorOpacityDesc">鏁板€艰秺浣庤秺閫忔槑锛涗繚瀛樺悗鎮诞绐椾細鑷姩搴旂敤銆?/p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="desktopMonitorOpacityDesc">鏁板€艰秺浣庤秺閫忔槑锛涗繚瀛樺悗鎮诞绐椾細鑷姩搴旂敤銆</p>
                     </div>
                     <div class="flex flex-wrap gap-2 mt-3">
-                        <button onclick="showDesktopTokenMonitor()" class="btn btn-primary text-xs" data-i18n="showFloatingMonitorNow">绔嬪嵆鏄剧ず鎮诞绐?/button>
+                        <button onclick="showDesktopTokenMonitor()" class="btn btn-primary text-xs" data-i18n="showFloatingMonitorNow">绔嬪嵆鏄剧ず鎮诞绐</button>
                         <button onclick="startCodexFromQuickAction()" class="btn btn-secondary text-xs" data-i18n="startCodex">鍚姩 Codex</button>
                     </div>
                     <div class="text-xs text-dark-400 mt-4 mb-2" data-i18n="floatingMonitorFields">Floating Monitor Fields</div>
@@ -753,53 +775,53 @@
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
                         <h3 class="card-title" data-i18n="wizardProviderGuideTitle">娣诲姞渚涘簲鍟嗗拰妯″瀷</h3>
-                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardProviderGuideDesc">鍏堝鍏ヤ竴涓璁撅紝鍐嶈ˉ渚涘簲鍟嗗湴鍧€銆佸瘑閽ュ拰妯″瀷銆備竴涓緵搴斿晢鍙互鏀惧涓笉鍚岃兘鍔涚殑妯″瀷銆?/p>
+                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardProviderGuideDesc">鍏堝鍏ヤ竴涓璁撅紝鍐嶈ˉ渚涘簲鍟嗗湴鍧€銆佸瘑閽ュ拰妯″瀷銆備竴涓緵搴斿晢鍙互鏀惧涓笉鍚岃兘鍔涚殑妯″瀷銆</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="navigateTo('quick-setup')" class="btn btn-primary text-xs" data-i18n="wizardProviderGuidePrimary">鎵撳紑蹇€熻缃?/button>
-                        <button onclick="navigateTo('providers')" class="btn btn-secondary text-xs" data-i18n="wizardProviderGuideSecondary">绠＄悊渚涘簲鍟?/button>
+                        <button onclick="navigateTo('quick-setup')" class="btn btn-primary text-xs" data-i18n="wizardProviderGuidePrimary">鎵撳紑蹇€熻缃</button>
+                        <button onclick="navigateTo('providers')" class="btn btn-secondary text-xs" data-i18n="wizardProviderGuideSecondary">绠＄悊渚涘簲鍟</button>
                     </div>
                 </div>
                 <div id="settings-provider-wizard-summary" class="mt-5"></div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointDefaults">缂哄皯绔彛銆佽闂爣璇嗐€佽秴鏃剁瓑淇℃伅鏃讹紝浼氫紭鍏堜娇鐢ㄥ畨鍏ㄩ粯璁ゅ€笺€?/div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointModels">姣忎釜妯″瀷閮藉彲浠ュ崟鐙缃笂涓嬫枃銆佹帴鍙ｃ€佸浘鐗囪兘鍔涘拰鎺ㄧ悊娣卞害绛栫暐銆?/div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointLater">浠ュ悗淇敼鏃剁洿鎺ュ洖鍒颁緵搴斿晢椤碉紝涓嶉渶瑕侀噸璺戞暣涓悜瀵笺€?/div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointDefaults">缂哄皯绔彛銆佽闂爣璇嗐€佽秴鏃剁瓑淇℃伅鏃讹紝浼氫紭鍏堜娇鐢ㄥ畨鍏ㄩ粯璁ゅ€笺€</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointModels">姣忎釜妯″瀷閮藉彲浠ュ崟鐙缃笂涓嬫枃銆佹帴鍙ｃ€佸浘鐗囪兘鍔涘拰鎺ㄧ悊娣卞害绛栫暐銆</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardProviderPointLater">浠ュ悗淇敼鏃剁洿鎺ュ洖鍒颁緵搴斿晢椤碉紝涓嶉渶瑕侀噸璺戞暣涓悜瀵笺€</div>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="3">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
-                        <h3 class="card-title" data-i18n="wizardRoutingGuideTitle">璁剧疆璺敱鍜屽浘鐗囧厹搴?/h3>
-                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardRoutingGuideDesc">鍚庡彴璋冩暣妯″瀷椤哄簭鍚庯紝浼氬湪褰撳墠浼氳瘽缁撴潫鍚庡垏鍒版柊鐨勯€夋嫨锛涘浘鐗囧彲鎸囧畾鍏ㄥ眬鍏滃簳渚涘簲鍟嗐€?/p>
+                        <h3 class="card-title" data-i18n="wizardRoutingGuideTitle">璁剧疆璺敱鍜屽浘鐗囧厹搴</h3>
+                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardRoutingGuideDesc">鍚庡彴璋冩暣妯″瀷椤哄簭鍚庯紝浼氬湪褰撳墠浼氳瘽缁撴潫鍚庡垏鍒版柊鐨勯€夋嫨锛涘浘鐗囧彲鎸囧畾鍏ㄥ眬鍏滃簳渚涘簲鍟嗐€</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="navigateTo('providers')" class="btn btn-primary text-xs" data-i18n="wizardProviderGuideSecondary">绠＄悊渚涘簲鍟?/button>
+                        <button onclick="navigateTo('providers')" class="btn btn-primary text-xs" data-i18n="wizardProviderGuideSecondary">绠＄悊渚涘簲鍟</button>
                         <button onclick="navigateTo('diagnostics')" class="btn btn-secondary text-xs" data-i18n="navDiagnostics">妫€鏌ヤ笌鎭㈠</button>
                     </div>
                 </div>
                 <div id="settings-routing-wizard-summary" class="mt-5"></div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointOrder">鏅鸿兘璺敱鎸夊綋鍓嶉『搴忛€夋嫨锛屽仴搴风姸鎬佸紓甯告椂浼氫紭鍏堥伩寮€銆?/div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointMedia">绾枃鏈唬鐞嗕笉浼氳鏍囨垚鈥滃叏閮ㄤ笉鏀寔鈥濓紝鑰屾槸鎻愮ず閰嶇疆濯掍綋渚涘簲鍟嗐€?/div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointNative">绾師鐢熶唬鐞嗚纭鍥剧墖鎺ュ彛鏄惁涔熺粡杩囧悓涓€涓緵搴斿晢鍦板潃銆?/div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointOrder">鏅鸿兘璺敱鎸夊綋鍓嶉『搴忛€夋嫨锛屽仴搴风姸鎬佸紓甯告椂浼氫紭鍏堥伩寮€銆</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointMedia">绾枃鏈唬鐞嗕笉浼氳鏍囨垚鈥滃叏閮ㄤ笉鏀寔鈥濓紝鑰屾槸鎻愮ず閰嶇疆濯掍綋渚涘簲鍟嗐€</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardRoutingPointNative">绾師鐢熶唬鐞嗚纭鍥剧墖鎺ュ彛鏄惁涔熺粡杩囧悓涓€涓緵搴斿晢鍦板潃銆</div>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="4">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h3 class="card-title" data-i18n="costCurrencyTitle">Cost & Currency</h3>
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="costCurrencyDesc">鍙墜鍔ㄨ缃眹鐜囷紱鍦ㄧ嚎姹囩巼鏆傛椂鍏抽棴锛岄伩鍏嶄笉纭畾缁撴灉銆?/p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="costCurrencyDesc">鍙墜鍔ㄨ缃眹鐜囷紱鍦ㄧ嚎姹囩巼鏆傛椂鍏抽棴锛岄伩鍏嶄笉纭畾缁撴灉銆</p>
                     </div>
                     <button onclick="saveCurrencySettings()" class="btn btn-secondary text-xs" data-i18n="saveCurrency">Save Currency</button>
                 </div>
                 <div class="mt-5 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4">
                     <h4 class="text-sm font-semibold text-amber-100" data-i18n="wizardAlertsGuideTitle">鐢ㄩ噺銆侀搴﹀拰浣欓鎻愰啋</h4>
-                    <p class="text-sm text-amber-100/80 mt-2" data-i18n="wizardAlertsGuideDesc">Token 鐢ㄩ噺浠?Codex 杈撳嚭璁板綍涓哄噯锛涢搴﹀拰浣欓鍙湁鍦ㄨ兘纭鏉ユ簮鏃舵墠寮€鍚€?/p>
+                    <p class="text-sm text-amber-100/80 mt-2" data-i18n="wizardAlertsGuideDesc">Token 鐢ㄩ噺浠?Codex 杈撳嚭璁板綍涓哄噯锛涢搴﹀拰浣欓鍙湁鍦ㄨ兘纭鏉ユ簮鏃舵墠寮€鍚€</p>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
-                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointUsage">鏈?Codex 浜嬩欢鏃朵紭鍏堜娇鐢ㄤ簨浠讹紱娌℃湁鏃跺彧鏄剧ず鍙‘璁ょ殑鏈湴璁板綍銆?/div>
-                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointQuota">棰濆害闇€瑕佸畼鏂规帴鍙ｃ€佸唴缃剼鏈垨浣犲鍏ョ殑鑴氭湰銆?/div>
-                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointBalance">浣欓浼樺厛鐢ㄥ畼鏂规墸璐癸紱娌℃湁浠锋牸鏃朵笉浼扮畻璐圭敤銆?/div>
+                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointUsage">鏈?Codex 浜嬩欢鏃朵紭鍏堜娇鐢ㄤ簨浠讹紱娌℃湁鏃跺彧鏄剧ず鍙‘璁ょ殑鏈湴璁板綍銆</div>
+                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointQuota">棰濆害闇€瑕佸畼鏂规帴鍙ｃ€佸唴缃剼鏈垨浣犲鍏ョ殑鑴氭湰銆</div>
+                        <div class="text-xs text-amber-50/75" data-i18n="wizardAlertsPointBalance">浣欓浼樺厛鐢ㄥ畼鏂规墸璐癸紱娌℃湁浠锋牸鏃朵笉浼扮畻璐圭敤銆</div>
                     </div>
                 </div>
                 <div id="settings-alerts-wizard-summary" class="mt-4"></div>
@@ -821,7 +843,7 @@
                         <input id="currency-api-key" type="password" class="input mt-1" placeholder="淇濆瓨鍦ㄦ湰鍦帮紝瀵煎嚭鏃朵細闅愯棌" data-i18n-placeholder="fxApiKeyPlaceholder">
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="ttlHours">淇濆瓨灏忔椂鏁?/label>
+                        <label class="text-xs text-dark-400" data-i18n="ttlHours">淇濆瓨灏忔椂鏁</label>
                         <input id="currency-ttl-hours" type="number" class="input mt-1" min="1" value="24">
                     </div>
                 </div>
@@ -849,7 +871,7 @@
                     <div>
                         <h3 class="card-title" data-i18n="startupElevation">Startup & Elevation</h3>
                         <p class="text-xs text-dark-500 mt-1" data-i18n="startupElevationDesc">Windows startup changes require explicit confirmation; preview and status are read-only.</p>
-                        <p class="text-xs text-amber-300 mt-2" data-i18n="startupElevationHelp">鏅€氬紑鏈哄惎鍔ㄤ笉浼氭彁鏉冿紱闇€瑕佺鐞嗗憳鏉冮檺鏃朵細浣跨敤 Windows 浠诲姟璁″垝銆?/p>
+                        <p class="text-xs text-amber-300 mt-2" data-i18n="startupElevationHelp">鏅€氬紑鏈哄惎鍔ㄤ笉浼氭彁鏉冿紱闇€瑕佺鐞嗗憳鏉冮檺鏃朵細浣跨敤 Windows 浠诲姟璁″垝銆</p>
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button onclick="loadStartupStatus()" class="btn btn-secondary text-xs" data-i18n="refreshStatus">Refresh Status</button>
@@ -874,13 +896,13 @@
                         </select>
                     </div>
                     <div>
-                        <label class="text-xs text-dark-400" data-i18n="closeButtonAction">鍏抽棴绐楀彛鏃?/label>
+                        <label class="text-xs text-dark-400" data-i18n="closeButtonAction">鍏抽棴绐楀彛鏃</label>
                         <select id="setting-close-button-action" class="input mt-1 w-full">
                             <option value="ask" data-i18n="closeAction_ask">姣忔璇㈤棶</option>
-                            <option value="exit" data-i18n="closeAction_exit">鐩存帴閫€鍑虹▼搴?/option>
-                            <option value="tray" data-i18n="closeAction_tray">缂╁皬鍒版墭鐩?/option>
+                            <option value="exit" data-i18n="closeAction_exit">鐩存帴閫€鍑虹▼搴</option>
+                            <option value="tray" data-i18n="closeAction_tray">缂╁皬鍒版墭鐩</option>
                         </select>
-                        <p class="text-xs text-dark-500 mt-1" data-i18n="closeButtonActionDesc">榛樿璇㈤棶鏃讹細鏄€€鍑虹▼搴忥紝鍚︾缉灏忓埌鎵樼洏銆?/p>
+                        <p class="text-xs text-dark-500 mt-1" data-i18n="closeButtonActionDesc">榛樿璇㈤棶鏃讹細鏄€€鍑虹▼搴忥紝鍚︾缉灏忓埌鎵樼洏銆</p>
                     </div>
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="taskName">Task Name</label>
@@ -923,19 +945,19 @@
                         <button onclick="createDesktopShortcut('start_codex')" class="btn btn-secondary text-xs" data-i18n="createStartCodexShortcut">Create Start Codex Shortcut</button>
                     </div>
                 </div>
-                <p class="text-xs text-dark-500 mt-2" data-i18n="pluginUnlockEnabledDesc">鎺у埗鏈湴/闈炲畼鏂逛緵搴斿晢鐨勬彃浠剁被澧炲己銆傚畼鏂圭櫥褰曟€佷笉浼氳繘鍏ユ湰鍦拌矾鐢辨垨 AMR锛屼絾浠嶅厑璁稿畨鍏ㄧ殑鐣岄潰娉ㄥ叆澧炲己銆?/p>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="pluginUnlockEnabledDesc">鎺у埗鏈湴/闈炲畼鏂逛緵搴斿晢鐨勬彃浠剁被澧炲己銆傚畼鏂圭櫥褰曟€佷笉浼氳繘鍏ユ湰鍦拌矾鐢辨垨 AMR锛屼絾浠嶅厑璁稿畨鍏ㄧ殑鐣岄潰娉ㄥ叆澧炲己銆</p>
                 <p class="text-xs text-dark-500 mt-2" data-i18n="desktopShortcutDesc">Desktop shortcuts are optional: one opens this manager, the other starts Codex through this app.</p>
                 <pre id="startup-preview-result" class="preview-code mt-4" data-i18n="noPreviewYet">No preview yet.</pre>
                 <div class="mt-5 border-t border-dark-800 pt-5">
                     <div class="flex flex-wrap items-center justify-between gap-3">
                         <div>
                             <h4 class="text-sm font-semibold text-dark-100" data-i18n="autoApprovalPromptTitle">鑷姩瀹℃壒瑙勫垯</h4>
-                            <p class="text-xs text-dark-500 mt-1" data-i18n="autoApprovalPromptDesc">杩欓噷鍙互璋冩暣鏈湴鍔╂墜鐨勫垽鏂鍒欙紝鐢ㄦ潵鍐冲畾浣庨闄╂搷浣滄槸鍚﹁嚜鍔ㄧ户缁紱鏁忔劅鍐呭浼氬厛闅愯棌銆?/p>
+                            <p class="text-xs text-dark-500 mt-1" data-i18n="autoApprovalPromptDesc">杩欓噷鍙互璋冩暣鏈湴鍔╂墜鐨勫垽鏂鍒欙紝鐢ㄦ潵鍐冲畾浣庨闄╂搷浣滄槸鍚﹁嚜鍔ㄧ户缁紱鏁忔劅鍐呭浼氬厛闅愯棌銆</p>
                         </div>
                         <button onclick="restoreAutoApprovalPromptDefault()" class="btn btn-secondary text-xs" data-i18n="restoreDefaultPrompt">鎭㈠榛樿</button>
                     </div>
                     <textarea id="setting-auto-approval-system-prompt" class="input mt-3 w-full font-mono min-h-[170px]" rows="8" spellcheck="false"></textarea>
-                    <p class="text-xs text-dark-500 mt-2" data-i18n="autoApprovalPromptHint">寤鸿淇濈暀锛氶珮椋庨櫓鍋滀笅鏉ラ棶浣狅紝浣庨闄╁啀鑷姩缁х画銆?/p>
+                    <p class="text-xs text-dark-500 mt-2" data-i18n="autoApprovalPromptHint">寤鸿淇濈暀锛氶珮椋庨櫓鍋滀笅鏉ラ棶浣狅紝浣庨闄╁啀鑷姩缁х画銆</p>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="6">
@@ -974,7 +996,7 @@
                 </div>
                 <div class="mt-5 border-t border-dark-800 pt-5">
                     <h4 class="text-sm font-semibold text-dark-200" data-i18n="sourceInfoTitle">椤圭洰鏉ユ簮</h4>
-                    <p class="text-xs text-dark-500 mt-1" data-i18n="sourceInfoDesc">鏈蒋浠舵潵鑷叕寮€浠撳簱锛屼笅杞姐€佸弽棣堝拰鏌ョ湅鏇存柊閮藉彲浠ヤ粠杩欓噷杩涘叆銆?/p>
+                    <p class="text-xs text-dark-500 mt-1" data-i18n="sourceInfoDesc">鏈蒋浠舵潵鑷叕寮€浠撳簱锛屼笅杞姐€佸弽棣堝拰鏌ョ湅鏇存柊閮藉彲浠ヤ粠杩欓噷杩涘叆銆</p>
                     <div class="flex flex-wrap items-center gap-3 mt-3">
                         <a href="https://github.com/JiangNanGenius/Codex-Enhance-Manager" target="_blank" rel="noopener noreferrer" class="inline-flex items-center text-sm font-semibold text-accent-300 hover:text-accent-200">
                             GitHub: JiangNanGenius/Codex-Enhance-Manager
@@ -985,48 +1007,48 @@
                         <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                             <div>
                                 <h5 class="text-sm font-semibold text-dark-100" data-i18n="updateTitle">鑷姩鏇存柊</h5>
-                                <p class="text-xs text-dark-500 mt-1" data-i18n="updateDesc">妫€鏌?GitHub Releases 涓殑鏂扮増 EXE锛屼笅杞藉悗鍏抽棴鏈▼搴忓苟杩愯鏂扮増鍗冲彲銆?/p>
+                                <p class="text-xs text-dark-500 mt-1" data-i18n="updateDesc">妫€鏌?GitHub Releases 涓殑鏂扮増 EXE锛屼笅杞藉悗鍏抽棴鏈▼搴忓苟杩愯鏂扮増鍗冲彲銆</p>
                             </div>
                             <div class="flex flex-wrap gap-2">
-                                <button onclick="checkForUpdates(true)" class="btn btn-secondary text-xs" data-i18n="checkUpdates">妫€鏌ユ洿鏂?/button>
+                                <button onclick="checkForUpdates(true)" class="btn btn-secondary text-xs" data-i18n="checkUpdates">妫€鏌ユ洿鏂</button>
                                 <button id="download-update-btn" onclick="downloadLatestUpdate()" class="btn btn-primary text-xs" data-i18n="downloadUpdate" disabled>涓嬭浇鏇存柊</button>
                             </div>
                         </div>
                         <div class="flex flex-wrap items-center gap-4 mt-4">
                             <label class="flex items-center gap-2 text-sm cursor-pointer">
                                 <input id="setting-update-check-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                                <span data-i18n="updateCheckEnabled">鎵撳紑璁剧疆鏃惰嚜鍔ㄦ鏌?/span>
+                                <span data-i18n="updateCheckEnabled">鎵撳紑璁剧疆鏃惰嚜鍔ㄦ鏌</span>
                             </label>
                             <label class="flex items-center gap-2 text-sm cursor-pointer">
                                 <input id="setting-update-include-prerelease" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                                <span data-i18n="updateIncludePrerelease">鍖呭惈棰勫彂甯冪増鏈?/span>
+                                <span data-i18n="updateIncludePrerelease">鍖呭惈棰勫彂甯冪増鏈</span>
                             </label>
                         </div>
-                        <div id="update-status" class="mt-4 text-sm text-dark-300" data-i18n="updateStatusIdle">杩樻病鏈夋鏌ユ洿鏂般€?/div>
+                        <div id="update-status" class="mt-4 text-sm text-dark-300" data-i18n="updateStatusIdle">杩樻病鏈夋鏌ユ洿鏂般€</div>
                     </div>
                 </div>
             </div>
             <div class="card settings-step-panel" data-settings-step-panel="7">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
-                        <h3 class="card-title" data-i18n="wizardFinishGuideTitle">淇濆瓨鍓嶆鏌?/h3>
-                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardFinishGuideDesc">纭璺緞銆佷緵搴斿晢銆佽矾鐢卞拰鎻愰啋閮借兘鐞嗚В鍚庡啀淇濆瓨锛涚己椤瑰彲浠ュ厛鐢ㄩ粯璁ゅ€笺€?/p>
+                        <h3 class="card-title" data-i18n="wizardFinishGuideTitle">淇濆瓨鍓嶆鏌</h3>
+                        <p class="text-sm text-dark-400 mt-2" data-i18n="wizardFinishGuideDesc">纭璺緞銆佷緵搴斿晢銆佽矾鐢卞拰鎻愰啋閮借兘鐞嗚В鍚庡啀淇濆瓨锛涚己椤瑰彲浠ュ厛鐢ㄩ粯璁ゅ€笺€</p>
                     </div>
                     <button onclick="saveSettings()" class="btn btn-primary text-xs" data-i18n="saveSettings">淇濆瓨璁剧疆</button>
                 </div>
                 <div id="settings-finish-wizard-summary" class="mt-5"></div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5">
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSave">淇濆瓨鍙啓鍏ユ湰搴旂敤閰嶇疆锛屽奖鍝?Codex 鐨勬搷浣滀細鍗曠嫭纭銆?/div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSource">椤圭洰鏉ユ簮鍜屾洿鏂板叆鍙ｅ湪鏁寸悊涓庢潵婧愭楠や腑銆?/div>
-                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointReturn">鍚庣画淇敼鍙洿鎺ヨ烦鍒颁换鎰忔楠ゃ€?/div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSave">淇濆瓨鍙啓鍏ユ湰搴旂敤閰嶇疆锛屽奖鍝?Codex 鐨勬搷浣滀細鍗曠嫭纭銆</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointSource">椤圭洰鏉ユ簮鍜屾洿鏂板叆鍙ｅ湪鏁寸悊涓庢潵婧愭楠や腑銆</div>
+                    <div class="rounded-xl border border-dark-800 bg-dark-950/45 p-4 text-sm text-dark-300" data-i18n="wizardFinishPointReturn">鍚庣画淇敼鍙洿鎺ヨ烦鍒颁换鎰忔楠ゃ€</div>
                 </div>
             </div>
             <div class="card settings-wizard-actions">
                 <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                    <p class="text-sm text-dark-400" data-i18n="settingsWizardSaveHint">姣忎竴姝ラ兘鍙互鍏堥瑙堟垨璋冩暣锛屾渶鍚庣偣鍑讳繚瀛樿缃€?/p>
+                    <p class="text-sm text-dark-400" data-i18n="settingsWizardSaveHint">姣忎竴姝ラ兘鍙互鍏堥瑙堟垨璋冩暣锛屾渶鍚庣偣鍑讳繚瀛樿缃€</p>
                     <div class="flex flex-wrap gap-2">
-                        <button id="settings-wizard-prev" onclick="showPreviousSettingsWizardStep()" class="btn btn-secondary" data-i18n="settingsWizardPrevious">涓婁竴姝?/button>
-                        <button id="settings-wizard-next" onclick="showNextSettingsWizardStep()" class="btn btn-secondary" data-i18n="settingsWizardNext">涓嬩竴姝?/button>
+                        <button id="settings-wizard-prev" onclick="showPreviousSettingsWizardStep()" class="btn btn-secondary" data-i18n="settingsWizardPrevious">涓婁竴姝</button>
+                        <button id="settings-wizard-next" onclick="showNextSettingsWizardStep()" class="btn btn-secondary" data-i18n="settingsWizardNext">涓嬩竴姝</button>
                         <button onclick="saveSettings()" class="btn btn-primary" data-i18n="saveSettings">淇濆瓨璁剧疆</button>
                     </div>
                 </div>

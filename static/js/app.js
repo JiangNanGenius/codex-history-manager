@@ -320,6 +320,13 @@ function showToast(message, type = 'info', duration = 3000) {
 // ─────────────── Init ───────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Hide boot overlay once DOM is ready
+    const bootOverlay = document.getElementById('boot-overlay');
+    if (bootOverlay) {
+        bootOverlay.style.opacity = '0';
+        setTimeout(() => bootOverlay.remove(), 500);
+    }
+
     // Search debounce
     const searchInput = document.getElementById('session-search');
     if (searchInput) {

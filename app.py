@@ -103,6 +103,19 @@ from local_proxy_auth import preserve_redacted_local_proxy_token, redact_local_p
 from responses_adapter import models_url
 
 
+def _bundle_root() -> Path:
+    """Return the source root, or PyInstaller's extraction root in packaged mode."""
+    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+
+
+def _static_dir() -> Path:
+    return _bundle_root() / "static"
+
+
+def _asset_dir() -> Path:
+    return _bundle_root()
+
+
 UNINSTALL_CLEANUP_CONFIRMATION = "UNINSTALL_CLEANUP"
 START_MODE_PROXY_INJECTION = "proxy_injection"
 START_MODE_PRESERVE_LOGIN_PROXY = "preserve_login_proxy"
@@ -1093,9 +1106,11 @@ def create_app() -> Flask:
     """
     app = Flask(
         __name__,
-        static_folder="static",
+        static_folder=str(_static_dir()),
         static_url_path="",
     )
+    app.config["CODEX_BUNDLE_ROOT"] = str(_bundle_root())
+    app.config["CODEX_STATIC_DIR"] = str(_static_dir())
     app.config["JSON_AS_ASCII"] = False
 
     # 全局状态
@@ -1571,24 +1586,22 @@ def create_app() -> Flask:
     @app.route("/")
     def index():
         """返回 SPA 主页面"""
-        return send_from_directory("static", "index.html")
+        return send_from_directory(str(_static_dir()), "index.html")
 
     @app.route("/app-icon.png")
     def app_icon_png():
         """返回应用内品牌图标。"""
-        asset_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-        return send_from_directory(asset_dir, "icon.png")
+        return send_from_directory(str(_asset_dir()), "icon.png")
 
     @app.route("/favicon.ico")
     def favicon():
         """返回窗口和浏览器使用的图标。"""
-        asset_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-        return send_from_directory(asset_dir, "icon.ico")
+        return send_from_directory(str(_asset_dir()), "icon.ico")
 
     @app.route("/monitor")
     def monitor():
         """返回桌面 Token 悬浮监控窗页面"""
-        return send_from_directory("static", "monitor.html")
+        return send_from_directory(str(_static_dir()), "monitor.html")
 
     # ─────────────── 会话 API ───────────────
 

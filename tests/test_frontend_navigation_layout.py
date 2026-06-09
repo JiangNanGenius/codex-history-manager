@@ -1,7 +1,43 @@
+import re
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+BROKEN_HTML_CLOSER_RE = re.compile(r"\?/[A-Za-z][A-Za-z0-9-]*>")
+
+
+def test_static_html_has_no_mojibake_broken_closing_tags():
+    for path in [
+        ROOT / "static" / "index.html",
+        ROOT / "static" / "monitor.html",
+    ]:
+        html = path.read_text(encoding="utf-8")
+        assert not BROKEN_HTML_CLOSER_RE.search(html), path
+    index = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    assert "</title>" in index.split("</head>", 1)[0]
+
+
+def test_flask_serves_frontend_assets_outside_project_cwd(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEX_ENHANCE_MANAGER_SMOKE_TEST", "1")
+
+    from app import create_app
+
+    flask_app = create_app()
+    flask_app.config["TESTING"] = True
+    with flask_app.test_client() as client:
+        index_response = client.get("/")
+        assert index_response.status_code == 200
+        index_html = index_response.get_data(as_text=True)
+        assert "</title>" in index_html
+        assert not BROKEN_HTML_CLOSER_RE.search(index_html)
+        assert client.get("/js/app.js").status_code == 200
+        assert client.get("/js/tailwindcss.js").status_code == 200
+        assert client.get("/js/chart.js").status_code == 200
+        assert client.get("/css/style.css").status_code == 200
+        assert client.get("/fonts/inter.css").status_code == 200
 
 
 def test_inactive_pages_do_not_keep_layout_space():
