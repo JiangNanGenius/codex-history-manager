@@ -11,6 +11,8 @@ permissions:
 jobs:
   build-release-exe:
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
 
     steps:
       - name: Checkout

@@ -11,6 +11,19 @@ import os
 import shutil
 from pathlib import Path
 
+
+def _configure_utf8_stdio() -> None:
+    """Keep Windows CI logs from crashing on non-ASCII build messages."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+_configure_utf8_stdio()
+
+
 PROJECT_DIR = Path(__file__).parent
 OUTPUT_DIR = PROJECT_DIR / "dist"
 DESKTOP_DIR = Path("C:/Users/Public/Desktop")
