@@ -26,7 +26,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             patch("app.ProviderRegistry") as MockProviderRegistry,
             patch("app.AutoApprovalModelReviewer"),
             patch("app.LocalProxyServer") as MockLocalProxyServer,
-            patch("app.AMRRegistry"),
+            patch("app.AMRRegistry") as MockAMRRegistry,
             patch("app.QuotaManager"),
             patch("app.StartupManager"),
             patch("app.DesktopShortcutManager") as MockDesktopShortcutManager,
@@ -44,6 +44,51 @@ class CodexIntegrationApiTest(unittest.TestCase):
             MockLocalProxyServer.return_value.status.return_value = {}
             self.proxy_server = MockLocalProxyServer.return_value
             self.provider_registry = MockProviderRegistry.return_value
+            self.provider_registry.list_providers.return_value = {
+                "success": True,
+                "focus_provider_id": "test-provider",
+                "providers": [{
+                    "id": "test-provider",
+                    "short_alias": "test",
+                    "display_name": "Test Provider",
+                    "enabled": True,
+                    "local_proxy_routing": True,
+                    "base_url": "https://example.test/v1",
+                    "models": [{
+                        "id": "test-model",
+                        "enabled": True,
+                        "context_window": 128000,
+                        "capabilities": {"text": True, "vision": False},
+                    }],
+                }],
+            }
+            def current_amr_groups():
+                payload = self.provider_registry.list_providers.return_value
+                providers = payload.get("providers", []) if isinstance(payload, dict) else []
+                focus_provider_id = payload.get("focus_provider_id", "") if isinstance(payload, dict) else ""
+                provider = next((item for item in providers if item.get("id") == focus_provider_id), None)
+                if provider is None and providers:
+                    provider = providers[0]
+                models = provider.get("models", []) if isinstance(provider, dict) else []
+                model = models[0] if models else {"id": "test-model", "context_window": 128000}
+                provider_id = provider.get("id", "test-provider") if isinstance(provider, dict) else "test-provider"
+                model_id = model.get("id", "test-model") if isinstance(model, dict) else "test-model"
+                return {
+                    "groups": [{
+                        "id": "default",
+                        "display_name": "Smart Routing",
+                        "candidates": [{
+                            "id": f"{provider_id}/{model_id}",
+                            "provider_id": provider_id,
+                            "model_id": model_id,
+                            "enabled": True,
+                            "context_window": model.get("context_window", 128000) if isinstance(model, dict) else 128000,
+                            "capabilities": {"text": True, "vision": False},
+                        }],
+                    }],
+                }
+
+            MockAMRRegistry.return_value.list_groups.side_effect = current_amr_groups
             MockDesktopShortcutManager.return_value.create_shortcuts.return_value = {
                 "success": True,
                 "shortcuts": [],
@@ -291,6 +336,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
                 "enabled": True,
                 "local_proxy_routing": True,
                 "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+                "models": [{"id": "ark-code-latest", "enabled": True, "context_window": 256000}],
             }],
         }
         self.proxy_server.start.return_value = True
@@ -299,6 +345,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             {"running": False, "port": 51235},
             {"running": True, "port": 51236, "base_url": "http://127.0.0.1:51236/v1"},
         ]
+        self.proxy_server.start.reset_mock()
 
         response = app.test_client().get("/api/proxy/status")
 
@@ -506,6 +553,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             "switch_only": False,
             "local_proxy_routing": True,
             "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "models": [{"id": "ark-code-latest", "enabled": True, "context_window": 256000}],
         }
         self.provider_registry.list_providers.return_value = {
             "success": True,
@@ -532,7 +580,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertFalse(data["official_mode"])
         sync_with_backup.assert_called_once()
         self.assertEqual(sync_with_backup.call_args.kwargs["target_provider"], "codex_enhance_manager")
-        self.assertEqual(sync_with_backup.call_args.kwargs["target_model"], "auto")
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_model"], "amr/default")
 
     def test_start_codex_current_focus_third_party_skips_history_when_already_third_party(self):
         app = self._app()
@@ -544,6 +592,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             "switch_only": False,
             "local_proxy_routing": True,
             "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "models": [{"id": "ark-code-latest", "enabled": True, "context_window": 256000}],
         }
         self.provider_registry.list_providers.return_value = {
             "success": True,
@@ -582,6 +631,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             "switch_only": False,
             "local_proxy_routing": True,
             "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "models": [{"id": "ark-code-latest", "enabled": True, "context_window": 256000}],
         }
         self.provider_registry.list_providers.return_value = {
             "success": True,
@@ -623,6 +673,57 @@ class CodexIntegrationApiTest(unittest.TestCase):
                 time.sleep(0.08)
             self.assertEqual(status.get("status"), "complete")
 
+    def test_start_codex_reports_launch_heartbeat_while_waiting(self):
+        app = self._app()
+        provider = {
+            "id": "volcengine-plan",
+            "display_name": "Ark Coding Plan",
+            "enabled": True,
+            "switch_only": False,
+            "local_proxy_routing": True,
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "models": [{"id": "ark-code-latest", "enabled": True, "context_window": 256000}],
+        }
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "volcengine-plan",
+            "providers": [provider],
+        }
+        self.proxy_server.status.return_value = {
+            "running": True,
+            "port": 51235,
+            "base_url": "http://127.0.0.1:51235/v1",
+        }
+
+        def slow_start(*args, **kwargs):
+            time.sleep(2.25)
+            return True, "started"
+
+        with (
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)),
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", side_effect=slow_start),
+        ):
+            client = app.test_client()
+            started = client.post("/api/codex/start", json={"start_mode": "current_focus", "async": True})
+            self.assertEqual(started.status_code, 200)
+            status_url = started.get_json()["status_url"]
+            saw_launch_heartbeat = False
+            for _ in range(35):
+                time.sleep(0.1)
+                status = client.get(status_url).get_json()
+                if status.get("stage") == "launching" and int(status.get("progress") or 0) > 82:
+                    saw_launch_heartbeat = True
+                    break
+            self.assertTrue(saw_launch_heartbeat)
+            for _ in range(20):
+                status = client.get(status_url).get_json()
+                if status.get("status") == "complete":
+                    break
+                time.sleep(0.1)
+            self.assertEqual(status.get("status"), "complete")
+
     def test_start_codex_skips_history_sync_when_signature_is_current(self):
         app = self._app()
         provider = {
@@ -631,6 +732,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             "enabled": True,
             "local_proxy_routing": True,
             "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "models": [{"id": "ark-code-latest", "enabled": True, "context_window": 256000}],
         }
         self.provider_registry.list_providers.return_value = {
             "success": True,
@@ -647,7 +749,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             "version": 1,
             "start_mode": "preserve_login_proxy",
             "target_provider": "codex_enhance_manager",
-            "target_model": "auto",
+            "target_model": "amr/default",
             "codex_home": codex_home,
             "paths": {"db_path": "", "sessions_dir": "", "archived_dir": ""},
         }

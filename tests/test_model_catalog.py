@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from capabilities import normalize_capabilities
-from model_catalog import UnifiedModelCatalog
+from model_catalog import CODEX_SMART_ROUTING_MODEL_ID, UnifiedModelCatalog
 from providers import ProviderRegistry
 
 
@@ -121,6 +121,63 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         self.assertEqual(len(injection), 1)
         self.assertEqual(injection[0]["id"], "openai/gpt-5")
         self.assertEqual(injection[0]["name"], "GPT-5")
+
+    def test_codex_models_response_uses_codex_model_info_schema(self):
+        providers = [
+            {
+                "id": "p1",
+                "short_alias": "openai",
+                "enabled": True,
+                "catalog_visibility": "always_visible",
+                "models": [{"id": "gpt-5", "enabled": True, "display_name": "GPT-5", "context_window": 128000}],
+            }
+        ]
+
+        response = UnifiedModelCatalog(providers).build_codex_models_response(include_smart_routing=False)
+
+        self.assertEqual(len(response["models"]), 1)
+        model = response["models"][0]
+        self.assertEqual(model["slug"], "openai/gpt-5")
+        self.assertEqual(model["display_name"], "GPT-5")
+        self.assertEqual(model["visibility"], "list")
+        self.assertEqual(model["shell_type"], "shell_command")
+        self.assertEqual(model["context_window"], 128000)
+        self.assertEqual(model["max_context_window"], 128000)
+        self.assertEqual(model["input_modalities"], ["text"])
+        self.assertTrue(model["supports_parallel_tool_calls"])
+        self.assertIn("base_instructions", model)
+
+    def test_codex_models_response_adds_smart_routing_with_min_context(self):
+        providers = [
+            {
+                "id": "p1",
+                "short_alias": "a",
+                "enabled": True,
+                "catalog_visibility": "selected_models",
+                "models": [{"id": "m1", "enabled": True, "selected": True, "context_window": 256000}],
+            },
+            {
+                "id": "p2",
+                "short_alias": "b",
+                "enabled": True,
+                "catalog_visibility": "selected_models",
+                "capabilities": {"vision": True},
+                "models": [{"id": "m2", "enabled": True, "selected": True, "context_window": 64000}],
+            },
+        ]
+        groups = [{
+            "id": "default",
+            "candidates": [
+                {"provider_id": "p1", "model_id": "m1", "enabled": True, "context_window": 256000},
+                {"provider_id": "p2", "model_id": "m2", "enabled": True, "context_window": 64000},
+            ],
+        }]
+
+        response = UnifiedModelCatalog(providers).build_codex_models_response(amr_groups=groups)
+
+        self.assertEqual(response["models"][0]["slug"], CODEX_SMART_ROUTING_MODEL_ID)
+        self.assertEqual(response["models"][0]["context_window"], 64000)
+        self.assertEqual(response["models"][0]["input_modalities"], ["text", "image"])
 
     def test_injection_data_keeps_codex_visible_fields_ascii(self):
         providers = [

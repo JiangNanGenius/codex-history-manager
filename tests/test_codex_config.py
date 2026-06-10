@@ -132,12 +132,14 @@ class CodexConfigManagerTest(unittest.TestCase):
             proxy_model="codex-auto",
             goals_enabled=True,
             local_proxy_bearer_token="cem_lp_test_" + ("x" * 48),
+            model_catalog_json="C:/demo/model_catalog.json",
         )
 
         provider = patch["model_providers"]["codex_enhance_manager"]
         self.assertEqual(provider["wire_api"], "responses")
         self.assertNotEqual(provider["wire_api"], "chat")
         self.assertEqual(provider["base_url"], "http://127.0.0.1:51235/v1")
+        self.assertEqual(patch["model_catalog_json"], "C:/demo/model_catalog.json")
         self.assertNotIn("provider", patch)
         self.assertNotIn("defaults", patch)
 
@@ -202,18 +204,45 @@ class CodexConfigManagerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             mgr = CodexConfigManager(codex_home=str(tmpdir))
             token = "cem_lp_test_" + ("x" * 48)
+            catalog = {"models": [{
+                "slug": "amr/default",
+                "display_name": "Smart Routing",
+                "description": "Routes requests",
+                "supported_reasoning_levels": [],
+                "shell_type": "shell_command",
+                "visibility": "list",
+                "supported_in_api": True,
+                "priority": 0,
+                "availability_nux": None,
+                "upgrade": None,
+                "base_instructions": "base",
+                "supports_reasoning_summaries": False,
+                "support_verbosity": False,
+                "default_verbosity": None,
+                "apply_patch_tool_type": "freeform",
+                "truncation_policy": {"mode": "tokens", "limit": 10000},
+                "supports_parallel_tool_calls": True,
+                "context_window": 128000,
+                "max_context_window": 128000,
+                "experimental_supported_tools": [],
+            }]}
             result = mgr.write_provider_config(
                 preserve_official_auth=True,
                 goals_enabled=True,
                 local_proxy_bearer_token=token,
+                model_catalog=catalog,
             )
             self.assertTrue(result["success"])
             self.assertTrue(mgr.config_path.exists())
+            self.assertTrue(mgr.model_catalog_path.exists())
             config = load_config_toml(str(mgr.config_path))
             self.assertEqual(config.get("model_provider"), "codex_enhance_manager")
+            self.assertEqual(config.get("model"), "amr/default")
+            self.assertEqual(config.get("model_catalog_json"), str(mgr.model_catalog_path))
             self.assertNotIn("provider", config)
             self.assertNotIn("defaults", config)
             self.assertTrue(codex_goals_enabled_from_config(config))
+            self.assertEqual(mgr.read_model_catalog()["models"][0]["slug"], "amr/default")
             provider = config.get("model_providers", {}).get("codex_enhance_manager", {})
             self.assertEqual(provider.get("base_url"), "http://127.0.0.1:51235/v1")
             self.assertEqual(provider.get("wire_api"), "responses")

@@ -81,6 +81,7 @@ from request_capabilities import classify_request_capabilities
 from amr_registry import AMRRegistry, DEFAULT_STORE_PATH as DEFAULT_AMR_STORE_PATH
 from provider_routing import provider_allows_local_routing
 from local_proxy_auth import local_proxy_token_fingerprint
+from model_catalog import UnifiedModelCatalog
 from reasoning_policy import (
     apply_reasoning_policy_to_chat_request,
     apply_reasoning_policy_to_responses_request,
@@ -113,6 +114,21 @@ _upstream_timeout_seconds = DEFAULT_UPSTREAM_TIMEOUT
 _upstream_retry_attempts = 0
 _upstream_retry_backoff_ms = 250
 _local_proxy_bearer_token = ""
+
+
+def _infer_single_catalog_focus_provider_id(providers: List[Dict[str, Any]]) -> str:
+    candidates: List[str] = []
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        if not provider_allows_local_routing(provider):
+            continue
+        if str(provider.get("catalog_visibility") or "focused_only") == "hidden":
+            continue
+        provider_id = str(provider.get("id") or "")
+        if provider_id:
+            candidates.append(provider_id)
+    return candidates[0] if len(candidates) == 1 else ""
 
 
 def _set_provider_store_path(path: str) -> None:
@@ -317,7 +333,16 @@ def _resolve_provider_route_for_model(
     classification: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Resolve a request to either a direct provider route or an AMR candidate."""
-    provider = _resolve_provider_for_model(model_id)
+    raw_model_id = str(model_id or "").strip().lower()
+    amr_group_id = _amr_group_id_from_model_id(model_id)
+    force_amr = bool(
+        amr_group_id
+        and (
+            raw_model_id in {"auto", "smart-routing", "smart_routing"}
+            or raw_model_id.startswith(("amr/", "rotation/"))
+        )
+    )
+    provider = None if force_amr else _resolve_provider_for_model(model_id)
     if provider:
         upstream_model = _extract_model_id_for_upstream({"model": model_id}, provider)
         route_model = _find_enabled_model(provider, upstream_model) or {}
@@ -336,7 +361,7 @@ def _resolve_provider_route_for_model(
             "request_capabilities": (classification or {}).get("capabilities", ["text"]),
         }
 
-    group_id = _amr_group_id_from_model_id(model_id)
+    group_id = amr_group_id
     if not group_id:
         return {
             "success": False,
@@ -409,6 +434,8 @@ def _amr_group_id_from_model_id(model_id: str) -> str:
     raw = str(model_id or "").strip()
     if not raw:
         return ""
+    if raw.lower() in {"auto", "smart-routing", "smart_routing"}:
+        return "default"
     if "/" not in raw:
         return raw
     prefix, group_id = raw.split("/", 1)
@@ -1169,32 +1196,33 @@ class ProxyHandler(BaseHTTPRequestHandler):
         返回当前可用的模型列表。
 
         设计意图：
-          - 从 providers.json 读取所有 enabled provider 的 enabled models。
-          - 模型 ID 格式为 "{short_alias}/{model_id}"，避免同名模型冲突。
-          - 这是 Codex CLI 选择模型时的来源之一。
+          - Codex 的模型刷新接口要求 `{models: [ModelInfo...]}`，不是
+            OpenAI 标准 `{object: "list", data: [...]}`。
+          - 与启动时写入的 `model_catalog_json` 使用同一个生成器，避免
+            Codex 静态目录和代理远端刷新看到两套模型名。
         """
-        providers = _load_providers_with_secrets()
-        data: List[Dict[str, Any]] = []
-        for p in providers:
-            if not provider_allows_local_routing(p):
-                continue
-            alias = p.get("short_alias", p.get("id", "unknown"))
-            for m in p.get("models", []):
-                if not isinstance(m, dict):
-                    continue
-                if not m.get("enabled", True):
-                    continue
-                model_id = m.get("id", "")
-                data.append({
-                    "id": f"{alias}/{model_id}",
-                    "object": "model",
-                    "owned_by": alias,
-                })
+        store = _load_provider_store_with_secrets()
+        providers = store.get("providers", [])
+        try:
+            groups_payload = AMRRegistry(str(_get_amr_store_path())).list_groups()
+        except Exception:
+            groups_payload = {"groups": []}
+        groups = groups_payload.get("groups", []) if isinstance(groups_payload, dict) else []
+        provider_list = providers if isinstance(providers, list) else []
+        focus_provider_id = str(store.get("focus_provider_id") or "")
+        if not focus_provider_id:
+            focus_provider_id = _infer_single_catalog_focus_provider_id(provider_list)
+        payload = UnifiedModelCatalog(
+            provider_list,
+            focus_provider_id=focus_provider_id,
+        ).build_codex_models_response(
+            amr_groups=[group for group in groups if isinstance(group, dict)] if isinstance(groups, list) else []
+        )
 
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
-        self.wfile.write(json.dumps({"object": "list", "data": data}, ensure_ascii=False).encode("utf-8"))
+        self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
     def _handle_chat_completions(self, body: bytes) -> None:
         """

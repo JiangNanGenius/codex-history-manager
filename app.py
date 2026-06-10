@@ -105,6 +105,7 @@ from codex_injector import DEFAULT_CDP_PORT, backend_url_from_env, inject_codex_
 from provider_routing import provider_allows_local_routing
 from local_proxy_auth import preserve_redacted_local_proxy_token, redact_local_proxy_token
 from responses_adapter import models_url
+from model_catalog import UnifiedModelCatalog
 
 
 def _bundle_root() -> Path:
@@ -450,6 +451,7 @@ def disable_codex_enhance_provider_config(
             next_config["model_providers"] = model_providers
         else:
             next_config.pop("model_providers", None)
+    next_config.pop("model_catalog_json", None)
     if goals_enabled is not None:
         next_config = merge_codex_goals_feature(next_config, bool(goals_enabled))
         result["goals_enabled"] = bool(goals_enabled)
@@ -1322,13 +1324,38 @@ def create_app() -> Flask:
         preserve_official_auth: Any = None,
         reason: str = "",
     ) -> Dict[str, Any]:
+        skip_autowrite_reason = ""
         if os.environ.get("CODEX_ENHANCE_MANAGER_DISABLE_CODEX_AUTOWRITE") == "1":
-            return {"success": True, "changed": False, "skipped": True, "reason": "disabled_by_env"}
+            skip_autowrite_reason = "disabled_by_env"
         if (
             (os.environ.get("PYTEST_CURRENT_TEST") or app.config.get("TESTING"))
             and os.environ.get("CODEX_ENHANCE_MANAGER_ALLOW_PYTEST_CODEX_AUTOWRITE") != "1"
         ):
-            return {"success": True, "changed": False, "skipped": True, "reason": "pytest_codex_autowrite_skip"}
+            skip_autowrite_reason = "pytest_codex_autowrite_skip"
+        base_url = str(proxy_base_url or _current_proxy_base_url())
+        try:
+            catalog_info = _build_codex_proxy_model_catalog(proxy_model)
+        except ValueError as exc:
+            return {
+                "success": False,
+                "changed": False,
+                "error": str(exc),
+                "proxy_base_url": base_url,
+                "reason": reason,
+            }
+        resolved_proxy_model = catalog_info["proxy_model"]
+        model_catalog = catalog_info["model_catalog"]
+        if skip_autowrite_reason:
+            return {
+                "success": True,
+                "changed": False,
+                "skipped": True,
+                "reason": skip_autowrite_reason,
+                "request_reason": reason,
+                "proxy_base_url": base_url,
+                "proxy_model": resolved_proxy_model,
+                "model_catalog_count": len(model_catalog.get("models", [])),
+            }
         mgr = CodexConfigManager()
         login_defaults = _official_login_defaults(mgr)
         preserve_auth = (
@@ -1336,34 +1363,86 @@ def create_app() -> Flask:
             if preserve_official_auth is None
             else _coerce_bool(preserve_official_auth, login_defaults["default_preserve_official_auth"])
         )
-        base_url = str(proxy_base_url or _current_proxy_base_url())
         preview = mgr.preview_write_provider(
             proxy_base_url=base_url,
-            proxy_model=proxy_model or "auto",
+            proxy_model=resolved_proxy_model,
             goals_enabled=_config_goals_enabled(config),
             local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
+            model_catalog=model_catalog,
         )
-        if not preview.get("will_write_config") and not preview.get("will_write_auth"):
+        if (
+            not preview.get("will_write_config")
+            and not preview.get("will_write_auth")
+            and not preview.get("will_write_catalog")
+        ):
             return {
                 "success": True,
                 "changed": False,
                 "skipped": True,
                 "message": "Codex 本地代理配置已是最新。",
                 "proxy_base_url": base_url,
+                "proxy_model": resolved_proxy_model,
+                "model_catalog_path": preview.get("model_catalog_path", ""),
+                "model_catalog_count": len(model_catalog.get("models", [])),
                 "reason": reason,
             }
         result = mgr.write_provider_config(
             proxy_base_url=base_url,
-            proxy_model=proxy_model or "auto",
+            proxy_model=resolved_proxy_model,
             preserve_official_auth=preserve_auth,
             goals_enabled=_config_goals_enabled(config),
             local_proxy_bearer_token=config.get("local_proxy_bearer_token", ""),
+            model_catalog=model_catalog,
         )
         result["changed"] = bool(result.get("success"))
         result["proxy_base_url"] = base_url
+        result["proxy_model"] = resolved_proxy_model
+        result["model_catalog_count"] = len(model_catalog.get("models", []))
         result["reason"] = reason
         result.update(login_defaults)
         return result
+
+    def _current_amr_groups_for_catalog() -> list[Dict[str, Any]]:
+        try:
+            payload = amr_registry.list_groups()
+        except Exception as exc:
+            diagnostics_collector.record_error("codex_model_catalog.amr_groups", str(exc))
+            return []
+        if not isinstance(payload, dict):
+            return []
+        groups = payload.get("groups")
+        return [group for group in groups if isinstance(group, dict)] if isinstance(groups, list) else []
+
+    def _build_codex_proxy_model_catalog(requested_model: Any = "") -> Dict[str, Any]:
+        try:
+            payload = _provider_payload(include_secrets=False)
+        except Exception as exc:
+            diagnostics_collector.record_error("codex_model_catalog.providers", str(exc))
+            payload = {"providers": [], "focus_provider_id": ""}
+        providers = payload.get("providers") if isinstance(payload, dict) else []
+        providers = [provider for provider in providers if isinstance(provider, dict)] if isinstance(providers, list) else []
+        focus_provider_id = str(payload.get("focus_provider_id") or "") if isinstance(payload, dict) else ""
+        model_catalog = UnifiedModelCatalog(
+            providers,
+            focus_provider_id=focus_provider_id,
+        ).build_codex_models_response(amr_groups=_current_amr_groups_for_catalog())
+        models = model_catalog.get("models") if isinstance(model_catalog, dict) else []
+        models = [model for model in models if isinstance(model, dict)]
+        if not models:
+            raise ValueError("没有可写入 Codex 的本地代理模型。请先启用供应商模型或同步智能路由。")
+        requested = str(requested_model or "").strip()
+        available_slugs = {str(model.get("slug") or "") for model in models}
+        if not requested or requested.lower() == "auto":
+            resolved = str(models[0].get("slug") or "")
+        elif requested in available_slugs:
+            resolved = requested
+        else:
+            resolved = str(models[0].get("slug") or "")
+        return {
+            "model_catalog": {"models": models},
+            "proxy_model": resolved,
+            "requested_model": requested,
+        }
 
     def _ensure_local_proxy_started() -> Dict[str, Any]:
         _sync_proxy_request_log_config()
@@ -1677,6 +1756,13 @@ def create_app() -> Flask:
         sync_payload["signature_payload"] = sync_signature_payload
         sync_payload["target_provider"] = target_provider
         sync_payload["target_model"] = target_model
+        _set_codex_start_progress(
+            job_id,
+            "history_sync_finalize",
+            66,
+            "历史同步已完成，正在记录同步状态并准备启动 Codex...",
+            sync=sync_payload,
+        )
         _persist_history_sync_signature(sync_signature, target_provider, target_model, sync_payload)
         _set_codex_start_progress(job_id, "history_synced", 68, "历史同步完成，正在准备启动 Codex...", sync=sync_payload)
         return sync_payload, sync_status
@@ -1732,7 +1818,13 @@ def create_app() -> Flask:
             **extra,
         )
 
-    def _start_codex_with_timeout(kwargs: Dict[str, Any], timeout_seconds: float = 30.0) -> tuple[bool, str]:
+    def _start_codex_with_timeout(
+        kwargs: Dict[str, Any],
+        timeout_seconds: float = 30.0,
+        job_id: str = "",
+        progress_start: int = 82,
+        progress_end: int = 94,
+    ) -> tuple[bool, str]:
         result: Dict[str, Any] = {}
 
         def worker() -> None:
@@ -1744,7 +1836,24 @@ def create_app() -> Flask:
 
         thread = threading.Thread(target=worker, name="codex-launch-call", daemon=True)
         thread.start()
-        thread.join(max(float(timeout_seconds or 30.0), 1.0))
+        timeout = max(float(timeout_seconds or 30.0), 1.0)
+        deadline = time.time() + timeout
+        tick = 0
+        while thread.is_alive():
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            thread.join(min(2.0, max(0.05, remaining)))
+            if thread.is_alive() and job_id:
+                tick += 1
+                progress_value = min(progress_end, progress_start + tick)
+                elapsed = int(max(0.0, timeout - max(deadline - time.time(), 0.0)))
+                _set_codex_start_progress(
+                    job_id,
+                    "launching",
+                    progress_value,
+                    f"正在等待 Codex 启动与注入完成，已用时 {elapsed} 秒...",
+                )
         if thread.is_alive():
             return False, "启动 Codex 超时。请检查 config.toml 是否含有 Codex 不支持字段，或先手动关闭残留 Codex 进程后重试。"
         return result.get("value") or (False, "启动 Codex 未返回结果")
@@ -1837,7 +1946,7 @@ def create_app() -> Flask:
                 _set_codex_start_progress(job_id, "provider_config_failed", 100, result["error"], result=result)
                 return result
             target_provider = "codex_enhance_manager"
-            target_model = str(body.get("proxy_model", "auto") or "auto")
+            target_model = str(provider_write.get("proxy_model") or body.get("proxy_model", "auto") or "auto")
             sync_payload, sync_status = _run_conditional_history_sync(
                 job_id,
                 body,
@@ -1897,7 +2006,7 @@ def create_app() -> Flask:
             "enable_cdp_injection": injection_settings["enabled"],
             "cdp_port": injection_settings["cdp_port"],
             "backend_url": body.get("_backend_url") or body.get("backend_url") or _current_backend_url(),
-        })
+        }, job_id=job_id)
         if ok:
             try:
                 config.set("codex_last_start_mode", start_mode)

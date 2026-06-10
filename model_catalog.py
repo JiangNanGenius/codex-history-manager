@@ -29,6 +29,24 @@ from typing import Any, Dict, List, Optional, Set
 from capabilities import merge_provider_model_capabilities
 from provider_routing import provider_allows_local_routing
 
+CODEX_DEFAULT_CONTEXT_WINDOW = 200000
+CODEX_SMART_ROUTING_MODEL_ID = "amr/default"
+CODEX_SMART_ROUTING_DISPLAY_NAME = "Smart Routing"
+CODEX_BASE_INSTRUCTIONS = (
+    "You are Codex, an agentic coding assistant. Help the user safely inspect, "
+    "edit, test, and explain code in their local workspace. Use tools when they "
+    "are needed, preserve user changes, and keep responses concise and actionable."
+)
+CODEX_REASONING_DESCRIPTIONS = {
+    "none": "No reasoning effort",
+    "minimal": "Minimal reasoning effort",
+    "low": "Fast responses with lighter reasoning",
+    "medium": "Balanced reasoning depth",
+    "high": "Greater reasoning depth for complex work",
+    "xhigh": "Extra high reasoning depth",
+    "max": "Maximum provider-supported reasoning depth",
+}
+
 
 class UnifiedModelCatalog:
     """
@@ -162,6 +180,46 @@ class UnifiedModelCatalog:
             }
             for entry in catalog["entries"]
         ]
+
+    def build_codex_models_response(
+        self,
+        amr_groups: Optional[List[Dict[str, Any]]] = None,
+        include_smart_routing: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Build Codex's native `ModelsResponse` schema.
+
+        Current Codex does not parse the OpenAI `/v1/models` list shape for its
+        model picker. It expects `{ "models": [ModelInfo, ...] }`, and unknown
+        slugs fall back to hidden metadata. This method emits the full required
+        `ModelInfo` fields so Codex can show proxy models as first-class models.
+        """
+        catalog = self.build_catalog()
+        models: List[Dict[str, Any]] = []
+        priority = 0
+        if include_smart_routing:
+            smart = _smart_routing_codex_model(self.providers, amr_groups or [], priority=priority)
+            if smart:
+                models.append(smart)
+                priority += 1
+        for entry in catalog["entries"]:
+            models.append(_codex_model_info_from_entry(entry, priority=priority))
+            priority += 1
+        return {"models": models}
+
+    def default_codex_model_id(
+        self,
+        amr_groups: Optional[List[Dict[str, Any]]] = None,
+        include_smart_routing: bool = True,
+    ) -> str:
+        response = self.build_codex_models_response(
+            amr_groups=amr_groups,
+            include_smart_routing=include_smart_routing,
+        )
+        models = response.get("models") if isinstance(response, dict) else []
+        if isinstance(models, list) and models:
+            return str(models[0].get("slug") or "")
+        return ""
 
     def find_entry(self, codex_model_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -359,3 +417,183 @@ def _catalog_id_segment(value: Any) -> str:
     text = str(value or "provider").strip().lower()
     text = re.sub(r"[^a-z0-9_.-]+", "-", text).strip("-")
     return text or "provider"
+
+
+def _codex_model_info_from_entry(entry: Dict[str, Any], priority: int = 0) -> Dict[str, Any]:
+    context_window = _positive_int(entry.get("context_window"), CODEX_DEFAULT_CONTEXT_WINDOW)
+    caps = entry.get("capabilities") if isinstance(entry.get("capabilities"), dict) else {}
+    profile = entry.get("reasoning_effort_profile") if isinstance(entry.get("reasoning_effort_profile"), dict) else {}
+    efforts = _codex_reasoning_efforts(profile)
+    default_effort = _codex_default_reasoning_effort(profile, efforts)
+    display = _catalog_segment(entry.get("codex_display_name") or entry.get("display_name"), entry.get("visible_model_id") or "model")
+    provider_alias = _catalog_segment(entry.get("provider_visible_alias") or entry.get("provider_alias"), "provider")
+    upstream = _catalog_segment(entry.get("upstream_model_id"), "model")
+    description = f"Routes to {provider_alias}/{upstream} through Codex Enhance Manager."
+    return _codex_model_info(
+        slug=str(entry.get("codex_model_id") or ""),
+        display_name=display,
+        description=description,
+        context_window=context_window,
+        input_modalities=_codex_input_modalities(caps),
+        priority=priority,
+        reasoning_efforts=efforts,
+        default_reasoning_effort=default_effort,
+    )
+
+
+def _smart_routing_codex_model(
+    providers: List[Dict[str, Any]],
+    amr_groups: List[Dict[str, Any]],
+    priority: int = 0,
+) -> Optional[Dict[str, Any]]:
+    default_group = None
+    for group in amr_groups:
+        if isinstance(group, dict) and str(group.get("id") or "") == "default":
+            default_group = group
+            break
+    if not default_group:
+        return None
+
+    provider_map = {str(provider.get("id") or ""): provider for provider in providers if isinstance(provider, dict)}
+    context_values: List[int] = []
+    merged_caps = {"text": True, "vision": False}
+    enabled_candidate_count = 0
+    for candidate in default_group.get("candidates", []):
+        if not isinstance(candidate, dict) or not candidate.get("enabled", True):
+            continue
+        provider = provider_map.get(str(candidate.get("provider_id") or ""))
+        if not provider_allows_local_routing(provider):
+            continue
+        model = _provider_model_by_id(provider or {}, str(candidate.get("model_id") or ""))
+        if not model or not model.get("enabled", True):
+            continue
+        enabled_candidate_count += 1
+        caps = merge_provider_model_capabilities(provider or {}, model)
+        merged_caps["vision"] = bool(merged_caps.get("vision") or caps.get("vision"))
+        context = _positive_int(
+            candidate.get("context_window") or model.get("context_window"),
+            0,
+        )
+        if context > 0:
+            context_values.append(context)
+
+    if enabled_candidate_count <= 0:
+        return None
+    context_window = min(context_values) if context_values else CODEX_DEFAULT_CONTEXT_WINDOW
+    return _codex_model_info(
+        slug=CODEX_SMART_ROUTING_MODEL_ID,
+        display_name=CODEX_SMART_ROUTING_DISPLAY_NAME,
+        description="Routes each request through the enabled Smart Routing group.",
+        context_window=context_window,
+        input_modalities=_codex_input_modalities(merged_caps),
+        priority=priority,
+        reasoning_efforts=["low", "medium", "high"],
+        default_reasoning_effort="medium",
+    )
+
+
+def _provider_model_by_id(provider: Dict[str, Any], model_id: str) -> Optional[Dict[str, Any]]:
+    requested = str(model_id or "").strip()
+    for model in provider.get("models", []):
+        if isinstance(model, dict) and str(model.get("id") or "").strip() == requested:
+            return model
+    return None
+
+
+def _codex_model_info(
+    slug: str,
+    display_name: str,
+    description: str,
+    context_window: int,
+    input_modalities: List[str],
+    priority: int,
+    reasoning_efforts: Optional[List[str]] = None,
+    default_reasoning_effort: str = "",
+) -> Dict[str, Any]:
+    efforts = [effort for effort in (reasoning_efforts or []) if effort]
+    model = {
+        "slug": slug,
+        "display_name": display_name or slug,
+        "description": description,
+        "supported_reasoning_levels": [
+            {
+                "effort": effort,
+                "description": CODEX_REASONING_DESCRIPTIONS.get(effort, f"{effort} reasoning effort"),
+            }
+            for effort in efforts
+        ],
+        "shell_type": "shell_command",
+        "visibility": "list",
+        "supported_in_api": True,
+        "priority": int(priority),
+        "additional_speed_tiers": [],
+        "service_tiers": [],
+        "default_service_tier": None,
+        "availability_nux": None,
+        "upgrade": None,
+        "base_instructions": CODEX_BASE_INSTRUCTIONS,
+        "supports_reasoning_summaries": False,
+        "default_reasoning_summary": "none",
+        "support_verbosity": False,
+        "default_verbosity": None,
+        "apply_patch_tool_type": "freeform",
+        "web_search_tool_type": "text",
+        "truncation_policy": {"mode": "tokens", "limit": 10000},
+        "supports_parallel_tool_calls": True,
+        "supports_image_detail_original": bool("image" in input_modalities),
+        "context_window": int(context_window),
+        "max_context_window": int(context_window),
+        "auto_compact_token_limit": None,
+        "effective_context_window_percent": 95,
+        "experimental_supported_tools": [],
+        "input_modalities": input_modalities or ["text"],
+        "supports_search_tool": False,
+        "use_responses_lite": False,
+        "auto_review_model_override": None,
+        "tool_mode": None,
+        "multi_agent_version": None,
+    }
+    if default_reasoning_effort:
+        model["default_reasoning_level"] = default_reasoning_effort
+    else:
+        model["default_reasoning_level"] = None
+    return model
+
+
+def _codex_input_modalities(capabilities: Dict[str, Any]) -> List[str]:
+    modalities = ["text"]
+    if capabilities.get("vision"):
+        modalities.append("image")
+    return modalities
+
+
+def _codex_reasoning_efforts(profile: Dict[str, Any]) -> List[str]:
+    supports = profile.get("supports_reasoning_effort")
+    if supports is False:
+        return []
+    raw_efforts = profile.get("reasoning_efforts")
+    if not isinstance(raw_efforts, list):
+        return []
+    result: List[str] = []
+    for effort in raw_efforts:
+        normalized = str(effort or "").strip().lower().replace("-", "_")
+        if normalized in CODEX_REASONING_DESCRIPTIONS and normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def _codex_default_reasoning_effort(profile: Dict[str, Any], efforts: List[str]) -> str:
+    default = str(profile.get("reasoning_effort_default") or "").strip().lower().replace("-", "_")
+    if default in efforts:
+        return default
+    if "medium" in efforts:
+        return "medium"
+    return efforts[0] if efforts else ""
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default)
+    return parsed if parsed > 0 else int(default)

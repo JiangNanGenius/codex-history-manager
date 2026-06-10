@@ -238,6 +238,11 @@ def load_auth_json(auth_path: str) -> Dict[str, Any]:
         return {}
 
 
+def load_json_file(path_value: str) -> Dict[str, Any]:
+    """Read a local JSON object safely."""
+    return load_auth_json(path_value)
+
+
 def save_auth_json(auth_path: str, data: Dict[str, Any]) -> None:
     """Write auth.json atomically."""
     path = Path(auth_path)
@@ -248,6 +253,11 @@ def save_auth_json(auth_path: str, data: Dict[str, Any]) -> None:
     if path.exists():
         shutil.copystat(path, tmp_path, follow_symlinks=False)
     tmp_path.replace(path)
+
+
+def save_json_file(path_value: str, data: Dict[str, Any]) -> None:
+    """Write a local JSON object atomically."""
+    save_auth_json(path_value, data)
 
 
 def backup_file(file_path: str, backup_dir: Optional[Path] = None) -> str:
@@ -450,16 +460,17 @@ def sanitize_codex_config_for_managed_write(config_data: Dict[str, Any]) -> Dict
 
 def build_codex_enhance_provider_config(
     proxy_base_url: str = "http://127.0.0.1:51235/v1",
-    proxy_model: str = "auto",
+    proxy_model: str = "amr/default",
     goals_enabled: Optional[bool] = None,
     local_proxy_bearer_token: str = "",
+    model_catalog_json: str = "",
 ) -> Dict[str, Any]:
     """Build a config.toml fragment for the local proxy provider."""
     base_url = str(proxy_base_url or "http://127.0.0.1:51235/v1").strip().rstrip("/")
     bearer_token = str(local_proxy_bearer_token or LOCAL_PROXY_BEARER_TOKEN).strip()
     config = {
         "model_provider": "codex_enhance_manager",
-        "model": proxy_model,
+        "model": str(proxy_model or "amr/default").strip() or "amr/default",
         "model_providers": {
             "codex_enhance_manager": {
                 "name": "Codex Enhance Manager",
@@ -470,6 +481,9 @@ def build_codex_enhance_provider_config(
             },
         },
     }
+    catalog_path = str(model_catalog_json or "").strip()
+    if catalog_path:
+        config["model_catalog_json"] = catalog_path
     if goals_enabled is not None:
         config = merge_toml_dict(config, build_codex_goals_config(bool(goals_enabled)))
     return config
@@ -483,7 +497,11 @@ class CodexConfigManager:
         self.codex_home = resolve_codex_home(codex_home)
         self.config_path = self.codex_home / "config.toml"
         self.auth_path = self.codex_home / "auth.json"
-        self.model_catalog_path = self.codex_home / "model_catalog.json"
+        self.model_catalog_path = (
+            self.codex_home / "model_catalog.json"
+            if has_custom_codex_home
+            else app_data_path("codex", "model_catalog.json")
+        )
         if backup_dir:
             self.backup_dir = Path(backup_dir)
         elif has_custom_codex_home:
@@ -498,7 +516,7 @@ class CodexConfigManager:
         return load_auth_json(str(self.auth_path))
 
     def read_model_catalog(self) -> Dict[str, Any]:
-        return load_auth_json(str(self.model_catalog_path))  # reuse JSON loader
+        return load_json_file(str(self.model_catalog_path))
 
     def get_auth_mode(self) -> str:
         return detect_auth_mode(self.read_auth())
@@ -528,30 +546,38 @@ class CodexConfigManager:
     def preview_write_provider(
         self,
         proxy_base_url: str = "http://127.0.0.1:51235/v1",
-        proxy_model: str = "auto",
+        proxy_model: str = "amr/default",
         goals_enabled: Optional[bool] = None,
         local_proxy_bearer_token: str = "",
+        model_catalog: Optional[Dict[str, Any]] = None,
+        model_catalog_path: str = "",
     ) -> Dict[str, Any]:
         """Generate a diff preview without writing anything."""
         current_config = sanitize_codex_config_for_managed_write(self.read_config())
+        catalog_path = str(model_catalog_path or self.model_catalog_path)
         desired_updates = build_codex_enhance_provider_config(
             proxy_base_url,
             proxy_model,
             goals_enabled,
             local_proxy_bearer_token,
+            catalog_path if model_catalog else "",
         )
         merged = merge_toml_dict(current_config, desired_updates)
 
         current_auth = self.read_auth()
         # We intentionally do NOT write third-party keys into auth.json by default.
         desired_auth = copy.deepcopy(current_auth)
+        current_catalog = self.read_model_catalog() if model_catalog else {}
+        desired_catalog = copy.deepcopy(model_catalog or {})
 
         return {
             "will_write_config": current_config != merged,
             "will_write_auth": current_auth != desired_auth,
-            "will_write_catalog": False,
+            "will_write_catalog": bool(model_catalog) and current_catalog != desired_catalog,
+            "model_catalog_path": catalog_path if model_catalog else "",
             "config_diff": _compute_diff(current_config, merged),
             "auth_diff": _compute_diff(current_auth, desired_auth),
+            "catalog_diff": _compute_diff(current_catalog, desired_catalog) if model_catalog else [],
             "restart_required": True,
             "preserve_official_oauth": is_official_oauth(current_auth),
             "auth_mode": self.get_auth_mode(),
@@ -561,10 +587,12 @@ class CodexConfigManager:
     def write_provider_config(
         self,
         proxy_base_url: str = "http://127.0.0.1:51235/v1",
-        proxy_model: str = "auto",
+        proxy_model: str = "amr/default",
         preserve_official_auth: bool = True,
         goals_enabled: Optional[bool] = None,
         local_proxy_bearer_token: str = "",
+        model_catalog: Optional[Dict[str, Any]] = None,
+        model_catalog_path: str = "",
     ) -> Dict[str, Any]:
         """
         将本地代理 provider 写入 Codex config.toml。
@@ -593,6 +621,7 @@ class CodexConfigManager:
             "backups": {},
             "restart_required": True,
             "errors": [],
+            "model_catalog_path": str(model_catalog_path or self.model_catalog_path) if model_catalog else "",
         }
 
         # 无论是否 preserve_official_auth，先备份 auth.json（如果存在）。
@@ -613,6 +642,21 @@ class CodexConfigManager:
             if config_backup:
                 result["backups"]["config_toml"] = config_backup
 
+        catalog_path = Path(model_catalog_path or self.model_catalog_path)
+        if model_catalog and catalog_path.exists():
+            catalog_backup = backup_file(str(catalog_path), self.backup_dir)
+            if catalog_backup:
+                result["backups"]["model_catalog_json"] = catalog_backup
+
+        if model_catalog:
+            try:
+                save_json_file(str(catalog_path), model_catalog)
+            except Exception as e:
+                result["errors"].append(f"model_catalog_json write failed: {e}")
+                if "model_catalog_json" in result["backups"]:
+                    restore_file(str(catalog_path), result["backups"]["model_catalog_json"])
+                return result
+
         # Build and merge config
         current_config = sanitize_codex_config_for_managed_write(self.read_config())
         updates = build_codex_enhance_provider_config(
@@ -620,6 +664,7 @@ class CodexConfigManager:
             proxy_model,
             goals_enabled,
             local_proxy_bearer_token,
+            str(catalog_path) if model_catalog else "",
         )
         merged = merge_toml_dict(current_config, updates)
 
@@ -631,6 +676,8 @@ class CodexConfigManager:
             # Rollback：将备份 copy 回原始路径，尽可能恢复到写入前状态
             if "config_toml" in result["backups"]:
                 restore_file(str(self.config_path), result["backups"]["config_toml"])
+            if "model_catalog_json" in result["backups"]:
+                restore_file(str(catalog_path), result["backups"]["model_catalog_json"])
             return result
 
         result["success"] = len(result["errors"]) == 0

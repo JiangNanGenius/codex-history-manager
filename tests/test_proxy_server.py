@@ -531,7 +531,8 @@ class LocalProxyServerTest(unittest.TestCase):
                 with urllib.request.urlopen(request, timeout=2) as response:
                     self.assertEqual(response.status, 200)
                     payload = json.loads(response.read().decode("utf-8"))
-                self.assertEqual(payload["object"], "list")
+                self.assertIn("models", payload)
+                self.assertIsInstance(payload["models"], list)
             finally:
                 server.stop()
 
@@ -1168,11 +1169,12 @@ class ProxyIntegrationTest(unittest.TestCase):
         status, headers, body = self._parse_response(raw)
         self.assertEqual(status, 200)
         data = json.loads(body.decode())
-        self.assertEqual(data["object"], "list")
-        ids = [m["id"] for m in data["data"]]
+        ids = [m["slug"] for m in data["models"]]
         self.assertIn("openai/gpt-5", ids)
-        owners = {m["id"]: m["owned_by"] for m in data["data"]}
-        self.assertEqual(owners["openai/gpt-5"], "openai")
+        model = next(m for m in data["models"] if m["slug"] == "openai/gpt-5")
+        self.assertEqual(model["display_name"], "gpt-5")
+        self.assertEqual(model["visibility"], "list")
+        self.assertEqual(model["context_window"], 200000)
 
     @patch("proxy_server._upstream_request")
     def test_responses_endpoint(self, mock_upstream):
