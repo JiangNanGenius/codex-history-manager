@@ -52,7 +52,7 @@ from auto_detect import detect_all
 from token_stats import TokenStats
 from codex_rollout_usage import get_codex_rollout_cache_stats
 from providers import ProviderRegistry, DEFAULT_STORE_PATH, merge_provider_update, normalize_model
-from amr_registry import AMRRegistry
+from amr_registry import AMRRegistry, DEFAULT_GROUP_DISPLAY_NAME, DEFAULT_GROUP_ID
 from codex_config import (
     CodexConfigManager,
     backup_file,
@@ -3498,7 +3498,7 @@ def create_app() -> Flask:
             group = amr_registry.add_candidates_to_group(
                 group_id,
                 candidates,
-                "Default Group" if group_id == "default" else group_id,
+                DEFAULT_GROUP_DISPLAY_NAME if group_id == DEFAULT_GROUP_ID else group_id,
             )
             return jsonify({
                 "success": True,
@@ -3596,13 +3596,13 @@ def create_app() -> Flask:
 
             from model_rotation import AdaptiveModelRotation
             amr = AdaptiveModelRotation([{
-                "id": "default",
-                "name": "Default Group",
+                "id": DEFAULT_GROUP_ID,
+                "name": DEFAULT_GROUP_DISPLAY_NAME,
                 "candidates": candidates,
             }])
 
             decision = amr.route(
-                group_id="default",
+                group_id=DEFAULT_GROUP_ID,
                 required_capabilities=required_capabilities,
                 required_context=required_context,
             )

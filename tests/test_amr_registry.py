@@ -20,7 +20,14 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from capabilities import normalize_capabilities
-from amr_registry import AMRRegistry, normalize_group, normalize_candidate, _empty_store
+from amr_registry import (
+    AMRRegistry,
+    DEFAULT_GROUP_DISPLAY_NAME,
+    DEFAULT_GROUP_ID,
+    normalize_group,
+    normalize_candidate,
+    _empty_store,
+)
 
 
 def test_default_store_path_uses_app_data():
@@ -29,6 +36,12 @@ def test_default_store_path_uses_app_data():
     assert amr_registry.DEFAULT_STORE_PATH.name == "groups.json"
     assert amr_registry.DEFAULT_STORE_PATH.parent.name == "amr"
     assert "Codex Enhance Manager" in str(amr_registry.DEFAULT_STORE_PATH)
+
+
+def test_default_group_question_corruption_is_repaired():
+    group = normalize_group({"id": DEFAULT_GROUP_ID, "display_name": "??????"})
+
+    assert group["display_name"] == DEFAULT_GROUP_DISPLAY_NAME
 
 
 def test_default_store_migrates_legacy_path(tmp_path, monkeypatch):
@@ -364,8 +377,8 @@ class TestAddCandidatesToGroup:
             },
         ])
 
-        assert group["id"] == "default"
-        assert group["display_name"] == "Default Group"
+        assert group["id"] == DEFAULT_GROUP_ID
+        assert group["display_name"] == DEFAULT_GROUP_DISPLAY_NAME
         assert group["upserted_count"] == 1
         assert len(group["candidates"]) == 1
         assert group["candidates"][0]["id"] == "p1/m1"
@@ -373,8 +386,8 @@ class TestAddCandidatesToGroup:
     def test_add_candidates_to_group_upserts_existing_candidate(self, tmp_path):
         reg = AMRRegistry(str(tmp_path / "amr.json"))
         reg.create_group({
-            "id": "default",
-            "display_name": "Default Group",
+            "id": DEFAULT_GROUP_ID,
+            "display_name": DEFAULT_GROUP_DISPLAY_NAME,
             "candidates": [
                 {
                     "id": "p1/m1",

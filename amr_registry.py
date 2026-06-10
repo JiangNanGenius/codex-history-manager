@@ -49,6 +49,8 @@ from providers import ProviderRegistry, normalize_capabilities, redact_secrets
 
 # Schema version：当 group/candidate 数据结构发生不兼容变更时递增。
 SCHEMA_VERSION = 1
+DEFAULT_GROUP_ID = "default"
+DEFAULT_GROUP_DISPLAY_NAME = "默认智能路由"
 # 默认存储路径：Windows 下为 Documents/Codex Enhance Manager/amr/groups.json。
 # 首次使用新路径时会从旧版 ~/.codex_enhance_manager/amr_groups.json 迁移。
 LEGACY_STORE_PATH = Path.home() / ".codex_enhance_manager" / "amr_groups.json"
@@ -62,6 +64,19 @@ def _empty_store() -> Dict[str, Any]:
         "groups": [],
         "updated_at": "",
     }
+
+
+def _looks_question_corrupted(value: Any) -> bool:
+    text = str(value or "").strip()
+    if "??" not in text:
+        return False
+    return not any(ord(ch) > 127 for ch in text)
+
+
+def _group_display_name_fallback(group_id: str) -> str:
+    if group_id == DEFAULT_GROUP_ID:
+        return DEFAULT_GROUP_DISPLAY_NAME
+    return group_id
 
 
 def normalize_candidate(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -156,8 +171,11 @@ def normalize_group(data: Dict[str, Any]) -> Dict[str, Any]:
             group_id = re.sub(r"[^a-z0-9_-]+", "-", display_name.lower()).strip("-_")
         if not group_id:
             group_id = f"group-{uuid.uuid4().hex[:8]}"
+    display_name_fallback = _group_display_name_fallback(group_id)
+    if _looks_question_corrupted(display_name):
+        display_name = display_name_fallback
     if not display_name:
-        display_name = group_id
+        display_name = display_name_fallback
     candidates = raw.get("candidates", [])
     if not isinstance(candidates, list):
         # 防御旧数据 corruption：candidates 不是列表时重置为空
@@ -382,8 +400,8 @@ class AMRRegistry:
                     break
         else:
             default_group = normalize_group({
-                "id": "default",
-                "display_name": "Default Group",
+                "id": DEFAULT_GROUP_ID,
+                "display_name": DEFAULT_GROUP_DISPLAY_NAME,
                 "candidates": candidates,
             })
             default_group["created_at"] = now_iso()
@@ -407,7 +425,7 @@ class AMRRegistry:
         if not group:
             group = normalize_group({
                 "id": target_group_id,
-                "display_name": display_name or ("Default Group" if target_group_id == "default" else target_group_id),
+                "display_name": display_name or _group_display_name_fallback(target_group_id),
                 "candidates": [],
             })
             group["created_at"] = now_iso()
