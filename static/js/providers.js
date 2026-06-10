@@ -839,6 +839,7 @@ function renderProviderEditor(provider) {
                 <div class="text-xs text-dark-500">${escapeHtml(t('providerFallbackMoved'))}</div>
             </div>
 
+            ${renderProviderBillingSettings(provider, providerReadOnly)}
             ${renderProviderModelDetails(provider, providerReadOnly, capabilityLocked)}
 
             <details class="advanced-box mt-4">
@@ -912,10 +913,6 @@ function renderProviderEditor(provider) {
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                     ${renderTextarea('media-image-overrides-json', t('imageOverridesJson'), JSON.stringify(mediaProfile.image_model_overrides || {}, null, 2), 5, '', providerReadOnly || nativeBehaviorLocked)}
                 </div>
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderTextarea('provider-quota-json', t('quotaCheckJson'), JSON.stringify(provider.quota_check || {}, null, 2), 8, t('quotaCheckJsonDesc'), providerReadOnly)}
-                    ${renderTextarea('provider-quota-script-js', t('quotaScriptJs'), providerQuotaScriptCode(provider), 8, t('quotaScriptJsDesc'), providerReadOnly)}
-                </div>
             </details>
 
             <div class="flex flex-wrap gap-2 mt-5">
@@ -966,6 +963,145 @@ function renderCodexOfficialProviderViewer(provider) {
             <div class="mt-4 text-xs text-amber-200 bg-amber-950/20 border border-amber-700/40 rounded-lg p-3">
                 ${escapeHtml(t('officialAmrRiskNotice'))}
             </div>
+        </div>
+    `;
+}
+
+function renderProviderBillingSettings(provider, disabled = false) {
+    const pricing = provider && provider.pricing && typeof provider.pricing === 'object' ? provider.pricing : {};
+    const quota = quotaCheckValue(provider);
+    const disabledAttr = disabled ? ' disabled' : '';
+    const checkedAttr = pricing.input_includes_cache_read === false ? '' : ' checked';
+    return `
+        <div class="provider-billing-settings mt-5 rounded-xl border border-dark-800 bg-dark-950/45 p-4">
+            <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                <div>
+                    <h4 class="text-sm font-semibold text-white">${escapeHtml(t('providerBillingTitle'))}</h4>
+                    <p class="text-xs text-dark-500 mt-1">${escapeHtml(t('providerBillingDesc'))}</p>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('billingMode'))}</label>
+                    <input id="provider-pricing-billing-mode" class="input mt-1 w-full" value="${escapeAttr(pricing.billing_mode || '')}" placeholder="metered"${disabledAttr}>
+                </div>
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('costEstimationMode'))}</label>
+                    <select id="provider-pricing-cost-estimation" class="input mt-1 w-full"${disabledAttr}>
+                        ${['auto', 'enabled', 'disabled', 'manual'].map(value => `
+                            <option value="${escapeAttr(value)}" ${(pricing.cost_estimation || 'auto') === value ? 'selected' : ''}>${escapeHtml(providerOptionLabel(value))}</option>
+                        `).join('')}
+                    </select>
+                </div>
+                <label class="flex items-center gap-2 text-sm text-dark-300 bg-dark-900/60 border border-dark-700 rounded-lg px-3 py-2 md:mt-5">
+                    <input id="provider-pricing-input-includes-cache" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500"${checkedAttr}${disabledAttr}>
+                    <span>${escapeHtml(t('inputIncludesCacheRead'))}</span>
+                </label>
+                <div>
+                    <label class="text-xs text-dark-400">${escapeHtml(t('tierBasis'))}</label>
+                    <input id="provider-pricing-tier-basis" class="input mt-1 w-full" value="${escapeAttr(pricing.tier_basis || '')}" placeholder="input_tokens"${disabledAttr}>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+                ${renderPricingInput('provider', 'input_per_million', t('inputPrice'), pricingNumberValue(pricing, 'input_per_million'), disabled)}
+                ${renderPricingInput('provider', 'output_per_million', t('outputPrice'), pricingNumberValue(pricing, 'output_per_million'), disabled)}
+                ${renderPricingInput('provider', 'cache_read_per_million', t('cacheReadPrice'), pricingNumberValue(pricing, 'cache_read_per_million'), disabled)}
+                ${renderPricingInput('provider', 'cache_write_per_million', t('cacheWritePrice'), pricingNumberValue(pricing, 'cache_write_per_million'), disabled)}
+                ${renderPricingInput('provider', 'reasoning_per_million', t('reasoningPrice'), pricingNumberValue(pricing, 'reasoning_per_million'), disabled)}
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                ${renderPricingInput('provider', 'per_image', t('imageUnitPrice'), pricingNumberValue(pricing, 'per_image'), disabled)}
+                ${renderPricingInput('provider', 'per_video_job', t('videoJobPrice'), pricingNumberValue(pricing, 'per_video_job'), disabled)}
+                ${renderPricingInput('provider', 'per_video_second', t('videoSecondPrice'), pricingNumberValue(pricing, 'per_video_second'), disabled)}
+                ${renderPricingInput('provider', 'request_minimum', t('requestMinimumPrice'), pricingNumberValue(pricing, 'request_minimum'), disabled)}
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mt-3">
+                ${renderPricingInput('provider', 'provider_cost_multiplier', t('costMultiplier'), pricingNumberValue(pricing, 'provider_cost_multiplier'), disabled, '0.01', '1.0')}
+                ${renderPricingInput('provider', 'discount_percent', t('discountPercent'), pricingNumberValue(pricing, 'discount_percent'), disabled)}
+                ${renderPricingInput('provider', 'tax_percent', t('taxPercent'), pricingNumberValue(pricing, 'tax_percent'), disabled)}
+            </div>
+            <div class="mt-3">
+                <label class="text-xs text-dark-400">${escapeHtml(t('tieredPricingJson'))}</label>
+                <textarea id="provider-pricing-tiers-json" class="input mt-1 w-full font-mono" rows="4" placeholder='[{"max_tokens":1000000,"input_per_million":1}]'${disabledAttr}>${escapeHtml(pricingTiersValue(pricing))}</textarea>
+            </div>
+
+            <div class="mt-5 pt-4 border-t border-dark-800">
+                <div class="text-sm font-semibold text-white">${escapeHtml(t('quotaSettingsTitle'))}</div>
+                <p class="text-xs text-dark-500 mt-1">${escapeHtml(t('quotaSettingsDesc'))}</p>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
+                    <label class="flex items-center gap-2 text-sm text-dark-300 bg-dark-900/60 border border-dark-700 rounded-lg px-3 py-2 md:mt-5">
+                        <input id="provider-quota-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${quota.enabled ? 'checked' : ''}${disabledAttr}>
+                        <span>${escapeHtml(t('enabledLabel'))}</span>
+                    </label>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('quotaProbeType'))}</label>
+                        <select id="provider-quota-type" class="input mt-1 w-full"${disabledAttr}>
+                            ${['http_json', 'script', 'manual', 'unsupported'].map(value => `
+                                <option value="${escapeAttr(value)}" ${quota.type === value ? 'selected' : ''}>${escapeHtml(providerOptionLabel(value))}</option>
+                            `).join('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('quotaMethod'))}</label>
+                        <select id="provider-quota-method" class="input mt-1 w-full"${disabledAttr}>
+                            ${['GET', 'POST'].map(value => `<option value="${value}" ${quota.method === value ? 'selected' : ''}>${value}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('quotaTtlSeconds'))}</label>
+                        <input id="provider-quota-ttl" type="number" min="1" step="1" class="input mt-1 w-full" value="${escapeAttr(quota.ttl_seconds)}"${disabledAttr}>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr] gap-3 mt-3">
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('quotaUrl'))}</label>
+                        <input id="provider-quota-url" class="input mt-1 w-full" value="${escapeAttr(quota.url)}" placeholder="https://api.example.com/balance"${disabledAttr}>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('timeoutMs'))}</label>
+                        <input id="provider-quota-timeout" type="number" min="1" step="1" class="input mt-1 w-full" value="${escapeAttr(quota.timeout_seconds)}"${disabledAttr}>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('quotaAutoInterval'))}</label>
+                        <input id="provider-quota-auto-interval" type="number" min="0" step="1" class="input mt-1 w-full" value="${escapeAttr(quota.auto_query_interval_minutes)}"${disabledAttr}>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('quotaHeadersJson'))}</label>
+                        <textarea id="provider-quota-headers-json" class="input mt-1 w-full font-mono" rows="4"${disabledAttr}>${escapeHtml(JSON.stringify(quota.headers || {}, null, 2))}</textarea>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('quotaJsonPaths'))}</label>
+                        <textarea id="provider-quota-json-paths" class="input mt-1 w-full font-mono" rows="4" placeholder='{"balance":"$.balance","currency":"$.currency"}'${disabledAttr}>${escapeHtml(JSON.stringify(quota.json_paths || {}, null, 2))}</textarea>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('quotaBodyJson'))}</label>
+                        <textarea id="provider-quota-body-json" class="input mt-1 w-full font-mono" rows="4"${disabledAttr}>${escapeHtml(quota.body ? JSON.stringify(quota.body, null, 2) : '')}</textarea>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-3 mt-3">
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('quotaScriptJs'))}</label>
+                        <textarea id="provider-quota-script-js" class="input mt-1 w-full font-mono" rows="6" placeholder="module.exports = { request() {}, extractor(response) {} }"${disabledAttr}>${escapeHtml(quota.script_code || '')}</textarea>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('quotaNote'))}</label>
+                        <textarea id="provider-quota-note" class="input mt-1 w-full" rows="6"${disabledAttr}>${escapeHtml(quota.note || '')}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderPricingInput(scope, key, label, value, disabled = false, step = '0.01', placeholder = '/M') {
+    const disabledAttr = disabled ? ' disabled' : '';
+    const attr = scope === 'provider' ? 'data-provider-pricing' : 'data-model-pricing';
+    return `
+        <div>
+            <label class="text-xs text-dark-400">${escapeHtml(label)}</label>
+            <input ${attr}="${escapeAttr(key)}" type="number" min="0" step="${escapeAttr(step)}" class="input mt-1 w-full" value="${escapeAttr(value)}" placeholder="${escapeAttr(placeholder)}"${disabledAttr}>
         </div>
     `;
 }
@@ -1029,6 +1165,13 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false, 
     const reasoningProfile = model && model.reasoning_effort_profile && typeof model.reasoning_effort_profile === 'object'
         ? model.reasoning_effort_profile
         : {};
+    const hideReasoningControls = isNativeResponsesProvider(provider);
+    const reasoningParameterValue = reasoningProfile.reasoning_effort_parameter || reasoningProfile.parameter || 'auto';
+    const reasoningEffortValues = Array.isArray(reasoningProfile.reasoning_efforts)
+        ? reasoningProfile.reasoning_efforts
+        : (Array.isArray(reasoningProfile.supported_efforts) ? reasoningProfile.supported_efforts : (model.reasoning_efforts || []));
+    const reasoningDefaultValue = reasoningProfile.reasoning_effort_default || reasoningProfile.default_effort || model.reasoning_effort_default || '';
+    const pricing = model && model.pricing && typeof model.pricing === 'object' ? model.pricing : {};
     const hidden = Boolean(model && model.catalog_hidden);
     const selected = model ? (!hidden && model.selected !== false) : true;
     const enabled = !model || model.enabled !== false;
@@ -1077,47 +1220,61 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false, 
                     </select>
                 </div>
             </div>
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3 ${!effectiveCaps.text && effectiveCaps.images ? 'hidden' : ''}" data-llm-only-section>
+            ${hideReasoningControls ? '' : `<div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3 ${!effectiveCaps.text && effectiveCaps.images ? 'hidden' : ''}" data-llm-only-section>
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('reasoningEffortParameter'))}</label>
                     <select data-model-field="reasoning_effort_parameter" class="input mt-1 w-full"${capabilityDisabledAttr}>
                         ${['auto', 'disabled', 'reasoning.effort', 'reasoning_effort', 'output_config.effort', 'thinking'].map(value => `
-                            <option value="${escapeAttr(value)}" ${String(reasoningProfile.parameter || 'auto') === value ? 'selected' : ''}>${escapeHtml(reasoningEffortParameterLabel(value))}</option>
+                            <option value="${escapeAttr(value)}" ${String(reasoningParameterValue) === value ? 'selected' : ''}>${escapeHtml(reasoningEffortParameterLabel(value))}</option>
                         `).join('')}
                     </select>
                 </div>
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('reasoningEfforts'))}</label>
-                    <input data-model-field="reasoning_efforts" class="input mt-1 w-full" value="${escapeAttr((reasoningProfile.supported_efforts || model.reasoning_efforts || []).join(', '))}" placeholder="low, medium, high"${capabilityDisabledAttr}>
+                    <input data-model-field="reasoning_efforts" class="input mt-1 w-full" value="${escapeAttr(reasoningEffortValues.join(', '))}" placeholder="low, medium, high"${capabilityDisabledAttr}>
                 </div>
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('reasoningEffortDefault'))}</label>
-                    <input data-model-field="reasoning_effort_default" class="input mt-1 w-full" value="${escapeAttr(reasoningProfile.default_effort || model.reasoning_effort_default || '')}" placeholder="medium"${capabilityDisabledAttr}>
+                    <input data-model-field="reasoning_effort_default" class="input mt-1 w-full" value="${escapeAttr(reasoningDefaultValue)}" placeholder="medium"${capabilityDisabledAttr}>
                 </div>
-            </div>
+            </div>`}
             <div class="mt-3">
                 <div class="text-xs text-dark-500 mb-2">${escapeHtml(t('modelPricing'))} <span class="text-dark-600">— ${escapeHtml(t('modelPricingDesc'))}</span></div>
                 <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+                    ${renderPricingInput('model', 'input_per_million', t('inputPrice'), pricingNumberValue(pricing, 'input_per_million'), disabled)}
+                    ${renderPricingInput('model', 'output_per_million', t('outputPrice'), pricingNumberValue(pricing, 'output_per_million'), disabled)}
+                    ${renderPricingInput('model', 'cache_read_per_million', t('cacheReadPrice'), pricingNumberValue(pricing, 'cache_read_per_million'), disabled)}
+                    ${renderPricingInput('model', 'cache_write_per_million', t('cacheWritePrice'), pricingNumberValue(pricing, 'cache_write_per_million'), disabled)}
+                    ${renderPricingInput('model', 'reasoning_per_million', t('reasoningPrice'), pricingNumberValue(pricing, 'reasoning_per_million'), disabled)}
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                    ${renderPricingInput('model', 'per_image', t('imageUnitPrice'), pricingNumberValue(pricing, 'per_image'), disabled)}
+                    ${renderPricingInput('model', 'per_video_job', t('videoJobPrice'), pricingNumberValue(pricing, 'per_video_job'), disabled)}
+                    ${renderPricingInput('model', 'per_video_second', t('videoSecondPrice'), pricingNumberValue(pricing, 'per_video_second'), disabled)}
+                    ${renderPricingInput('model', 'request_minimum', t('requestMinimumPrice'), pricingNumberValue(pricing, 'request_minimum'), disabled)}
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                    ${renderPricingInput('model', 'provider_cost_multiplier', t('costMultiplier'), pricingNumberValue(pricing, 'provider_cost_multiplier'), disabled, '0.01', '1.0')}
+                    ${renderPricingInput('model', 'discount_percent', t('discountPercent'), pricingNumberValue(pricing, 'discount_percent'), disabled)}
+                    ${renderPricingInput('model', 'tax_percent', t('taxPercent'), pricingNumberValue(pricing, 'tax_percent'), disabled)}
                     <div>
-                        <label class="text-xs text-dark-400">${escapeHtml(t('inputPrice'))}</label>
-                        <input data-model-pricing="input_per_million" type="number" min="0" step="0.01" class="input mt-1 w-full" value="${escapeAttr((model.pricing && model.pricing.input_per_million) || '')}" placeholder="/M"${disabledAttr}>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('billingMode'))}</label>
+                        <input data-model-pricing-text="billing_mode" class="input mt-1 w-full" value="${escapeAttr(pricing.billing_mode || '')}" placeholder="metered"${disabledAttr}>
                     </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-2 mt-2">
+                    <label class="flex items-center gap-2 text-xs text-dark-300 bg-dark-900/60 border border-dark-700 rounded-lg px-3 py-2">
+                        <input data-model-pricing-bool="input_includes_cache_read" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${pricing.input_includes_cache_read === false ? '' : 'checked'}${disabledAttr}>
+                        <span>${escapeHtml(t('inputIncludesCacheRead'))}</span>
+                    </label>
                     <div>
-                        <label class="text-xs text-dark-400">${escapeHtml(t('outputPrice'))}</label>
-                        <input data-model-pricing="output_per_million" type="number" min="0" step="0.01" class="input mt-1 w-full" value="${escapeAttr((model.pricing && model.pricing.output_per_million) || '')}" placeholder="/M"${disabledAttr}>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('tierBasis'))}</label>
+                        <input data-model-pricing-text="tier_basis" class="input mt-1 w-full" value="${escapeAttr(pricing.tier_basis || '')}" placeholder="input_tokens"${disabledAttr}>
                     </div>
-                    <div>
-                        <label class="text-xs text-dark-400">${escapeHtml(t('cacheReadPrice'))}</label>
-                        <input data-model-pricing="cache_read_per_million" type="number" min="0" step="0.01" class="input mt-1 w-full" value="${escapeAttr((model.pricing && model.pricing.cache_read_per_million) || '')}" placeholder="/M"${disabledAttr}>
-                    </div>
-                    <div>
-                        <label class="text-xs text-dark-400">${escapeHtml(t('cacheWritePrice'))}</label>
-                        <input data-model-pricing="cache_write_per_million" type="number" min="0" step="0.01" class="input mt-1 w-full" value="${escapeAttr((model.pricing && model.pricing.cache_write_per_million) || '')}" placeholder="/M"${disabledAttr}>
-                    </div>
-                    <div>
-                        <label class="text-xs text-dark-400">${escapeHtml(t('reasoningPrice'))}</label>
-                        <input data-model-pricing="reasoning_per_million" type="number" min="0" step="0.01" class="input mt-1 w-full" value="${escapeAttr((model.pricing && model.pricing.reasoning_per_million) || '')}" placeholder="/M"${disabledAttr}>
-                    </div>
+                </div>
+                <div class="mt-2">
+                    <label class="text-xs text-dark-400">${escapeHtml(t('tieredPricingJson'))}</label>
+                    <textarea data-model-pricing-json="tiered_pricing" class="input mt-1 w-full font-mono" rows="3" placeholder='[{"max_tokens":1000000,"input_per_million":1}]'${disabledAttr}>${escapeHtml(pricingTiersValue(pricing))}</textarea>
                 </div>
             </div>
             <div class="flex flex-wrap gap-3 mt-3">
@@ -1900,6 +2057,9 @@ async function importPreset(presetId) {
 function showCreateProviderModal() {
     const modal = document.getElementById('create-provider-modal');
     if (!modal) return;
+    if (modal.parentElement !== document.body) {
+        document.body.appendChild(modal);
+    }
     const presets = (providerState.presets || []).filter(p => !p.hidden);
     const generic = presets.filter(p => p.category !== 'domestic');
     const domestic = presets.filter(p => p.category === 'domestic');
@@ -2400,12 +2560,17 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
         const hidden = Boolean(row.querySelector('[data-model-field="catalog_hidden"]')?.checked);
         const primary = !hidden && Boolean(row.querySelector('[data-model-field="primary"]')?.checked);
         const selected = !hidden && (Boolean(row.querySelector('[data-model-field="selected"]')?.checked) || primary);
-        const reasoningParameter = String(row.querySelector('[data-model-field="reasoning_effort_parameter"]')?.value || 'auto').trim();
-        const reasoningEfforts = String(row.querySelector('[data-model-field="reasoning_efforts"]')?.value || '')
+        const reasoningParameterInput = row.querySelector('[data-model-field="reasoning_effort_parameter"]');
+        const reasoningEffortsInput = row.querySelector('[data-model-field="reasoning_efforts"]');
+        const reasoningDefaultInput = row.querySelector('[data-model-field="reasoning_effort_default"]');
+        const reasoningControlsVisible = Boolean(reasoningParameterInput || reasoningEffortsInput || reasoningDefaultInput);
+        const preserveReasoningProfile = modelCapabilityLocked || !reasoningControlsVisible;
+        const reasoningParameter = String(reasoningParameterInput?.value || 'auto').trim();
+        const reasoningEfforts = String(reasoningEffortsInput?.value || '')
             .split(',')
             .map(item => item.trim())
             .filter(Boolean);
-        const reasoningDefault = String(row.querySelector('[data-model-field="reasoning_effort_default"]')?.value || '').trim();
+        const reasoningDefault = String(reasoningDefaultInput?.value || '').trim();
         const pricing = {};
         row.querySelectorAll('[data-model-pricing]').forEach(input => {
             const key = input.getAttribute('data-model-pricing');
@@ -2413,6 +2578,21 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
             if (!isNaN(value) && value >= 0) {
                 pricing[key] = value;
             }
+        });
+        row.querySelectorAll('[data-model-pricing-text]').forEach(input => {
+            const key = input.getAttribute('data-model-pricing-text');
+            const value = String(input.value || '').trim();
+            if (key && value) pricing[key] = value;
+        });
+        row.querySelectorAll('[data-model-pricing-bool]').forEach(input => {
+            const key = input.getAttribute('data-model-pricing-bool');
+            if (key) pricing[key] = Boolean(input.checked);
+        });
+        row.querySelectorAll('[data-model-pricing-json]').forEach(input => {
+            const key = input.getAttribute('data-model-pricing-json');
+            const text = String(input.value || '').trim();
+            if (!key || !text) return;
+            pricing[key] = JSON.parse(text);
         });
         const lockedCapabilities = nativeLockedCapabilities(existing.capabilities || capabilities);
         const capabilityOverrides = modelCapabilityLocked ? { ...(existing.capability_overrides || {}) } : {
@@ -2437,7 +2617,7 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
             native_approval: nativeApproval,
             capabilities: modelCapabilityLocked ? lockedCapabilities : capabilities,
             capability_overrides: capabilityOverrides,
-            reasoning_effort_profile: modelCapabilityLocked ? (existing.reasoning_effort_profile || {}) : {
+            reasoning_effort_profile: preserveReasoningProfile ? (existing.reasoning_effort_profile || {}) : {
                 ...(existing.reasoning_effort_profile || {}),
                 parameter: reasoningParameter,
                 supported_efforts: reasoningEfforts,
@@ -2451,21 +2631,85 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
     }).filter(Boolean);
 }
 
+function parseJsonField(id, fallback, allowEmpty = true) {
+    const el = document.getElementById(id);
+    if (!el) return fallback;
+    const text = String(el.value || '').trim();
+    if (!text) return allowEmpty ? fallback : {};
+    return JSON.parse(text);
+}
+
+function readProviderPricingFromForm(existingPricing = {}) {
+    const pricing = { ...(existingPricing || {}) };
+    document.querySelectorAll('[data-provider-pricing]').forEach(input => {
+        const key = input.getAttribute('data-provider-pricing');
+        const value = parseFloat(input.value);
+        if (!key) return;
+        if (!isNaN(value) && value >= 0) {
+            pricing[key] = value;
+        } else {
+            delete pricing[key];
+        }
+    });
+    const billingMode = String(document.getElementById('provider-pricing-billing-mode')?.value || '').trim();
+    const costEstimation = String(document.getElementById('provider-pricing-cost-estimation')?.value || 'auto').trim();
+    const tierBasis = String(document.getElementById('provider-pricing-tier-basis')?.value || '').trim();
+    if (billingMode) pricing.billing_mode = billingMode; else delete pricing.billing_mode;
+    if (costEstimation && costEstimation !== 'auto') pricing.cost_estimation = costEstimation; else delete pricing.cost_estimation;
+    if (tierBasis) pricing.tier_basis = tierBasis; else delete pricing.tier_basis;
+    pricing.input_includes_cache_read = document.getElementById('provider-pricing-input-includes-cache')?.checked !== false;
+    const tiersText = String(document.getElementById('provider-pricing-tiers-json')?.value || '').trim();
+    if (tiersText) {
+        const tiers = JSON.parse(tiersText);
+        pricing.tiered_pricing = Array.isArray(tiers) ? tiers : [];
+    } else {
+        delete pricing.tiered_pricing;
+        delete pricing.pricing_tiers;
+        delete pricing.tiers;
+    }
+    return pricing;
+}
+
+function readQuotaCheckFromForm(existingQuota = {}) {
+    const quota = { ...(existingQuota || {}) };
+    if (!document.getElementById('provider-quota-enabled')) return quota;
+    quota.enabled = Boolean(document.getElementById('provider-quota-enabled')?.checked);
+    quota.type = document.getElementById('provider-quota-type')?.value || 'http_json';
+    quota.probe_type = quota.type;
+    quota.method = document.getElementById('provider-quota-method')?.value || 'GET';
+    quota.url = String(document.getElementById('provider-quota-url')?.value || '').trim();
+    quota.timeout_seconds = parseInt(document.getElementById('provider-quota-timeout')?.value || '10', 10) || 10;
+    quota.ttl_seconds = parseInt(document.getElementById('provider-quota-ttl')?.value || '300', 10) || 300;
+    quota.auto_query_interval_minutes = parseInt(document.getElementById('provider-quota-auto-interval')?.value || '0', 10) || 0;
+    quota.headers = parseJsonField('provider-quota-headers-json', {});
+    quota.json_paths = parseJsonField('provider-quota-json-paths', {});
+    quota.body = parseJsonField('provider-quota-body-json', null);
+    quota.note = String(document.getElementById('provider-quota-note')?.value || '').trim();
+    const quotaScriptCode = String(document.getElementById('provider-quota-script-js')?.value || '').trim();
+    if (quotaScriptCode) {
+        quota.enabled = quota.enabled !== false;
+        quota.type = 'script';
+        quota.probe_type = 'script';
+        quota.script = {
+            ...(quota.script && typeof quota.script === 'object' ? quota.script : {}),
+            language: 'javascript',
+            code: quotaScriptCode,
+        };
+    } else if (quota.script) {
+        quota.script = {
+            ...(quota.script && typeof quota.script === 'object' ? quota.script : {}),
+            code: '',
+        };
+    }
+    return quota;
+}
+
 function readProviderForm(existing) {
     try {
         const headers = JSON.parse(document.getElementById('provider-headers-json')?.value || '{}');
         const imageModelOverrides = JSON.parse(document.getElementById('media-image-overrides-json')?.value || '{}');
-        const quotaCheck = JSON.parse(document.getElementById('provider-quota-json')?.value || '{}');
-        const quotaScriptCode = String(document.getElementById('provider-quota-script-js')?.value || '').trim();
-        if (quotaScriptCode) {
-            quotaCheck.enabled = quotaCheck.enabled !== false;
-            quotaCheck.type = 'script';
-            quotaCheck.script = {
-                ...(quotaCheck.script && typeof quotaCheck.script === 'object' ? quotaCheck.script : {}),
-                language: 'javascript',
-                code: quotaScriptCode,
-            };
-        }
+        const quotaCheck = readQuotaCheckFromForm(existing.quota_check || {});
+        const providerPricing = readProviderPricingFromForm(existing.pricing || {});
         const aliases = JSON.parse(document.getElementById('provider-aliases-json')?.value || '{}');
         const aliasPatterns = JSON.parse(document.getElementById('provider-alias-patterns-json')?.value || '[]');
         const models = readProviderModelsFromDetails(existing.models || [], existing)
@@ -2503,6 +2747,7 @@ function readProviderForm(existing) {
             aliases,
             alias_patterns: aliasPatterns,
             quota_check: quotaCheck,
+            pricing: providerPricing,
             models,
             capabilities: lockedCapabilities ? nativeLockedCapabilities(existing.capabilities || {}) : {
                 ...existing.capabilities,
@@ -2725,6 +2970,37 @@ function providerQuotaScriptCode(provider = {}) {
     }
     if (quota.code) return String(quota.code || '');
     return '';
+}
+
+function pricingNumberValue(pricing, key) {
+    const value = pricing && typeof pricing === 'object' ? pricing[key] : '';
+    return value === 0 || value ? value : '';
+}
+
+function pricingTiersValue(pricing) {
+    const source = pricing && typeof pricing === 'object' ? pricing : {};
+    const tiers = source.tiered_pricing || source.pricing_tiers || source.tiers || [];
+    return Array.isArray(tiers) && tiers.length ? JSON.stringify(tiers, null, 2) : '';
+}
+
+function quotaCheckValue(provider = {}) {
+    const quota = provider && provider.quota_check && typeof provider.quota_check === 'object'
+        ? provider.quota_check
+        : {};
+    return {
+        enabled: Boolean(quota.enabled),
+        type: quota.type || quota.probe_type || 'http_json',
+        method: quota.method || 'GET',
+        url: quota.url || quota.endpoint || '',
+        timeout_seconds: quota.timeout_seconds || 10,
+        ttl_seconds: quota.ttl_seconds || 300,
+        auto_query_interval_minutes: quota.auto_query_interval_minutes || 0,
+        note: quota.note || '',
+        headers: quota.headers && typeof quota.headers === 'object' ? quota.headers : {},
+        json_paths: quota.json_paths && typeof quota.json_paths === 'object' ? quota.json_paths : {},
+        body: quota.body && typeof quota.body === 'object' ? quota.body : null,
+        script_code: providerQuotaScriptCode(provider),
+    };
 }
 
 function renderInput(id, label, value, type = 'text', disabled = false, onchange = '') {

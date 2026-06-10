@@ -81,7 +81,7 @@ Codex Enhance Manager 做的就是这件事：尽量不破坏 Codex 原生体验
 - 写入 Codex 配置时只使用 `wire_api = "responses"`，并把 base URL 指向本地代理的 `/v1`。
 - 原生 Responses 供应商会直通到上游 `/responses`，保留 Codex 的请求形态。
 - 只有 Chat-only 供应商才由本地代理做 Responses 到 Chat Completions 的适配。
-- **图像路由独立化**：直接 `POST /v1/images/generations` 请求以及国内代理（百炼、火山等）的 LLM-mediated 图像生成，都通过 AMR `image_candidates` 自动路由到最佳图像 provider；纯原生代理（如新思路）直接透传，代理层不干预。
+- **图像路由独立化**：直接 `POST /v1/images/generations` 请求以及国内代理（百炼、火山等）的 LLM-mediated 图像生成，都通过 AMR `image_candidates` 自动路由到最佳图像 provider；私有纯原生代理直接透传，代理层不干预。
 
 参考：[openai/codex `responses.rs`](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/endpoint/responses.rs) 和 [OpenAI: Unrolling the Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/)。
 
@@ -90,8 +90,8 @@ Codex Enhance Manager 做的就是这件事：尽量不破坏 Codex 原生体验
 - 设置向导：Codex 路径、官方登录态、供应商、模型能力、路由、媒体 fallback、开机启动和保存检查。
 - 供应商管理：一个供应商可配置多个模型，支持 Header、`User-Agent`、模型别名、能力标签和媒体路由。
 - 智能路由：管理下一个新会话的顺序、优先级、故障转移和能力筛选，不和密钥配置混在一起。
-- 用量统计：读取 Codex Token、缓存、代理请求元数据、本地费用估算，以及可用时的供应商官方扣费信息。
-- 悬浮窗：显示 Token、缓存、上下文、一小时用量、消耗速度、透明度、托盘操作和快速切换。
+- 用量统计：读取 Codex Token、官方登录态额度、缓存、代理请求元数据、本地费用估算，以及可用时的供应商官方扣费信息。
+- 悬浮窗：显示 Token、缓存、上下文、一小时用量、消耗速度、余额扣费速率、套餐额度百分比、透明度、托盘操作和快速切换。
 - 恢复工具：备份/恢复、配置模板修复、移动会话修复、脱敏诊断、更新检查和打包版 EXE 发布支持。
 
 ## 安全边界
@@ -101,6 +101,10 @@ Codex Enhance Manager 做的就是这件事：尽量不破坏 Codex 原生体验
 - 本地代理默认生成高熵 bearer token；设置页只显示指纹。
 - 官方直连是“只切换”的状态，不进入本地代理路由，也不参与智能路由。
 - 删除/重置 Codex 配置和登录文件必须明确确认，并提示聊天记录有概率丢失。
+
+## 供应商额度资料
+
+已确认的余额和 Coding Plan 额度读取方法记录在 [docs/provider-quota-and-billing.md](docs/provider-quota-and-billing.md)，包括从 CC Switch 迁移来的 KimiCode、智谱、MiniMax、SiliconFlow、StepFun、OpenRouter、Novita、DeepSeek，以及官方 Codex OAuth 额度读取方式。
 
 ## 安装
 

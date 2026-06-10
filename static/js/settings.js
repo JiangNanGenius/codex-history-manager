@@ -120,6 +120,9 @@ function readSettingsWizardDraft() {
         desktop_launch_action: document.getElementById('setting-desktop-launch-action')?.value || latestSettings.desktop_launch_action || 'show_window',
         desktop_monitor_enabled: document.getElementById('setting-desktop-monitor-enabled')?.checked ?? latestSettings.desktop_monitor_enabled ?? true,
         desktop_monitor_opacity: parseInt(document.getElementById('setting-desktop-monitor-opacity')?.value, 10) || latestSettings.desktop_monitor_opacity || 88,
+        codex_injection_enabled: document.getElementById('setting-codex-injection-enabled')?.checked ?? latestSettings.codex_injection_enabled ?? true,
+        plugin_unlock_enabled: document.getElementById('setting-plugin-unlock-enabled')?.checked ?? latestSettings.plugin_unlock_enabled ?? false,
+        official_quota_enabled: document.getElementById('setting-official-quota-enabled')?.checked ?? latestSettings.official_quota_enabled ?? true,
     };
 }
 
@@ -130,6 +133,19 @@ function syncMonitorOpacityLabel() {
     const value = Math.min(Math.max(parseInt(input.value, 10) || 88, 35), 100);
     input.value = value;
     label.textContent = `${value}%`;
+}
+
+function syncOfficialPluginLocks(data = latestSettings) {
+    const official = Boolean(data && (data.official_oauth_detected || data.codex_auth_mode === 'official_oauth'));
+    const pluginToggle = document.getElementById('setting-plugin-unlock-enabled');
+    const note = document.getElementById('setting-plugin-unlock-lock-note');
+    if (pluginToggle) {
+        pluginToggle.disabled = official;
+        if (official) pluginToggle.checked = false;
+        pluginToggle.closest('label')?.classList.toggle('opacity-50', official);
+        pluginToggle.closest('label')?.classList.toggle('cursor-not-allowed', official);
+    }
+    if (note) note.classList.toggle('hidden', !official);
 }
 
 function settingsWizardProviderMetrics() {
@@ -536,7 +552,9 @@ function populateSettingsForm(data) {
         'setting-update-check-enabled': 'update_check_enabled',
         'setting-update-include-prerelease': 'update_include_prerelease',
         'setting-debug-mode': 'debug_mode',
+        'setting-codex-injection-enabled': 'codex_injection_enabled',
         'setting-plugin-unlock-enabled': 'plugin_unlock_enabled',
+        'setting-official-quota-enabled': 'official_quota_enabled',
         'setting-codex-goals-enabled': 'codex_goals_enabled',
         'setting-codex-sandbox-auto-repair-enabled': 'codex_sandbox_auto_repair_enabled',
     };
@@ -544,6 +562,7 @@ function populateSettingsForm(data) {
         const el = document.getElementById(elId);
         if (el && data[key] !== undefined) el.checked = Boolean(data[key]);
     }
+    syncOfficialPluginLocks(data);
     renderAppVersion(data);
     syncStartupControls();
 
@@ -762,9 +781,15 @@ async function previewStartupSettings() {
 }
 
 function renderAppVersion(data = latestSettings) {
-    const el = document.getElementById('app-version-label');
-    if (!el) return;
-    el.textContent = data.app_version ? t('currentVersionLabel', { version: data.app_version }) : '';
+    const version = data.app_version || '';
+    const settingsLabel = document.getElementById('app-version-label');
+    if (settingsLabel) {
+        settingsLabel.textContent = version ? t('currentVersionLabel', { version }) : '';
+    }
+    const sidebarLabel = document.getElementById('app-version-sidebar-label');
+    if (sidebarLabel) {
+        sidebarLabel.textContent = version || 'v-';
+    }
 }
 
 async function loadUpdateStatus() {
@@ -1075,7 +1100,9 @@ async function saveSettings() {
         desktop_monitor_opacity: parseInt(document.getElementById('setting-desktop-monitor-opacity')?.value, 10) || 88,
         update_check_enabled: document.getElementById('setting-update-check-enabled')?.checked ?? true,
         update_include_prerelease: document.getElementById('setting-update-include-prerelease')?.checked ?? false,
+        codex_injection_enabled: document.getElementById('setting-codex-injection-enabled')?.checked !== false,
         plugin_unlock_enabled: document.getElementById('setting-plugin-unlock-enabled')?.checked || false,
+        official_quota_enabled: document.getElementById('setting-official-quota-enabled')?.checked !== false,
         codex_goals_enabled: document.getElementById('setting-codex-goals-enabled')?.checked !== false,
         codex_sandbox_auto_repair_enabled: document.getElementById('setting-codex-sandbox-auto-repair-enabled')?.checked || false,
         proxy_upstream_timeout_seconds: parseInt(document.getElementById('setting-proxy-upstream-timeout')?.value, 10) || 120,

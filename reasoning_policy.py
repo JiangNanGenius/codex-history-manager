@@ -31,7 +31,9 @@ CODEX_REASONING_ALIASES = {
     "med": "medium",
     "high": "high",
     "xhigh": "xhigh",
+    "x_high": "xhigh",
     "extra_high": "xhigh",
+    "very_high": "xhigh",
     "max": "max",
 }
 
@@ -87,6 +89,7 @@ def normalize_reasoning_effort_profile(data: Any) -> Dict[str, Any]:
         raw.get("efforts")
         or raw.get("reasoning_efforts")
         or raw.get("supported_reasoning_efforts")
+        or raw.get("supported_efforts")
     )
     parameter = normalize_reasoning_effort_parameter(
         raw.get("parameter")
@@ -106,7 +109,7 @@ def normalize_reasoning_effort_profile(data: Any) -> Dict[str, Any]:
             raw.get("effort_map") or raw.get("reasoning_effort_map")
         ),
         "reasoning_effort_default": normalize_reasoning_effort(
-            raw.get("default") or raw.get("reasoning_effort_default")
+            raw.get("default") or raw.get("reasoning_effort_default") or raw.get("default_effort")
         ),
         "semantics": str(raw.get("semantics") or raw.get("reasoning_effort_semantics") or "").strip(),
         "source": str(raw.get("source") or "").strip(),
@@ -116,11 +119,11 @@ def normalize_reasoning_effort_profile(data: Any) -> Dict[str, Any]:
 def build_model_reasoning_effort_profile(model: Dict[str, Any]) -> Dict[str, Any]:
     raw_profile = normalize_reasoning_effort_profile(model.get("reasoning_effort_profile"))
     raw_efforts = normalize_reasoning_efforts(
-        model.get("reasoning_efforts") or model.get("supported_reasoning_efforts")
+        model.get("reasoning_efforts") or model.get("supported_reasoning_efforts") or model.get("supported_efforts")
     )
     raw_parameter = normalize_reasoning_effort_parameter(model.get("reasoning_effort_parameter"))
     raw_map = normalize_reasoning_effort_map(model.get("reasoning_effort_map"))
-    default = normalize_reasoning_effort(model.get("reasoning_effort_default"))
+    default = normalize_reasoning_effort(model.get("reasoning_effort_default") or model.get("default_effort"))
     semantics = str(model.get("reasoning_effort_semantics") or "").strip()
 
     if raw_efforts:

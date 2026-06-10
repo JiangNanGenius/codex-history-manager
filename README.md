@@ -88,8 +88,8 @@ References: [openai/codex `responses.rs`](https://github.com/openai/codex/blob/m
 - A setup flow for Codex paths, official login state, providers, model capabilities, routing, media fallback, startup, and save checks.
 - Provider management with multiple models per provider, custom headers, `User-Agent`, model aliases, capability flags, and media routing.
 - Model rotation for next-session order, priority, fallback, and capability filtering without mixing it into provider credentials.
-- Token and cost visibility from Codex usage, cache totals, proxy metadata, local estimates, and provider-reported fields when available.
-- A native floating monitor with tokens, cache, context, one-hour usage, token speed, opacity settings, tray actions, and quick switching.
+- Token, cost, and quota visibility from Codex usage, official login quota, cache totals, proxy metadata, local estimates, provider-reported fields, and preset balance scripts when available.
+- A native floating monitor with tokens, cache, context, one-hour usage, token speed, balance burn rate, subscription quota percentage, opacity settings, tray actions, and quick switching.
 - Backup, restore, config-template repair, moved-session repair, redacted diagnostics, update checks, and packaged EXE release support.
 
 ## Safety Model
@@ -99,6 +99,10 @@ References: [openai/codex `responses.rs`](https://github.com/openai/codex/blob/m
 - The local proxy requires a generated bearer token; settings show only a fingerprint.
 - Official direct mode is switch-only and does not enter local proxy routing or Smart Routing.
 - Destructive Codex config/auth resets require explicit confirmation and warn that chat history may be lost.
+
+## Provider Quota Notes
+
+Known balance and Coding Plan quota methods are documented in [docs/provider-quota-and-billing.md](docs/provider-quota-and-billing.md), including the CC Switch-derived endpoints for KimiCode, Zhipu, MiniMax, SiliconFlow, StepFun, OpenRouter, Novita, DeepSeek, and official Codex OAuth quota.
 
 ## Install
 

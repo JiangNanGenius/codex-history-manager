@@ -107,7 +107,6 @@ _PROVIDER_DISPLAY_NAME_FALLBACKS = {
     "volcengine-ark-cn": "火山引擎",
     "deepseek-official": "DeepSeek 官方",
     "deepseek-official-cn": "DeepSeek 官方",
-    "xinsilu-native-proxy": "新思路 AI 原生代理",
 }
 
 
@@ -122,6 +121,9 @@ def _provider_display_name_fallback(raw: Dict[str, Any], provider_id: str, short
     for key in (provider_id, short_alias):
         if key in _PROVIDER_DISPLAY_NAME_FALLBACKS:
             return _PROVIDER_DISPLAY_NAME_FALLBACKS[key]
+        key_text = str(key or "").lower()
+        if "native" in key_text and "proxy" in key_text:
+            return "Private Native Proxy"
 
     base_url = str(raw.get("base_url") or "").lower()
     if "dashscope.aliyuncs.com" in base_url:
@@ -130,8 +132,6 @@ def _provider_display_name_fallback(raw: Dict[str, Any], provider_id: str, short
         return "火山引擎"
     if "api.deepseek.com" in base_url:
         return "DeepSeek 官方"
-    if "xinsilu" in base_url:
-        return "新思路 AI 原生代理"
     return ""
 
 
@@ -894,6 +894,7 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         "alias_patterns": normalize_alias_patterns(raw.get("alias_patterns") or raw.get("regex_aliases")),
         "health_check": raw.get("health_check") if isinstance(raw.get("health_check"), dict) else {},
         "quota_check": raw.get("quota_check") if isinstance(raw.get("quota_check"), dict) else {},
+        "pricing": raw.get("pricing") if isinstance(raw.get("pricing"), dict) else {},
         "priority": int(raw.get("priority") if raw.get("priority") is not None else 100),
         "enabled": bool(raw.get("enabled", True)),
         "fallback_enabled": bool(raw.get("fallback_enabled", True)),
@@ -1861,6 +1862,461 @@ VOLCENGINE_AGENT_PLAN_MODELS: List[Dict[str, Any]] = [
 ]
 
 
+def _quota_http_json(
+    url: str,
+    json_paths: Dict[str, str],
+    note: str,
+    enabled: bool = False,
+    method: str = "GET",
+    ttl_seconds: int = 300,
+    timeout_seconds: int = 12,
+    headers: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "type": "http_json",
+        "probe_type": "http_json",
+        "method": method,
+        "url": url,
+        "headers": headers or {},
+        "body": None,
+        "json_paths": json_paths,
+        "timeout_seconds": timeout_seconds,
+        "ttl_seconds": ttl_seconds,
+        "auto_query_interval_minutes": 0,
+        "script": {"language": "javascript", "code": ""},
+        "note": note,
+    }
+
+
+def _quota_script(
+    code: str,
+    note: str,
+    enabled: bool = False,
+    ttl_seconds: int = 900,
+    timeout_seconds: int = 12,
+) -> Dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "type": "script",
+        "probe_type": "script",
+        "method": "GET",
+        "url": "",
+        "headers": {},
+        "body": None,
+        "json_paths": {},
+        "timeout_seconds": timeout_seconds,
+        "ttl_seconds": ttl_seconds,
+        "auto_query_interval_minutes": 0,
+        "script": {"language": "javascript", "code": code.strip()},
+        "note": note,
+    }
+
+
+def _quota_manual(note: str, probe_type: str = "manual") -> Dict[str, Any]:
+    return {
+        "enabled": False,
+        "type": probe_type,
+        "probe_type": probe_type,
+        "method": "GET",
+        "url": "",
+        "headers": {},
+        "body": None,
+        "json_paths": {},
+        "timeout_seconds": 12,
+        "ttl_seconds": 300,
+        "auto_query_interval_minutes": 0,
+        "script": {"language": "javascript", "code": ""},
+        "note": note,
+    }
+
+
+OPENAI_ORG_COSTS_QUOTA_SCRIPT = r"""
+() => {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const startTime = Math.floor(start.getTime() / 1000);
+  return {
+    request: {
+      method: "GET",
+      url: "https://api.openai.com/v1/organization/costs?start_time=" + startTime + "&bucket_width=1d",
+      headers: {
+        Authorization: "Bearer {{apiKey}}"
+      }
+    },
+    extractor(response) {
+      const buckets = Array.isArray(response && response.data) ? response.data : [];
+      let total = 0;
+      let currency = "usd";
+      for (const bucket of buckets) {
+        const results = Array.isArray(bucket && bucket.results) ? bucket.results : [];
+        for (const item of results) {
+          const amount = item && item.amount ? item.amount : {};
+          if (amount.currency) currency = amount.currency;
+          total += Number(amount.value || 0);
+        }
+      }
+      return {
+        cost_month_to_date: total,
+        currency,
+        bucket_count: buckets.length
+      };
+    }
+  };
+}
+"""
+
+
+DEEPSEEK_BALANCE_QUOTA = _quota_http_json(
+    url="https://api.deepseek.com/user/balance",
+    json_paths={
+        "is_available": "$.is_available",
+        "balance": "$.balance_infos[0].total_balance",
+        "currency": "$.balance_infos[0].currency",
+        "granted_balance": "$.balance_infos[0].granted_balance",
+        "topped_up_balance": "$.balance_infos[0].topped_up_balance",
+    },
+    note="DeepSeek 官方余额接口 GET /user/balance；使用当前供应商 API Key 的 Bearer 鉴权。",
+    enabled=True,
+)
+
+
+MOONSHOT_BALANCE_QUOTA = _quota_manual(
+    "Moonshot/Kimi 余额接口本轮未确认，不预置自动请求；浮窗使用本地计费估算，用户可在供应商页自行补脚本。"
+)
+
+
+OPENAI_ORG_COSTS_QUOTA = _quota_script(
+    code=OPENAI_ORG_COSTS_QUOTA_SCRIPT,
+    note="OpenAI Admin Costs 统计模板，不是余额接口；需要具备组织用量权限的 API Key，默认关闭。",
+)
+
+
+STEPFUN_BALANCE_QUOTA = _quota_http_json(
+    url="https://api.stepfun.com/v1/accounts",
+    json_paths={
+        "balance": "$.balance",
+        "remaining": "$.balance",
+        "cash_balance": "$.total_cash_balance",
+        "voucher_balance": "$.total_voucher_balance",
+        "currency": "$.currency",
+    },
+    note="CC Switch 可用方法：StepFun 余额接口 GET /v1/accounts；使用 Bearer 鉴权，余额单位 CNY。",
+    enabled=True,
+)
+
+
+SILICONFLOW_CN_BALANCE_QUOTA = _quota_http_json(
+    url="https://api.siliconflow.cn/v1/user/info",
+    json_paths={
+        "balance": "$.data.totalBalance",
+        "remaining": "$.data.totalBalance",
+        "cash_balance": "$.data.balance",
+        "charge_balance": "$.data.chargeBalance",
+        "status": "$.data.status",
+    },
+    note="CC Switch 可用方法：SiliconFlow 中国站 GET /v1/user/info；totalBalance 为 CNY 余额。",
+    enabled=True,
+)
+
+
+OPENROUTER_CREDITS_QUOTA_SCRIPT = r"""
+() => ({
+  request: {
+    method: "GET",
+    url: "https://openrouter.ai/api/v1/credits",
+    headers: { Authorization: "Bearer {{apiKey}}", Accept: "application/json" }
+  },
+  extractor(response) {
+    const data = response && response.data ? response.data : (response || {});
+    const total = Number(data.total_credits || 0);
+    const used = Number(data.total_usage || 0);
+    const remaining = Math.max(total - used, 0);
+    const utilization = total > 0 ? Math.max(0, Math.min((used / total) * 100, 100)) : null;
+    return {
+      balance: remaining,
+      remaining,
+      used,
+      total,
+      currency: "USD",
+      quota_percent: utilization,
+      remaining_percent: utilization === null ? null : Math.max(0, 100 - utilization),
+      tiers: [{
+        name: "credits",
+        utilization,
+        used,
+        remaining,
+        total,
+        unit: "USD"
+      }]
+    };
+  }
+})
+"""
+
+
+OPENROUTER_USAGE_QUOTA = _quota_script(
+    code=OPENROUTER_CREDITS_QUOTA_SCRIPT,
+    note="CC Switch 可用方法：OpenRouter Credits 接口 GET /api/v1/credits；浮窗显示剩余额度、已用额度和百分比。",
+    enabled=True,
+    ttl_seconds=300,
+)
+
+
+NOVITA_BALANCE_QUOTA_SCRIPT = r"""
+() => ({
+  request: {
+    method: "GET",
+    url: "https://api.novita.ai/v3/user/balance",
+    headers: { Authorization: "Bearer {{apiKey}}", Accept: "application/json" }
+  },
+  extractor(response) {
+    const body = response || {};
+    const availableRaw = Number(body.availableBalance || 0);
+    const cashRaw = Number(body.cashBalance || 0);
+    const creditLimitRaw = Number(body.creditLimit || 0);
+    const balance = availableRaw / 10000;
+    return {
+      balance,
+      remaining: balance,
+      cash_balance: cashRaw / 10000,
+      credit_limit: creditLimitRaw / 10000,
+      currency: "USD"
+    };
+  }
+})
+"""
+
+
+NOVITA_BALANCE_QUOTA = _quota_script(
+    code=NOVITA_BALANCE_QUOTA_SCRIPT,
+    note="CC Switch 可用方法：Novita AI GET /v3/user/balance；返回金额单位为 0.0001 USD，脚本会换算为 USD。",
+    enabled=True,
+    ttl_seconds=300,
+)
+
+
+KIMI_CODING_PLAN_QUOTA_SCRIPT = r"""
+() => ({
+  request: {
+    method: "GET",
+    url: "https://api.kimi.com/coding/v1/usages",
+    headers: { Authorization: "Bearer {{apiKey}}", Accept: "application/json" }
+  },
+  extractor(response) {
+    const parseNumber = (value, fallback = 0) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const toTier = (name, limit, remaining, resetsAt) => {
+      const max = parseNumber(limit, 0);
+      const left = parseNumber(remaining, 0);
+      const used = Math.max(max - left, 0);
+      const utilization = max > 0 ? Math.max(0, Math.min((used / max) * 100, 100)) : 0;
+      return { name, utilization, resets_at: resetsAt || "", used, remaining: left, total: max };
+    };
+    const tiers = [];
+    for (const item of Array.isArray(response && response.limits) ? response.limits : []) {
+      const detail = item && item.detail ? item.detail : {};
+      tiers.push(toTier("five_hour", detail.limit, detail.remaining, detail.resetTime));
+    }
+    if (response && response.usage) {
+      tiers.push(toTier("weekly_limit", response.usage.limit, response.usage.remaining, response.usage.resetTime));
+    }
+    const maxUtilization = tiers.reduce((max, tier) => Math.max(max, Number(tier.utilization || 0)), 0);
+    return {
+      tool: "coding_plan",
+      tiers,
+      quota_percent: maxUtilization,
+      remaining_percent: 100 - maxUtilization
+    };
+  }
+})
+"""
+
+
+KIMI_CODING_PLAN_QUOTA = _quota_script(
+    code=KIMI_CODING_PLAN_QUOTA_SCRIPT,
+    note="CC Switch 可用方法：KimiCode/Coding Plan GET /coding/v1/usages；读取 five_hour 与 weekly_limit 使用百分比。",
+    enabled=True,
+    ttl_seconds=300,
+)
+
+
+ZHIPU_CODING_PLAN_QUOTA_SCRIPT = r"""
+() => ({
+  request: {
+    method: "GET",
+    url: "{{baseUrl}}".toLowerCase().includes("api.z.ai")
+      ? "https://api.z.ai/api/monitor/usage/quota/limit"
+      : "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+    headers: {
+      Authorization: "{{apiKey}}",
+      "Content-Type": "application/json",
+      "Accept-Language": "en-US,en"
+    }
+  },
+  extractor(response) {
+    const limits = response && response.data && Array.isArray(response.data.limits)
+      ? response.data.limits
+      : [];
+    const tokenLimits = limits
+      .filter(item => String(item && item.type || "").toUpperCase() === "TOKENS_LIMIT")
+      .map(item => ({
+        reset: item.nextResetTime === undefined || item.nextResetTime === null ? null : Number(item.nextResetTime),
+        utilization: Number(item.percentage || 0)
+      }))
+      .sort((a, b) => {
+        if (a.reset === null && b.reset !== null) return -1;
+        if (a.reset !== null && b.reset === null) return 1;
+        return Number(a.reset || 0) - Number(b.reset || 0);
+      });
+    const toIso = value => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) return "";
+      return new Date(parsed < 1e12 ? parsed * 1000 : parsed).toISOString();
+    };
+    const names = ["five_hour", "weekly_limit"];
+    const tiers = tokenLimits.slice(0, 2).map((item, index) => ({
+      name: names[index],
+      utilization: Math.max(0, Math.min(Number(item.utilization || 0), 100)),
+      resets_at: toIso(item.reset)
+    }));
+    const maxUtilization = tiers.reduce((max, tier) => Math.max(max, Number(tier.utilization || 0)), 0);
+    return {
+      tool: "coding_plan",
+      plan_level: response && response.data ? response.data.level : "",
+      tiers,
+      quota_percent: maxUtilization,
+      remaining_percent: 100 - maxUtilization
+    };
+  }
+})
+"""
+
+
+ZHIPU_CODING_PLAN_QUOTA = _quota_script(
+    code=ZHIPU_CODING_PLAN_QUOTA_SCRIPT,
+    note="CC Switch 可用方法：智谱 Coding Plan GET /api/monitor/usage/quota/limit；Authorization 直接传 API Key，不加 Bearer。",
+    enabled=True,
+    ttl_seconds=300,
+)
+
+
+MINIMAX_CN_CODING_PLAN_QUOTA_SCRIPT = r"""
+() => ({
+  request: {
+    method: "GET",
+    url: "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+    headers: {
+      Authorization: "Bearer {{apiKey}}",
+      "Content-Type": "application/json"
+    }
+  },
+  extractor(response) {
+    const remains = Array.isArray(response && response.model_remains) ? response.model_remains : [];
+    const item = remains.find(row => String(row && row.model_name || "") === "general") || {};
+    const tiers = [];
+    const fiveHourRemaining = Number(item.current_interval_remaining_percent);
+    if (Number.isFinite(fiveHourRemaining)) {
+      tiers.push({
+        name: "five_hour",
+        utilization: Math.max(0, Math.min(100 - fiveHourRemaining, 100)),
+        remaining_percent: fiveHourRemaining,
+        resets_at: item.end_time ? new Date(Number(item.end_time)).toISOString() : ""
+      });
+    }
+    const weeklyRemaining = Number(item.current_weekly_remaining_percent);
+    if (Number(item.current_weekly_status) === 1 && Number.isFinite(weeklyRemaining)) {
+      tiers.push({
+        name: "weekly_limit",
+        utilization: Math.max(0, Math.min(100 - weeklyRemaining, 100)),
+        remaining_percent: weeklyRemaining,
+        resets_at: item.weekly_end_time ? new Date(Number(item.weekly_end_time)).toISOString() : ""
+      });
+    }
+    const maxUtilization = tiers.reduce((max, tier) => Math.max(max, Number(tier.utilization || 0)), 0);
+    return {
+      tool: "coding_plan",
+      tiers,
+      quota_percent: maxUtilization,
+      remaining_percent: 100 - maxUtilization
+    };
+  }
+})
+"""
+
+
+MINIMAX_CN_CODING_PLAN_QUOTA = _quota_script(
+    code=MINIMAX_CN_CODING_PLAN_QUOTA_SCRIPT,
+    note="CC Switch 可用方法：MiniMax 中国区 Coding Plan GET /v1/api/openplatform/coding_plan/remains；只取 general 套餐。",
+    enabled=True,
+    ttl_seconds=300,
+)
+
+
+ZENMUX_CODING_PLAN_QUOTA_SCRIPT = r"""
+() => ({
+  request: {
+    method: "GET",
+    url: "{{baseUrl}}",
+    headers: { Authorization: "Bearer {{apiKey}}", Accept: "application/json" }
+  },
+  extractor(response) {
+    const data = response && response.data ? response.data : {};
+    const buildTier = (name, raw) => {
+      if (!raw || typeof raw !== "object") return null;
+      const usage = Number(raw.usage_percentage || 0);
+      return {
+        name,
+        utilization: Math.max(0, Math.min(usage * 100, 100)),
+        resets_at: raw.resets_at || "",
+        used_value_usd: raw.used_value_usd,
+        max_value_usd: raw.max_value_usd
+      };
+    };
+    const tiers = [
+      buildTier("five_hour", data.quota_5_hour),
+      buildTier("weekly_limit", data.quota_7_day)
+    ].filter(Boolean);
+    const maxUtilization = tiers.reduce((max, tier) => Math.max(max, Number(tier.utilization || 0)), 0);
+    return {
+      tool: "coding_plan",
+      plan: data.plan,
+      account_status: data.account_status,
+      tiers,
+      quota_percent: maxUtilization,
+      remaining_percent: 100 - maxUtilization
+    };
+  }
+})
+"""
+
+
+ZENMUX_CODING_PLAN_QUOTA = _quota_script(
+    code=ZENMUX_CODING_PLAN_QUOTA_SCRIPT,
+    note="CC Switch 可用方法：ZenMux 在配置 baseUrl 上读取 quota_5_hour/quota_7_day；适合用户自定义 ZenMux 供应商。",
+    enabled=True,
+    ttl_seconds=300,
+)
+
+
+TOKEN_PLAN_QUOTA = _quota_manual(
+    "套餐型 Coding/Agent Plan：供应商模型 API 不提供 token 余额；按套餐可用性和本地请求日志展示，不按余额扣减。",
+    probe_type="unsupported",
+)
+
+
+CLOUD_BILLING_QUOTA = _quota_manual(
+    "云厂商账号级账单通常不等同于模型 API Key 余额；如需自动拉取，请在本机配置供应商专用脚本或云账号 API。"
+)
+
+
+NO_PUBLIC_BALANCE_QUOTA = _quota_manual(
+    "该供应商没有在模型调用 API 中提供通用余额接口；浮窗使用本地计费估算和请求日志。"
+)
+
+
 PROVIDER_PRESETS: List[Dict[str, Any]] = [
     {
         "preset_id": "openai-compatible-responses",
@@ -1908,6 +2364,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             ],
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
+            "quota_check": copy.deepcopy(OPENAI_ORG_COSTS_QUOTA),
         },
     },
     {
@@ -2032,6 +2489,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "user_agent": "Codex-Enhance-Manager/0.1",
             "caveat": "xAI 模型的 reasoning effort 不是统一能力：Grok 4.3 支持 none/low/medium/high；Grok Build 0.1 不发送 effort；Multi-Agent 的 effort 表示协作代理数量。",
             "notes": "价格来自 xAI 官方 Models/Pricing 文档；视频生成能力在本工具中作为预埋能力雪藏。",
+            "quota_check": copy.deepcopy(NO_PUBLIC_BALANCE_QUOTA),
         },
     },
     {
@@ -2129,6 +2587,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "user_agent": "Codex-Enhance-Manager/0.1",
             "caveat": "Anthropic 使用 Messages API，本工具会在本地代理中把 Codex Responses 请求转换为 Anthropic Messages；Haiku 4.5 不发送 effort。",
             "notes": "价格、上下文和 effort 档位来自 Anthropic 官方 Models/Pricing/Effort 文档。",
+            "quota_check": copy.deepcopy(NO_PUBLIC_BALANCE_QUOTA),
         },
     },
     {
@@ -2346,6 +2805,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
             "notes": "Public template only. Fill your own Bailian key locally; no private token is bundled.",
+            "quota_check": copy.deepcopy(CLOUD_BILLING_QUOTA),
         },
     },
     {
@@ -2395,6 +2855,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
             "notes": "Public template only. Fill your own Ark key locally; no private token is bundled.",
+            "quota_check": copy.deepcopy(CLOUD_BILLING_QUOTA),
         },
     },
     {
@@ -2432,6 +2893,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
             "notes": "Public template only. Fill your own Ark key locally; no private token is bundled.",
+            "quota_check": copy.deepcopy(TOKEN_PLAN_QUOTA),
         },
     },
     {
@@ -2469,6 +2931,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
             "notes": "Public template only. Fill your own Ark key locally; no private token is bundled.",
+            "quota_check": copy.deepcopy(TOKEN_PLAN_QUOTA),
         },
     },
     {
@@ -2512,6 +2975,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "user_agent": "OpenAI-Compatible-Client/1.0",
             "caveat": "OpenRouter 提供多供应商聚合，某些模型可能有速率限制或可用性波动。",
             "notes": "OpenRouter 是一个第三方聚合平台，支持访问多个提供商的模型。",
+            "quota_check": copy.deepcopy(OPENROUTER_USAGE_QUOTA),
         },
     },
     {
@@ -2593,6 +3057,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "user_agent": "Codex-Enhance-Manager/0.1",
             "caveat": "DeepSeek 官方 API 使用 Chat Completions 格式，不支持原生 Responses API。",
             "notes": "DeepSeek 提供高性能大语言模型，V4 系列支持推理能力。",
+            "quota_check": copy.deepcopy(DEEPSEEK_BALANCE_QUOTA),
         },
     },
     {
@@ -2636,6 +3101,49 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "user_agent": "Codex-Enhance-Manager/0.1",
             "caveat": "Moonshot API 使用 OpenAI 兼容格式，支持 tool calling 和 vision input。",
             "notes": "Moonshot Kimi 系列模型在长文本处理方面表现优异。",
+            "quota_check": copy.deepcopy(MOONSHOT_BALANCE_QUOTA),
+        },
+    },
+    {
+        "preset_id": "kimi-coding-plan",
+        "name": "KimiCode / Kimi For Coding",
+        "category": "domestic",
+        "description": "KimiCode Coding Plan，使用 OpenAI 兼容格式，并预置 CC Switch 可用的套餐百分比读取脚本。",
+        "provider": {
+            "id": "kimi-coding",
+            "display_name": "KimiCode",
+            "codex_visible_alias": "KimiCode",
+            "kind": "openai_compatible",
+            "short_alias": "kimicode",
+            "base_url": "https://api.kimi.com/coding/v1",
+            "api_format": "openai_chat",
+            "auth_mode": "provider_api_key",
+            "native_currency": "CNY",
+            "country_region": "CN",
+            "catalog_visibility": "selected_models",
+            "capabilities": {
+                "text": True,
+                "vision": False,
+                "tools": True,
+                "reasoning": False,
+                "streaming": True,
+                "models": True,
+            },
+            "responses_profile": {
+                "domestic_responses": False,
+                "partial_compatibility": False,
+                "requires_adapter": False,
+                "compatibility_notes": "KimiCode 使用 OpenAI 兼容格式，额度按 Coding Plan 百分比读取。",
+                "unsupported_fields": [],
+            },
+            "models": [
+                {"id": "kimi-for-coding", "display_name": "Kimi For Coding", "selected": True, "context_window": 131072},
+            ],
+            "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
+            "user_agent": "Codex-Enhance-Manager/0.1",
+            "caveat": "KimiCode 与普通 Moonshot API 分开配置；额度读取使用 /coding/v1/usages。",
+            "notes": "用于 Kimi For Coding 套餐，浮窗可显示五小时和周额度百分比。",
+            "quota_check": copy.deepcopy(KIMI_CODING_PLAN_QUOTA),
         },
     },
     {
@@ -2679,6 +3187,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "user_agent": "Codex-Enhance-Manager/0.1",
             "caveat": "智谱 GLM API 使用 OpenAI 兼容格式，glm-4v 支持 vision input。",
             "notes": "智谱 AI 的 GLM 系列模型在中文理解和代码生成方面具有优势。",
+            "quota_check": copy.deepcopy(ZHIPU_CODING_PLAN_QUOTA),
         },
     },
     {
@@ -2721,6 +3230,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "user_agent": "Codex-Enhance-Manager/0.1",
             "caveat": "SiliconFlow 提供多种开源模型的统一 API 接入。",
             "notes": "SiliconFlow 聚合了多个开源大模型，便于快速切换和对比。",
+            "quota_check": copy.deepcopy(SILICONFLOW_CN_BALANCE_QUOTA),
         },
     },
     {
@@ -2762,6 +3272,48 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "user_agent": "Codex-Enhance-Manager/0.1",
             "caveat": "MiniMax API 部分功能可能与 OpenAI 标准有差异。",
             "notes": "MiniMax 提供 abab 系列大模型，适用于文本生成场景。",
+        },
+    },
+    {
+        "preset_id": "minimax-coding-plan",
+        "name": "MiniMax Coding Plan",
+        "category": "domestic",
+        "description": "MiniMax 中国区 Coding Plan，使用 OpenAI 兼容格式，并预置套餐百分比读取脚本。",
+        "provider": {
+            "id": "minimax-coding-plan",
+            "display_name": "MiniMax Coding Plan",
+            "codex_visible_alias": "MiniMax Coding Plan",
+            "kind": "openai_compatible",
+            "short_alias": "minimax-code",
+            "base_url": "https://api.minimaxi.com/v1",
+            "api_format": "openai_chat",
+            "auth_mode": "provider_api_key",
+            "native_currency": "CNY",
+            "country_region": "CN",
+            "catalog_visibility": "selected_models",
+            "capabilities": {
+                "text": True,
+                "vision": False,
+                "tools": True,
+                "reasoning": False,
+                "streaming": True,
+                "models": True,
+            },
+            "responses_profile": {
+                "domestic_responses": False,
+                "partial_compatibility": False,
+                "requires_adapter": False,
+                "compatibility_notes": "MiniMax Coding Plan 使用 OpenAI 兼容格式，额度按 general 套餐百分比读取。",
+                "unsupported_fields": [],
+            },
+            "models": [
+                {"id": "MiniMax-M2.7", "display_name": "MiniMax M2.7", "selected": True, "context_window": 200000},
+            ],
+            "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
+            "user_agent": "Codex-Enhance-Manager/0.1",
+            "caveat": "这是 MiniMax Coding Plan 预置，和普通 MiniMax Chat API 分开配置。",
+            "notes": "浮窗可显示五小时和周额度百分比；周额度只在套餐返回 current_weekly_status=1 时显示。",
+            "quota_check": copy.deepcopy(MINIMAX_CN_CODING_PLAN_QUOTA),
         },
     },
     {
@@ -2930,6 +3482,48 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "user_agent": "Codex-Enhance-Manager/0.1",
             "caveat": "阶跃星辰 StepFun API 使用 OpenAI 兼容格式。step-1v 系列支持 vision input。",
             "notes": "阶跃星辰提供 Step-1 系列大语言模型。",
+            "quota_check": copy.deepcopy(STEPFUN_BALANCE_QUOTA),
+        },
+    },
+    {
+        "preset_id": "novita-ai",
+        "name": "Novita AI",
+        "category": "text",
+        "description": "Novita AI OpenAI-compatible endpoint，预置 CC Switch 可用的余额读取脚本。",
+        "provider": {
+            "id": "novita-ai",
+            "display_name": "Novita AI",
+            "kind": "openai_compatible",
+            "short_alias": "novita",
+            "base_url": "https://api.novita.ai/openai/v1",
+            "api_format": "openai_chat",
+            "auth_mode": "provider_api_key",
+            "native_currency": "USD",
+            "country_region": "US",
+            "catalog_visibility": "selected_models",
+            "capabilities": {
+                "text": True,
+                "vision": True,
+                "tools": True,
+                "reasoning": False,
+                "streaming": True,
+                "models": True,
+            },
+            "responses_profile": {
+                "domestic_responses": False,
+                "partial_compatibility": False,
+                "requires_adapter": False,
+                "compatibility_notes": "Novita AI 使用 OpenAI 兼容格式；模型列表和能力建议快速拉取后再微调。",
+                "unsupported_fields": [],
+            },
+            "models": [
+                {"id": "zai-org/glm-5.1", "display_name": "GLM-5.1", "selected": True, "context_window": 200000},
+            ],
+            "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
+            "user_agent": "Codex-Enhance-Manager/0.1",
+            "caveat": "Novita 余额接口的金额单位是 0.0001 USD，预置脚本会换算成 USD。",
+            "notes": "用于接入 Novita AI OpenAI-compatible 模型。浮窗可显示剩余余额。",
+            "quota_check": copy.deepcopy(NOVITA_BALANCE_QUOTA),
         },
     },
     {

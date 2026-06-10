@@ -16,8 +16,12 @@ class CodexInjectorTest(unittest.TestCase):
         self.assertIn("/api/codex-injection/status", script)
         self.assertIn("/api/codex-injection/quick-settings", script)
         self.assertIn("Usage Panel", script)
+        self.assertIn("data-cem-version", script)
         self.assertIn('data-cem-stat="tokens"', script)
         self.assertIn('data-cem-refresh', script)
+        self.assertIn('data-cem-toggle="codex_injection_enabled"', script)
+        self.assertIn('data-cem-toggle="plugin_unlock_enabled"', script)
+        self.assertIn("plugin_unlock_forced_off", script)
         self.assertIn("${rootId}", script)
 
     def test_build_injection_script_contains_marketplace_and_usage_alert_patches(self):

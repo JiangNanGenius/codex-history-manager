@@ -149,6 +149,39 @@ html, body {
     text-overflow: ellipsis;
 }
 
+.cache-line.quota-warning {
+    color: #fbbf24;
+}
+
+.cache-line.quota-danger {
+    color: #fca5a5;
+}
+
+.quota-meter {
+    display: none;
+    height: 4px;
+    margin-top: 6px;
+    border-radius: 999px;
+    background: rgba(2, 6, 23, 0.72);
+    overflow: hidden;
+}
+
+.quota-meter-fill {
+    width: 0%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #22c55e, #06b6d4);
+    transition: width 260ms ease, background 160ms ease;
+}
+
+.quota-meter.warning .quota-meter-fill {
+    background: linear-gradient(90deg, #f59e0b, #f97316);
+}
+
+.quota-meter.danger .quota-meter-fill {
+    background: linear-gradient(90deg, #f97316, #ef4444);
+}
+
 .context-menu {
     position: fixed;
     display: none;

@@ -133,6 +133,7 @@
         <!-- Status bar -->
         <div id="sidebar-status" class="px-5 py-3 border-t border-dark-700 text-xs text-dark-400">
             <span id="status-text" data-i18n="ready">就绪</span>
+            <span id="app-version-sidebar-label" class="block mt-1 text-[11px] text-dark-500">v-</span>
         </div>
     </aside>
 
@@ -974,8 +975,16 @@
                         <span data-i18n="requestHighestPrivileges">需要管理员权限时启动</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input id="setting-codex-injection-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <span data-i18n="codexInjectionEnabledSetting">启用 Codex 页面增强注入</span>
+                    </label>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-plugin-unlock-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
-                        <span data-i18n="pluginUnlockEnabled">非官方模式插件增强</span>
+                        <span data-i18n="pluginUnlockEnabled">商店解锁插件</span>
+                    </label>
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input id="setting-official-quota-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                        <span data-i18n="officialQuotaEnabled">官方登录态额度显示</span>
                     </label>
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input id="setting-codex-sandbox-auto-repair-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
@@ -1005,7 +1014,10 @@
                         <button onclick="createDesktopShortcut('start_codex')" class="btn btn-secondary text-xs" data-i18n="createStartCodexShortcut">创建启动 Codex 快捷方式</button>
                     </div>
                 </div>
-                <p class="text-xs text-dark-500 mt-2" data-i18n="pluginUnlockEnabledDesc">控制本地/非官方供应商的插件类增强。官方登录态不会进入本地路由或 AMR，但仍允许安全的界面注入增强。</p>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="codexInjectionEnabledSettingDesc">页面增强注入负责右上角快捷面板、隐藏/显示提示和安全统计显示；默认启用。</p>
+                <p id="setting-plugin-unlock-lock-note" class="text-xs text-amber-300 mt-2 hidden" data-i18n="pluginUnlockLockedOfficial">已检测到官方登录态，商店解锁插件已锁定关闭；页面增强注入仍可启用。</p>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="pluginUnlockEnabledDesc">商店解锁插件默认关闭，只用于非官方/本地代理模式；官方登录态下强制关闭。</p>
+                <p class="text-xs text-dark-500 mt-2" data-i18n="officialQuotaEnabledDesc">官方登录态下只读查询 ChatGPT/Codex 额度百分比；保留登录态但使用第三方 API 时默认不显示官方额度。</p>
                 <p class="text-xs text-dark-500 mt-2" data-i18n="desktopShortcutDesc">桌面快捷方式是可选项：普通版打开管理窗口，启动 Codex 版会带参数直接进入启动流程。</p>
                 <pre id="startup-preview-result" class="preview-code mt-4" data-i18n="noPreviewYet">还没有预览。</pre>
                 <div class="mt-5 border-t border-dark-800 pt-5">

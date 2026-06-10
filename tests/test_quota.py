@@ -178,7 +178,7 @@ class QuotaTest(unittest.TestCase):
                 "type": "script",
                 "script": {
                     "language": "javascript",
-                    "code": "({ request: {}, extractor(response) { return response.data; } })",
+                    "code": "({ request: { url: '{{baseUrl}}/v1/usage', headers: { Authorization: 'Bearer {{apiKey}}' } }, extractor(response) { return response.data; } })",
                 },
             },
         })
@@ -190,6 +190,9 @@ class QuotaTest(unittest.TestCase):
         self.assertEqual(request_arg.full_url, "https://usage.example.test/v1/usage")
         self.assertEqual(request_arg.headers["Authorization"], "Bearer secret")
         self.assertEqual(result["request_redacted"]["headers"]["Authorization"], "********")
+        rendered_code = mock_script.call_args_list[0].args[0]
+        self.assertIn("https://usage.example.test/v1/usage", rendered_code)
+        self.assertIn("Bearer secret", rendered_code)
 
     def test_redact_quota_result_redacts_nested_secrets(self):
         redacted = redact_quota_result({

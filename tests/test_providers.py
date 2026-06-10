@@ -668,6 +668,9 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(provider["native_currency"], "USD")
             self.assertEqual(provider["country_region"], "US")
             self.assertEqual(provider["caveat"], "OpenRouter 提供多供应商聚合，某些模型可能有速率限制或可用性波动。")
+            self.assertEqual(provider["quota_check"]["type"], "script")
+            self.assertTrue(provider["quota_check"]["enabled"])
+            self.assertIn("api/v1/credits", provider["quota_check"]["script"]["code"])
 
     def test_deepseek_official_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -701,6 +704,10 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(provider["native_currency"], "CNY")
             self.assertEqual(provider["country_region"], "CN")
             self.assertEqual(provider["caveat"], "DeepSeek 官方 API 使用 Chat Completions 格式，不支持原生 Responses API。")
+            self.assertEqual(provider["quota_check"]["type"], "http_json")
+            self.assertTrue(provider["quota_check"]["enabled"])
+            self.assertEqual(provider["quota_check"]["url"], "https://api.deepseek.com/user/balance")
+            self.assertEqual(provider["quota_check"]["json_paths"]["balance"], "$.balance_infos[0].total_balance")
 
     def test_domestic_media_bridge_presets_stay_available(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -721,6 +728,8 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(ark["base_url"], "https://ark.cn-beijing.volces.com/api/v3")
             self.assertEqual(ark["media_profile"]["adapter"], "volcengine_ark")
             self.assertNotEqual(ark["base_url"], "https://ark.cn-beijing.volces.com/api/coding/v3")
+            self.assertEqual(ark["quota_check"]["type"], "manual")
+            self.assertIn("云厂商账号级账单", ark["quota_check"]["note"])
 
     def test_openai_compatible_images_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -776,6 +785,41 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(provider["native_currency"], "CNY")
             self.assertEqual(provider["country_region"], "CN")
             self.assertEqual(provider["caveat"], "Moonshot API 使用 OpenAI 兼容格式，支持 tool calling 和 vision input。")
+            self.assertEqual(provider["quota_check"]["type"], "manual")
+            self.assertIn("未确认", provider["quota_check"]["note"])
+
+    def test_kimi_coding_plan_preset_imports_ccswitch_quota_script(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.import_preset("kimi-coding-plan")
+
+            self.assertEqual(provider["base_url"], "https://api.kimi.com/coding/v1")
+            self.assertEqual(provider["short_alias"], "kimicode")
+            self.assertEqual(provider["models"][0]["id"], "kimi-for-coding")
+            self.assertEqual(provider["quota_check"]["type"], "script")
+            self.assertTrue(provider["quota_check"]["enabled"])
+            self.assertIn("api.kimi.com/coding/v1/usages", provider["quota_check"]["script"]["code"])
+            self.assertIn("weekly_limit", provider["quota_check"]["script"]["code"])
+
+    def test_public_presets_do_not_bundle_private_native_proxy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            preset_ids = [preset["preset_id"] for preset in registry.list_presets()["presets"]]
+            self.assertFalse(any("private-native-proxy" in preset_id.lower() for preset_id in preset_ids))
+
+    def test_volcengine_plan_presets_keep_separate_plan_quota_and_urls(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            coding = registry.import_preset("volcengine-coding-plan")
+            agent = registry.import_preset("volcengine-agent-plan")
+
+            self.assertEqual(coding["base_url"], "https://ark.cn-beijing.volces.com/api/coding/v3")
+            self.assertEqual(agent["base_url"], "https://ark.cn-beijing.volces.com/api/plan/v3")
+            self.assertEqual(coding["quota_check"]["type"], "unsupported")
+            self.assertEqual(agent["quota_check"]["type"], "unsupported")
+            self.assertIn("Coding/Agent Plan", coding["quota_check"]["note"])
+            self.assertEqual(coding["models"][0]["pricing"]["billing_mode"], "token_plan_monthly")
+            self.assertEqual(agent["models"][0]["pricing"]["billing_mode"], "token_plan_monthly")
 
     def test_zhipu_glm_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -798,6 +842,10 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(provider["native_currency"], "CNY")
             self.assertEqual(provider["country_region"], "CN")
             self.assertEqual(provider["caveat"], "智谱 GLM API 使用 OpenAI 兼容格式，glm-4v 支持 vision input。")
+            self.assertEqual(provider["quota_check"]["type"], "script")
+            self.assertTrue(provider["quota_check"]["enabled"])
+            self.assertIn("api/monitor/usage/quota/limit", provider["quota_check"]["script"]["code"])
+            self.assertIn("Authorization: \"{{apiKey}}\"", provider["quota_check"]["script"]["code"])
 
     def test_siliconflow_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -819,6 +867,9 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(provider["native_currency"], "CNY")
             self.assertEqual(provider["country_region"], "CN")
             self.assertEqual(provider["caveat"], "SiliconFlow 提供多种开源模型的统一 API 接入。")
+            self.assertEqual(provider["quota_check"]["type"], "http_json")
+            self.assertTrue(provider["quota_check"]["enabled"])
+            self.assertEqual(provider["quota_check"]["url"], "https://api.siliconflow.cn/v1/user/info")
 
     def test_minimax_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -839,6 +890,18 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(provider["native_currency"], "CNY")
             self.assertEqual(provider["country_region"], "CN")
             self.assertEqual(provider["caveat"], "MiniMax API 部分功能可能与 OpenAI 标准有差异。")
+
+    def test_minimax_coding_plan_preset_imports_ccswitch_quota_script(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.import_preset("minimax-coding-plan")
+
+            self.assertEqual(provider["base_url"], "https://api.minimaxi.com/v1")
+            self.assertEqual(provider["models"][0]["id"], "MiniMax-M2.7")
+            self.assertEqual(provider["quota_check"]["type"], "script")
+            self.assertTrue(provider["quota_check"]["enabled"])
+            self.assertIn("coding_plan/remains", provider["quota_check"]["script"]["code"])
+            self.assertIn("current_weekly_status", provider["quota_check"]["script"]["code"])
 
     def test_azure_openai_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -925,6 +988,21 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(provider["native_currency"], "CNY")
             self.assertEqual(provider["country_region"], "CN")
             self.assertEqual(provider["caveat"], "阶跃星辰 StepFun API 使用 OpenAI 兼容格式。step-1v 系列支持 vision input。")
+            self.assertEqual(provider["quota_check"]["type"], "http_json")
+            self.assertTrue(provider["quota_check"]["enabled"])
+            self.assertEqual(provider["quota_check"]["url"], "https://api.stepfun.com/v1/accounts")
+
+    def test_novita_preset_imports_ccswitch_balance_script(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            provider = registry.import_preset("novita-ai")
+
+            self.assertEqual(provider["base_url"], "https://api.novita.ai/openai/v1")
+            self.assertEqual(provider["native_currency"], "USD")
+            self.assertEqual(provider["quota_check"]["type"], "script")
+            self.assertTrue(provider["quota_check"]["enabled"])
+            self.assertIn("api.novita.ai/v3/user/balance", provider["quota_check"]["script"]["code"])
+            self.assertIn("/ 10000", provider["quota_check"]["script"]["code"])
 
     def test_nvidia_build_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:

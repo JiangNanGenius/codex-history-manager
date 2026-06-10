@@ -443,7 +443,7 @@ def _codex_model_info_from_entry(entry: Dict[str, Any], priority: int = 0) -> Di
     context_window = _positive_int(entry.get("context_window"), CODEX_DEFAULT_CONTEXT_WINDOW)
     caps = entry.get("capabilities") if isinstance(entry.get("capabilities"), dict) else {}
     profile = entry.get("reasoning_effort_profile") if isinstance(entry.get("reasoning_effort_profile"), dict) else {}
-    efforts = _codex_reasoning_efforts(profile)
+    efforts = _codex_reasoning_efforts_for_entry(entry, profile, caps)
     default_effort = _codex_default_reasoning_effort(profile, efforts)
     display = _catalog_segment(entry.get("codex_display_name") or entry.get("display_name"), entry.get("visible_model_id") or "model")
     provider_alias = _catalog_segment(entry.get("provider_visible_alias") or entry.get("provider_alias"), "provider")
@@ -504,7 +504,7 @@ def _smart_routing_codex_model(
         context_window=context_window,
         input_modalities=_codex_input_modalities(merged_caps),
         priority=priority,
-        reasoning_efforts=["low", "medium", "high"],
+        reasoning_efforts=["low", "medium", "high", "xhigh"],
         default_reasoning_effort="medium",
     )
 
@@ -597,6 +597,27 @@ def _codex_reasoning_efforts(profile: Dict[str, Any]) -> List[str]:
         if normalized in CODEX_REASONING_DESCRIPTIONS and normalized not in result:
             result.append(normalized)
     return result
+
+
+def _codex_reasoning_efforts_for_entry(
+    entry: Dict[str, Any],
+    profile: Dict[str, Any],
+    capabilities: Dict[str, Any],
+) -> List[str]:
+    efforts = _codex_reasoning_efforts(profile)
+    if efforts:
+        return efforts
+    responses_profile = entry.get("responses_profile") if isinstance(entry.get("responses_profile"), dict) else {}
+    native_responses = (
+        str(entry.get("api_format") or "") == "openai_responses"
+        and (
+            responses_profile.get("mode") == "native"
+            or responses_profile.get("native_responses") is True
+        )
+    )
+    if native_responses and capabilities.get("reasoning"):
+        return ["low", "medium", "high", "xhigh"]
+    return []
 
 
 def _codex_default_reasoning_effort(profile: Dict[str, Any], efforts: List[str]) -> str:

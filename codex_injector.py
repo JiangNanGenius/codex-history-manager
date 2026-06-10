@@ -404,7 +404,7 @@ def build_injection_script(backend_url: str = "") -> str:
         "marker": "codex-enhance-manager-v1",
     }
     config_json = json.dumps(payload, ensure_ascii=False)
-    return f"""
+    return rf"""
 (() => {{
   const config = {config_json};
   if (window.__codexEnhanceManagerInjected === config.marker) return;
@@ -523,6 +523,9 @@ def build_injection_script(backend_url: str = "") -> str:
     }}
     #${{rootId}} .cem-switch.on {{ background: #0891b2; }}
     #${{rootId}} .cem-switch.on::after {{ transform: translateX(14px); background: #ffffff; }}
+    #${{rootId}} .cem-toggle.cem-disabled {{ opacity: .55; cursor: not-allowed; }}
+    #${{rootId}} .cem-toggle.cem-disabled .cem-switch {{ background: #1f2937; border-color: rgba(148, 163, 184, .16); }}
+    #${{rootId}} .cem-switch.locked::after {{ background: #94a3b8; }}
     #${{rootId}} .cem-actions {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -579,6 +582,7 @@ def build_injection_script(backend_url: str = "") -> str:
             <input type="checkbox" data-cem-toggle="plugin_unlock_enabled" hidden>
             <span class="cem-switch" data-cem-switch="plugin_unlock_enabled"></span>
           </label>
+          <div class="cem-muted" data-cem-plugin-unlock-note style="display:none;">Disabled for official login.</div>
         </div>
         <div class="cem-actions">
           <a href="${{config.backend}}/#providers" target="_blank" rel="noreferrer">Providers</a>
@@ -616,10 +620,18 @@ def build_injection_script(backend_url: str = "") -> str:
     root.querySelectorAll('[data-cem-toggle]').forEach((input) => {{
       const key = input.getAttribute('data-cem-toggle');
       const value = settings[key] !== false;
+      const locked = key === 'plugin_unlock_enabled' && Boolean(settings.plugin_unlock_forced_off);
       input.checked = value;
+      input.disabled = locked;
+      input.closest?.('.cem-toggle')?.classList.toggle('cem-disabled', locked);
       const sw = root.querySelector(`[data-cem-switch="${{key}}"]`);
-      if (sw) sw.classList.toggle('on', value);
+      if (sw) {{
+        sw.classList.toggle('on', value);
+        sw.classList.toggle('locked', locked);
+      }}
     }});
+    const pluginNote = root.querySelector('[data-cem-plugin-unlock-note]');
+    if (pluginNote) pluginNote.style.display = settings.plugin_unlock_forced_off ? 'block' : 'none';
     const list = root.querySelector('[data-cem-providers]');
     if (!list) return;
     const providers = Array.isArray(cemQuickSettings && cemQuickSettings.providers) ? cemQuickSettings.providers : [];
@@ -679,6 +691,11 @@ def build_injection_script(backend_url: str = "") -> str:
   root.addEventListener('change', (event) => {{
     const input = event.target.closest?.('[data-cem-toggle]');
     if (!input) return;
+    if (input.disabled) {{
+      cemSetStatus('Plugin unlock is disabled for official login');
+      cemRenderQuickSettings(cemQuickSettings);
+      return;
+    }}
     const key = input.getAttribute('data-cem-toggle');
     if (!key) return;
     cemSetStatus('Saving...');
@@ -721,12 +738,14 @@ def build_injection_script(backend_url: str = "") -> str:
         "marker": "codex-enhance-manager-v3",
     }
     config_json = json.dumps(payload, ensure_ascii=False)
-    return f"""
+    return rf"""
 (() => {{
   const config = {config_json};
   const rootId = 'codex-enhance-manager-menu';
-  if (window.__codexEnhanceManagerInjected === config.marker && document.getElementById(rootId)) return;
+  const previousBackend = window.__codexEnhanceManagerBackend || '';
+  if (window.__codexEnhanceManagerInjected === config.marker && document.getElementById(rootId) && previousBackend === config.backend) return;
   window.__codexEnhanceManagerInjected = config.marker;
+  window.__codexEnhanceManagerBackend = config.backend;
 
 {_renderer_enhancement_runtime()}
 
@@ -905,6 +924,50 @@ def build_injection_script(backend_url: str = "") -> str:
       font-size: 10px;
       margin-left: 6px;
     }}
+    #${{rootId}} .cem-toggle-grid {{
+      display: grid;
+      gap: 6px;
+    }}
+    #${{rootId}} .cem-toggle {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 9px;
+      color: #dbeafe;
+      border: 1px solid rgba(148, 163, 184, .16);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, .52);
+      cursor: pointer;
+    }}
+    #${{rootId}} .cem-toggle.cem-disabled {{
+      opacity: .55;
+      cursor: not-allowed;
+    }}
+    #${{rootId}} .cem-switch {{
+      position: relative;
+      width: 34px;
+      height: 20px;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      background: #334155;
+      border: 1px solid rgba(148, 163, 184, .35);
+    }}
+    #${{rootId}} .cem-switch::after {{
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      transition: transform .14s ease, background .14s ease;
+    }}
+    #${{rootId}} .cem-switch.on {{ background: #0891b2; }}
+    #${{rootId}} .cem-switch.on::after {{ transform: translateX(14px); background: #ffffff; }}
+    #${{rootId}} .cem-switch.locked {{ background: #1f2937; border-color: rgba(148, 163, 184, .16); }}
+    #${{rootId}} .cem-switch.locked::after {{ background: #94a3b8; }}
     #${{rootId}} .cem-actions {{
       display: flex;
       flex-wrap: wrap;
@@ -940,7 +1003,7 @@ def build_injection_script(backend_url: str = "") -> str:
       <div class="cem-head">
         <div>
           <div class="cem-title">Usage Panel</div>
-          <div class="cem-subtitle">Route, tokens, cost and balance</div>
+          <div class="cem-subtitle">Route, tokens, cost and balance · <span data-cem-version>v-</span></div>
         </div>
         <div class="cem-status">Checking backend...</div>
       </div>
@@ -965,16 +1028,88 @@ def build_injection_script(backend_url: str = "") -> str:
           <div class="cem-section-title">Fast Route Switch</div>
           <div class="cem-provider-list" data-cem-providers><div class="cem-muted">Loading providers...</div></div>
         </div>
+        <div class="cem-section">
+          <div class="cem-section-title">Quick Toggles</div>
+          <div class="cem-toggle-grid">
+            <label class="cem-toggle">
+              <span>Enhancement injection</span>
+              <input type="checkbox" data-cem-toggle="codex_injection_enabled" hidden>
+              <span class="cem-switch" data-cem-switch="codex_injection_enabled"></span>
+            </label>
+            <label class="cem-toggle">
+              <span>Plugin unlock</span>
+              <input type="checkbox" data-cem-toggle="plugin_unlock_enabled" hidden>
+              <span class="cem-switch" data-cem-switch="plugin_unlock_enabled"></span>
+            </label>
+          </div>
+          <div class="cem-muted" data-cem-plugin-unlock-note style="display:none; margin-top:6px;">Disabled for official login.</div>
+        </div>
         <div class="cem-actions">
           <button type="button" class="cem-link" data-cem-refresh>Refresh</button>
-          <a href="${{config.backend}}/#providers" target="_blank" rel="noreferrer">Providers</a>
-          <a href="${{config.backend}}/#amr" target="_blank" rel="noreferrer">Smart Routing</a>
-          <a href="${{config.backend}}/#stats" target="_blank" rel="noreferrer">Usage</a>
-          <a href="${{config.backend}}/#codex-integration" target="_blank" rel="noreferrer">Connection</a>
+          <a href="${{config.backend}}/#providers" data-cem-backend-link="/#providers" target="_blank" rel="noreferrer">Providers</a>
+          <a href="${{config.backend}}/#amr" data-cem-backend-link="/#amr" target="_blank" rel="noreferrer">Smart Routing</a>
+          <a href="${{config.backend}}/#stats" data-cem-backend-link="/#stats" target="_blank" rel="noreferrer">Usage</a>
+          <a href="${{config.backend}}/#codex-integration" data-cem-backend-link="/#codex-integration" target="_blank" rel="noreferrer">Connection</a>
         </div>
       </div>
     </div>
   `;
+
+  let cemBackend = String(window.__codexEnhanceManagerBackend || config.backend || '').replace(/\/+$/, '');
+  const cemSetBackend = (backend) => {{
+    const next = String(backend || config.backend || '').replace(/\/+$/, '');
+    if (!next) return;
+    cemBackend = next;
+    window.__codexEnhanceManagerBackend = next;
+    root.querySelectorAll('[data-cem-backend-link]').forEach((link) => {{
+      const path = link.getAttribute('data-cem-backend-link') || '/';
+      link.href = `${{next}}${{path}}`;
+    }});
+  }};
+  const cemBackendCandidates = () => {{
+    const candidates = [];
+    const add = (value) => {{
+      const cleaned = String(value || '').replace(/\/+$/, '');
+      if (cleaned && !candidates.includes(cleaned)) candidates.push(cleaned);
+    }};
+    add(cemBackend);
+    add(config.backend);
+    const ports = new Set();
+    [cemBackend, config.backend].forEach((value) => {{
+      try {{
+        const url = new URL(value);
+        if (/^(127\.0\.0\.1|localhost)$/i.test(url.hostname)) {{
+          const port = Number(url.port || 80);
+          if (Number.isFinite(port) && port > 0) ports.add(port);
+        }}
+      }} catch {{}}
+    }});
+    for (let port = 51234; port <= 51264; port += 1) ports.add(port);
+    ports.forEach((port) => add(`http://127.0.0.1:${{port}}`));
+    return candidates;
+  }};
+  const cemFetchJson = async (path, options = {{}}) => {{
+    let lastError = null;
+    for (const backend of cemBackendCandidates()) {{
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 2200);
+      try {{
+        const response = await fetch(`${{backend}}${{path}}`, {{ ...options, signal: controller.signal }});
+        const data = await response.json();
+        if (!response.ok || !data || data.success === false) {{
+          throw new Error((data && data.error) || `Backend responded ${{response.status}}`);
+        }}
+        cemSetBackend(data.backend_url || backend);
+        return data;
+      }} catch (error) {{
+        lastError = error;
+      }} finally {{
+        window.clearTimeout(timer);
+      }}
+    }}
+    throw lastError || new Error('Backend connection failed');
+  }};
+  cemSetBackend(cemBackend);
 
   const cemEscapeHtml = (value) => String(value || '').replace(/[&<>"']/g, (ch) => ({{
     '&': '&amp;',
@@ -1049,8 +1184,11 @@ def build_injection_script(backend_url: str = "") -> str:
     cemQuickSettings = data || cemQuickSettings;
     const usage = (cemQuickSettings && cemQuickSettings.usage) || {{}};
     const summary = usage.request_log_summary || {{}};
+    const settings = (cemQuickSettings && cemQuickSettings.settings) || {{}};
     const providers = Array.isArray(cemQuickSettings && cemQuickSettings.providers) ? cemQuickSettings.providers : [];
     const focus = String((cemQuickSettings && cemQuickSettings.focus_provider_id) || '');
+    const versionEl = root.querySelector('[data-cem-version]');
+    if (versionEl && cemQuickSettings && cemQuickSettings.app_version) versionEl.textContent = cemQuickSettings.app_version;
     const activeProvider = providers.find((provider) => String(provider.id || '') === focus || provider.focused) || null;
     const activeLabel = activeProvider ? (activeProvider.display_name || activeProvider.id || 'Selected provider') : 'Smart routing';
     const activeBadge = activeProvider
@@ -1102,6 +1240,22 @@ def build_injection_script(backend_url: str = "") -> str:
       balanceEl.textContent = 'No balance or cost data yet.';
     }}
 
+    root.querySelectorAll('[data-cem-toggle]').forEach((input) => {{
+      const key = input.getAttribute('data-cem-toggle');
+      const locked = key === 'plugin_unlock_enabled' && Boolean(settings.plugin_unlock_forced_off);
+      const value = locked ? false : settings[key] !== false;
+      input.checked = value;
+      input.disabled = locked;
+      input.closest?.('.cem-toggle')?.classList.toggle('cem-disabled', locked);
+      const sw = root.querySelector(`[data-cem-switch="${{key}}"]`);
+      if (sw) {{
+        sw.classList.toggle('on', value);
+        sw.classList.toggle('locked', locked);
+      }}
+    }});
+    const pluginNote = root.querySelector('[data-cem-plugin-unlock-note]');
+    if (pluginNote) pluginNote.style.display = settings.plugin_unlock_forced_off ? 'block' : 'none';
+
     const list = root.querySelector('[data-cem-providers]');
     if (!list) return;
     const autoActive = !focus;
@@ -1120,19 +1274,16 @@ def build_injection_script(backend_url: str = "") -> str:
     }}).join('');
   }};
 
-  const cemLoadQuickSettings = () => fetch(`${{config.backend}}/api/codex-injection/quick-settings`, {{ cache: 'no-store' }})
-    .then((response) => response.json())
+  const cemLoadQuickSettings = () => cemFetchJson('/api/codex-injection/quick-settings', {{ cache: 'no-store' }})
     .then((data) => {{
-      if (!data || data.success === false) throw new Error((data && data.error) || 'Usage panel unavailable');
       cemRenderQuickSettings(data);
       return data;
     }});
-  const cemPostQuickSettings = (patch) => fetch(`${{config.backend}}/api/codex-injection/quick-settings`, {{
+  const cemPostQuickSettings = (patch) => cemFetchJson('/api/codex-injection/quick-settings', {{
     method: 'POST',
     headers: {{ 'Content-Type': 'application/json' }},
     body: JSON.stringify(patch || {{}}),
-  }}).then((response) => response.json()).then((data) => {{
-    if (!data || data.success === false) throw new Error((data && data.error) || 'Route switch failed');
+  }}).then((data) => {{
     cemRenderQuickSettings(data);
     return data;
   }});
@@ -1169,11 +1320,31 @@ def build_injection_script(backend_url: str = "") -> str:
       .then(() => cemSetStatus('Route updated'))
       .catch((error) => cemSetStatus(error.message || 'Switch failed', true));
   }});
+  root.addEventListener('change', (event) => {{
+    event.stopPropagation();
+    const input = event.target.closest?.('[data-cem-toggle]');
+    if (!input) return;
+    if (input.disabled) {{
+      cemSetStatus('Plugin unlock is disabled for official login');
+      cemRenderQuickSettings(cemQuickSettings);
+      return;
+    }}
+    const key = input.getAttribute('data-cem-toggle');
+    if (!key) return;
+    cemSetStatus('Saving...');
+    cemPostQuickSettings({{ [key]: input.checked }})
+      .then(() => refreshCemBackendStatus())
+      .then(() => cemSetStatus('Saved'))
+      .catch((error) => {{
+        input.checked = !input.checked;
+        cemRenderQuickSettings(cemQuickSettings);
+        cemSetStatus(cemHumanizeError(error) || 'Save failed', true);
+      }});
+  }});
   document.documentElement.appendChild(root);
 
   const refreshCemBackendStatus = () => {{
-    fetch(`${{config.backend}}/api/codex-injection/status`, {{ cache: 'no-store' }})
-      .then((response) => response.json())
+    cemFetchJson('/api/codex-injection/status', {{ cache: 'no-store' }})
       .then((data) => {{
         cemRuntime.applyStatus(data);
         if (!root.classList.contains('open')) {{

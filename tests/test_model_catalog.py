@@ -178,6 +178,34 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         self.assertEqual(response["models"][0]["slug"], CODEX_SMART_ROUTING_MODEL_ID)
         self.assertEqual(response["models"][0]["context_window"], 64000)
         self.assertEqual(response["models"][0]["input_modalities"], ["text", "image"])
+        self.assertIn(
+            "xhigh",
+            [level["effort"] for level in response["models"][0]["supported_reasoning_levels"]],
+        )
+
+    def test_native_responses_codex_models_expose_xhigh_reasoning_by_default(self):
+        providers = [
+            {
+                "id": "native",
+                "short_alias": "native",
+                "enabled": True,
+                "api_format": "openai_responses",
+                "responses_profile": {"mode": "native", "native_responses": True},
+                "catalog_visibility": "always_visible",
+                "capabilities": {"text": True, "reasoning": True},
+                "models": [{"id": "gpt-5", "enabled": True, "context_window": 256000}],
+            }
+        ]
+
+        response = UnifiedModelCatalog(providers).build_codex_models_response(include_smart_routing=False)
+
+        model = response["models"][0]
+        self.assertEqual(model["slug"], "native/gpt-5")
+        self.assertEqual(
+            [level["effort"] for level in model["supported_reasoning_levels"]],
+            ["low", "medium", "high", "xhigh"],
+        )
+        self.assertEqual(model["default_reasoning_level"], "medium")
 
     def test_injection_data_keeps_codex_visible_fields_ascii(self):
         providers = [

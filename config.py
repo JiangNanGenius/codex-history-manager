@@ -58,6 +58,7 @@ DEFAULT_CONFIG = {
     "desktop_launch_action": "show_window",
     "desktop_monitor_enabled": True,
     "desktop_monitor_opacity": 88,
+    "official_quota_enabled": True,
     "update_check_enabled": True,
     "update_include_prerelease": False,
     "plugin_unlock_enabled": False,
@@ -302,6 +303,7 @@ class Config:
             "update_include_prerelease",
             "plugin_unlock_enabled",
             "codex_injection_enabled",
+            "official_quota_enabled",
             "codex_goals_enabled",
             "codex_sandbox_auto_repair_enabled",
         ):

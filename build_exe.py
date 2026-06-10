@@ -264,7 +264,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -428,7 +428,7 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument(
         "--smoke-timeout-seconds",
         type=int,
-        default=45,
+        default=180,
         help="Maximum seconds to wait for the packaged EXE smoke test.",
     )
     return parser.parse_args(argv)

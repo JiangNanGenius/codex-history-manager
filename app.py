@@ -94,6 +94,7 @@ from currency import (
 )
 from costing import estimate_request_cost, pricing_preview_payload
 from quota import QuotaManager, refresh_provider_quota_preview
+from official_quota import OfficialCodexQuotaManager
 from request_logs import RequestLogStore
 from startup_manager import STARTUP_CONFIG_KEYS, StartupManager
 from desktop_shortcuts import DesktopShortcutManager
@@ -240,6 +241,14 @@ def _select_available_cdp_port(preferred: int, scan_limit: int = 40) -> int:
         if _tcp_port_is_available(candidate):
             return candidate
     return preferred
+
+
+def _safe_codex_auth_mode(mgr: Optional[CodexConfigManager] = None) -> str:
+    try:
+        value = (mgr or CodexConfigManager()).get_auth_mode()
+    except Exception:
+        return "unknown"
+    return value if isinstance(value, str) and value else "unknown"
 
 
 def _secret_reveal_password_configured(config_obj: Config) -> bool:
@@ -1243,6 +1252,7 @@ def create_app() -> Flask:
     )
     amr_registry = AMRRegistry()
     quota_manager = QuotaManager(lambda: provider_registry.list_providers(include_secrets=True).get("providers", []))
+    official_quota_manager = OfficialCodexQuotaManager(lambda: CodexConfigManager().read_auth())
     startup_manager = StartupManager()
     desktop_shortcut_manager = DesktopShortcutManager()
     update_manager = UpdateManager(current_version=APP_VERSION, repository_url=APP_REPOSITORY_URL)
@@ -2335,7 +2345,7 @@ def create_app() -> Flask:
             granularity = request.args.get("granularity", "total")
             auth_mode = "unknown"
             try:
-                auth_mode = CodexConfigManager().get_auth_mode()
+                auth_mode = _safe_codex_auth_mode()
             except Exception:
                 pass
             provider_payload: Dict[str, Any] = {}
@@ -2415,6 +2425,18 @@ def create_app() -> Flask:
                 data["current_context_window"] = data["codex_rollout_latest_context_window"]
                 data["current_context_used_tokens"] = data["codex_rollout_latest_context_used_tokens"]
                 data["current_context_source"] = "codex_rollout"
+            quota_snapshot: Dict[str, Any] = {}
+            if official_usage_default and _coerce_bool(config.get("official_quota_enabled", True), True):
+                try:
+                    quota_snapshot = official_quota_manager.refresh(force=False)
+                except Exception as exc:
+                    quota_snapshot = {"success": False, "provider_id": "codex_official", "type": "official_subscription", "error": str(exc)}
+            elif focus_provider_id and third_party_focus_provider:
+                try:
+                    quota_snapshot = quota_manager.refresh_provider_quota(focus_provider_id, force=False)
+                except Exception as exc:
+                    quota_snapshot = {"success": False, "provider_id": focus_provider_id, "error": str(exc)}
+            data["quota"] = quota_snapshot
             return jsonify(data)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -2667,6 +2689,9 @@ def create_app() -> Flask:
             try:
                 mgr = CodexConfigManager()
                 config_data = mgr.read_config()
+                auth_mode = _safe_codex_auth_mode(mgr)
+                settings["codex_auth_mode"] = auth_mode
+                settings["official_oauth_detected"] = auth_mode == "official_oauth"
                 current_goals = codex_goals_enabled_from_config(config_data, True)
                 settings["codex_goals_config"] = {
                     "enabled": current_goals,
@@ -2676,6 +2701,8 @@ def create_app() -> Flask:
                     "config_path": str(mgr.config_path),
                 }
             except Exception as exc:
+                settings["codex_auth_mode"] = "unknown"
+                settings["official_oauth_detected"] = False
                 settings["codex_goals_config"] = {
                     "enabled": True,
                     "configured": False,
@@ -2698,6 +2725,14 @@ def create_app() -> Flask:
             data = preserve_redacted_currency_secret(data, config.get_all())
             data = preserve_redacted_local_proxy_token(data, config.get_all())
             data = _drop_secret_reveal_response_fields(data)
+            plugin_unlock_forced_off = False
+            if data.get("plugin_unlock_enabled"):
+                try:
+                    if _safe_codex_auth_mode() == "official_oauth":
+                        data["plugin_unlock_enabled"] = False
+                        plugin_unlock_forced_off = True
+                except Exception:
+                    pass
             config.update(data)
             _sync_proxy_request_log_config()
             goals_sync = None
@@ -2727,6 +2762,8 @@ def create_app() -> Flask:
                     backup_mgr.stop_auto_backup()
 
             payload = {"success": True}
+            if plugin_unlock_forced_off:
+                payload["warning"] = "已检测到 Codex 官方登录态，商店解锁插件保持关闭。"
             if goals_sync is not None:
                 payload["codex_goals_sync"] = goals_sync
                 if not goals_sync.get("success"):
@@ -3107,7 +3144,34 @@ def create_app() -> Flask:
         """读取内存中的余额/额度快照缓存。"""
         try:
             _refresh_provider_registry_path()
-            return jsonify(quota_manager.list_cached())
+            payload = quota_manager.list_cached()
+            payload["official"] = official_quota_manager.cached()
+            return jsonify(payload)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/official/quota")
+    def get_official_quota_cache():
+        """读取官方登录态额度快照缓存，不触发写入。"""
+        try:
+            return jsonify(official_quota_manager.cached())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/official/quota/refresh", methods=["POST"])
+    def refresh_official_quota():
+        """刷新 Codex 官方登录态额度；只读 auth.json，不修改 Codex 配置。"""
+        try:
+            if not _coerce_bool(config.get("official_quota_enabled", True), True):
+                return jsonify({
+                    "success": False,
+                    "provider_id": "codex_official",
+                    "enabled": False,
+                    "type": "official_subscription",
+                    "error": "Official quota monitoring is disabled.",
+                })
+            body = request.get_json(silent=True) or {}
+            return jsonify(official_quota_manager.refresh(force=bool(body.get("force", True))))
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -3566,10 +3630,17 @@ def create_app() -> Flask:
                     "desktop_monitor_enabled",
                     "codex_injection_enabled",
                     "plugin_unlock_enabled",
+                    "official_quota_enabled",
                 }
                 for key in allowed:
                     if key in body:
                         updates[key] = _coerce_bool(body.get(key), bool(config.get(key, DEFAULT_CONFIG.get(key))))
+                if updates.get("plugin_unlock_enabled"):
+                    try:
+                        if _safe_codex_auth_mode() == "official_oauth":
+                            updates["plugin_unlock_enabled"] = False
+                    except Exception:
+                        pass
                 if updates:
                     config.update(updates)
             providers_payload = _provider_payload(include_secrets=False)
@@ -3577,7 +3648,7 @@ def create_app() -> Flask:
             focus_id, _focused_provider = _focused_provider_from_payload(providers_payload)
             auth_mode = "unknown"
             try:
-                auth_mode = CodexConfigManager().get_auth_mode()
+                auth_mode = _safe_codex_auth_mode()
             except Exception:
                 pass
             last_start_mode = str(config.get("codex_last_start_mode", "") or "")
@@ -3596,7 +3667,12 @@ def create_app() -> Flask:
             except Exception as exc:
                 token_snapshot = {"error": str(exc)}
             quota_snapshot: Dict[str, Any] = {}
-            if focus_id and third_party_focus_provider:
+            if official_usage_default and _coerce_bool(config.get("official_quota_enabled", True), True):
+                try:
+                    quota_snapshot = official_quota_manager.cached()
+                except Exception as exc:
+                    quota_snapshot = {"success": False, "provider_id": "codex_official", "type": "official_subscription", "error": str(exc)}
+            elif focus_id and third_party_focus_provider:
                 try:
                     quota_snapshot = quota_manager.cached_provider_quota(focus_id)
                 except Exception as exc:
@@ -3637,15 +3713,19 @@ def create_app() -> Flask:
             settings = {
                 "desktop_monitor_enabled": _coerce_bool(config.get("desktop_monitor_enabled", True), True),
                 "codex_injection_enabled": _coerce_bool(config.get("codex_injection_enabled", True), True),
-                "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)),
+                "plugin_unlock_enabled": bool(config.get("plugin_unlock_enabled", False)) and auth_mode != "official_oauth",
+                "plugin_unlock_forced_off": auth_mode == "official_oauth",
+                "official_quota_enabled": _coerce_bool(config.get("official_quota_enabled", True), True),
                 "codex_last_start_mode": str(config.get("codex_last_start_mode", "") or ""),
             }
             return jsonify({
                 "success": True,
+                "app_version": APP_VERSION,
                 "settings": settings,
                 "focus_provider_id": focus_provider_id,
                 "providers": providers,
                 "usage": usage,
+                "backend_url": _current_backend_url(),
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -4378,7 +4458,7 @@ def create_app() -> Flask:
         auth_mode = "unknown"
         provider_payload: Dict[str, Any] = {}
         try:
-            auth_mode = CodexConfigManager().get_auth_mode()
+            auth_mode = _safe_codex_auth_mode()
         except Exception:
             pass
         try:
@@ -4390,7 +4470,7 @@ def create_app() -> Flask:
             provider_payload,
             last_start_mode=str(config.get("codex_last_start_mode", "") or ""),
         )
-        plugin_unlock = bool(config.get("plugin_unlock_enabled", False))
+        plugin_unlock = bool(config.get("plugin_unlock_enabled", False)) and auth_mode != "official_oauth"
         return jsonify({
             "success": True,
             "enabled": _coerce_bool(config.get("codex_injection_enabled", True), True),
@@ -4399,6 +4479,8 @@ def create_app() -> Flask:
             "plugin_entry_unlock": plugin_unlock,
             "force_plugin_install": plugin_unlock,
             "auth_mode": auth_mode,
+            "plugin_unlock_forced_off": auth_mode == "official_oauth",
+            "official_quota_enabled": _coerce_bool(config.get("official_quota_enabled", True), True),
             "official_usage_visible": official_usage_visible,
             "hide_official_usage_alert": not official_usage_visible,
             "official_focus_provider": _provider_focus_is_official_login(provider_payload),

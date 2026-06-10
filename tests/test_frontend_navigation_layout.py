@@ -127,6 +127,7 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert 'href="/favicon.ico"' in html
     assert 'src="/app-icon.png"' in html
     assert "app-logo-shell" in html
+    assert "app-version-sidebar-label" in html
     assert "startupElevationHelp" in html
     assert "checkForUpdates" in html
     assert "downloadLatestUpdate" in js
@@ -237,6 +238,8 @@ def test_native_responses_and_codex_login_provider_locks_are_wired():
     assert "renderProviderModelDetails(provider, providerReadOnly, capabilityLocked)" in js
     assert "renderApprovalModeSegment(approvalProfile, providerReadOnly || nativeBehaviorLocked)" in js
     assert "renderMediaModeSegment(mediaProfile, providerReadOnly || nativeBehaviorLocked)" in js
+    assert "const hideReasoningControls = isNativeResponsesProvider(provider);" in js
+    assert "preserveReasoningProfile" in js
     assert "provider.codex_visible_alias || provider.short_alias || provider.id" in js
     assert "provider.codex_visible_alias || provider.display_name" not in js
     assert "codexLoginProviderReadOnly" in js

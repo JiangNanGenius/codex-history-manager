@@ -1,5 +1,17 @@
 # Release Notes
 
+## v2.2.18 - 2026-06-11
+
+- Added official Codex OAuth quota reading and exposed quota snapshots in the floating monitor, quick panel, and settings flow.
+- Imported CC Switch-compatible balance/quota probes for DeepSeek, KimiCode, Zhipu, MiniMax Coding Plan, SiliconFlow, StepFun, OpenRouter, and Novita.
+- Locked Plugin Unlock off while an official Codex login is detected; Enhancement Injection remains available and defaults on.
+- Added visible version labels in the main sidebar and injected Codex quick panel.
+- Fixed injected quick panel backend fallback, quick toggles, and official-login lock state rendering.
+- Hardened settings serialization so missing or mocked Codex auth mode cannot break `/api/settings`.
+- Updated packaging to disable UPX and keep the release manifest with packaged smoke-test proof.
+- EXE: `74.33 MB`; SHA256: `6f680ee54988cdb24849de4594cb6cda25ac872677f18156d91a7e2e728c36a1`.
+- Verified with `python -m pytest -q` and `python build_exe.py --smoke-test --write-release-manifest`.
+
 ## v2.2.12 - 2026-06-09
 
 ### 中文

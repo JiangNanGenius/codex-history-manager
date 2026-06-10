@@ -5,6 +5,7 @@ from reasoning_policy import (
     apply_reasoning_policy_to_responses_request,
     infer_reasoning_effort_policy,
     map_reasoning_effort,
+    normalize_reasoning_effort_profile,
 )
 
 
@@ -98,6 +99,20 @@ class ReasoningPolicyTest(unittest.TestCase):
         )
 
         self.assertEqual(request["reasoning_effort"], "high")
+
+    def test_reasoning_profile_accepts_legacy_effort_aliases(self):
+        profile = normalize_reasoning_effort_profile(
+            {
+                "supported_efforts": "low, medium, x-high",
+                "default_effort": "very-high",
+                "api_parameter": "reasoning.effort",
+            }
+        )
+
+        self.assertTrue(profile["supports_reasoning_effort"])
+        self.assertEqual(profile["reasoning_efforts"], ["low", "medium", "xhigh"])
+        self.assertEqual(profile["reasoning_effort_default"], "xhigh")
+        self.assertEqual(profile["reasoning_effort_parameter"], "reasoning.effort")
 
 
 if __name__ == "__main__":

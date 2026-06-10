@@ -1239,6 +1239,8 @@ class NativeTokenMonitor:
         self._labels["context"].pack(anchor="w")
         self._labels["speed"] = tk.Label(frame, text="速度 Speed: --", fg="#bae6fd", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
         self._labels["speed"].pack(anchor="w", pady=(3, 0))
+        self._labels["quota"] = tk.Label(frame, text="额度 Quota: --", fg="#fbbf24", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
+        self._labels["quota"].pack(anchor="w", pady=(3, 0))
         self._labels["cache"] = tk.Label(frame, text="缓存复用 Reuse: --", fg="#94a3b8", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
         self._labels["cache"].pack(anchor="w", pady=(3, 0))
         self._labels["updated"] = tk.Label(frame, text="更新时间 Updated: --", fg="#64748b", bg=WEBVIEW_MONITOR_BACKGROUND, font=small_font)
@@ -1267,7 +1269,7 @@ class NativeTokenMonitor:
             self.initial_y = y
             root.geometry(f"+{x}+{y}")
 
-        for widget in (root, frame, header, self._labels["value"], self._labels["context"], self._labels["speed"], self._labels["cache"], self._labels["updated"]):
+        for widget in (root, frame, header, self._labels["value"], self._labels["context"], self._labels["speed"], self._labels["quota"], self._labels["cache"], self._labels["updated"]):
             widget.bind("<ButtonRelease-3>", show_context_menu)
             widget.bind("<ButtonPress-1>", start_drag)
             widget.bind("<B1-Motion>", drag)
@@ -1399,8 +1401,39 @@ class NativeTokenMonitor:
             self._labels["speed"].configure(text=f"速度 Speed: {_format_monitor_number(speed, compact=True)} tok/min")
         else:
             self._labels["speed"].configure(text="速度 Speed: --")
+        self._labels["quota"].configure(text=self._format_quota_snapshot(data.get("quota")))
         self._labels["cache"].configure(text=f"缓存复用 Reuse: {_format_monitor_number(cache_total)}")
         self._labels["updated"].configure(text="更新时间 Updated: now")
+
+    def _format_quota_snapshot(self, snapshot: dict | None) -> str:
+        if not isinstance(snapshot, dict) or snapshot.get("success") is False:
+            return "额度 Quota: --"
+        values = snapshot.get("values") if isinstance(snapshot.get("values"), dict) else {}
+        tiers = values.get("tiers") if isinstance(values.get("tiers"), list) else []
+        parts: list[str] = []
+        for tier in tiers[:3]:
+            if not isinstance(tier, dict):
+                continue
+            raw = tier.get("utilization")
+            if raw is None and tier.get("remaining_percent") is not None:
+                try:
+                    raw = 100 - float(tier.get("remaining_percent") or 0)
+                except Exception:
+                    raw = None
+            try:
+                pct = float(raw)
+            except Exception:
+                continue
+            name = str(tier.get("name") or "quota").replace("_", " ")
+            parts.append(f"{name} {pct:.0f}%")
+        if not parts:
+            raw = values.get("quota_percent") or values.get("utilization")
+            try:
+                pct = float(raw)
+                parts.append(f"{pct:.0f}%")
+            except Exception:
+                pass
+        return "额度 Quota: " + (" / ".join(parts) if parts else "--")
 
     def _remember_speed_sample(self, total: int) -> int | None:
         now = time.time()

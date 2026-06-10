@@ -247,6 +247,7 @@ def run_script_quota_probe(provider: Dict[str, Any], quota_check: Dict[str, Any]
         return _failure_snapshot(provider_id, f"Unsupported quota script language: {language}", quota_check)
     if not code:
         return _failure_snapshot(provider_id, "Quota script is empty.", quota_check)
+    code = str(render_quota_templates(code, provider) or "")
 
     try:
         request_config = run_js_quota_script_phase(

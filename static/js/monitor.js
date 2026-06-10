@@ -31,6 +31,14 @@ const monitorCopy = {
         balance: '余额',
         balanceUnavailable: '余额: --',
         balanceDecrease: '下降',
+        quota: '额度',
+        quotaUnavailable: '额度: --',
+        quotaResetIn: '重置',
+        quotaAlert: '额度接近用尽',
+        fiveHour: '5小时',
+        sevenDay: '7天',
+        weeklyLimit: '周',
+        credits: '点数',
         estimatedCost: '预计扣费',
         estimatedCostUnavailable: '预计扣费: --',
         estimatedCostRate: '速率',
@@ -81,6 +89,14 @@ const monitorCopy = {
         balance: 'Balance',
         balanceUnavailable: 'Balance: --',
         balanceDecrease: 'burn',
+        quota: 'Quota',
+        quotaUnavailable: 'Quota: --',
+        quotaResetIn: 'reset',
+        quotaAlert: 'quota nearly exhausted',
+        fiveHour: '5h',
+        sevenDay: '7d',
+        weeklyLimit: 'week',
+        credits: 'credits',
         estimatedCost: 'Estimated cost',
         estimatedCostUnavailable: 'Estimated cost: --',
         estimatedCostRate: 'rate',
@@ -124,6 +140,8 @@ let balanceSamples = [];
 let costSamples = [];
 let providerQuotaSnapshot = null;
 let lastQuotaRefreshAt = 0;
+let lastQuotaAlertBuckets = {};
+let lastStatsData = {};
 
 function mt(key) {
     return (monitorCopy[monitorLang] && monitorCopy[monitorLang][key]) || monitorCopy.zh[key] || key;
@@ -232,6 +250,19 @@ function isOfficialFocusProvider(provider) {
 async function loadFocusedQuota(force = false) {
     const providerId = focusedProviderId();
     const provider = focusedProvider();
+    const now = Date.now();
+    if (isOfficialFocusProvider(provider) || lastStatsData?.official_usage_default) {
+        if (!force && providerQuotaSnapshot && now - lastQuotaRefreshAt < QUOTA_REFRESH_MS) {
+            return providerQuotaSnapshot;
+        }
+        const snapshot = await api('/api/official/quota/refresh', {
+            method: 'POST',
+            body: JSON.stringify({ force: Boolean(force) }),
+        });
+        lastQuotaRefreshAt = now;
+        providerQuotaSnapshot = snapshot;
+        return snapshot;
+    }
     if (!providerId) {
         providerQuotaSnapshot = null;
         balanceSamples = [];
@@ -243,7 +274,6 @@ async function loadFocusedQuota(force = false) {
         costSamples = [];
         return null;
     }
-    const now = Date.now();
     if (!force && providerQuotaSnapshot && now - lastQuotaRefreshAt < QUOTA_REFRESH_MS) {
         return providerQuotaSnapshot;
     }
@@ -273,6 +303,93 @@ function firstText(values, keys) {
         return String(raw);
     }
     return '';
+}
+
+function clampPercent(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(0, Math.min(parsed, 100));
+}
+
+function tierDisplayName(name) {
+    const key = String(name || '').toLowerCase();
+    if (key === 'five_hour' || key === '5_hour' || key === '5h') return mt('fiveHour');
+    if (key === 'seven_day' || key === '7_day' || key === '7d') return mt('sevenDay');
+    if (key === 'weekly_limit' || key === 'week' || key === 'weekly') return mt('weeklyLimit');
+    if (key === 'credits' || key === 'credit') return mt('credits');
+    if (!key || key === 'unknown') return mt('quota');
+    return String(name).replace(/_/g, ' ');
+}
+
+function tierUtilization(tier = {}) {
+    let utilization = clampPercent(tier.utilization ?? tier.used_percent ?? tier.usedPercent ?? tier.quota_percent ?? tier.quotaPercent);
+    if (utilization === null) {
+        const remaining = clampPercent(tier.remaining_percent ?? tier.remainingPercent);
+        if (remaining !== null) utilization = 100 - remaining;
+    }
+    return utilization;
+}
+
+function quotaPercentSnapshot(snapshot) {
+    if (!snapshot || snapshot.success === false) return null;
+    const values = snapshot.values && typeof snapshot.values === 'object' ? snapshot.values : {};
+    const rawTiers = Array.isArray(values.tiers)
+        ? values.tiers
+        : (Array.isArray(values.quota_tiers) ? values.quota_tiers : []);
+    const tiers = rawTiers.map((tier, index) => {
+        const utilization = tierUtilization(tier);
+        if (utilization === null) return null;
+        return {
+            name: tierDisplayName(tier.name || tier.tier || tier.label || (index ? 'tier' : 'quota')),
+            utilization,
+            resetsAt: tier.resets_at || tier.resetsAt || tier.reset_at || tier.resetTime || '',
+        };
+    }).filter(Boolean);
+    if (!tiers.length) {
+        const flat = clampPercent(values.quota_percent ?? values.quotaPercent ?? values.utilization ?? values.used_percent ?? values.usedPercent);
+        const remaining = clampPercent(values.remaining_percent ?? values.remainingPercent);
+        const utilization = flat !== null ? flat : (remaining !== null ? 100 - remaining : null);
+        if (utilization !== null) {
+            tiers.push({
+                name: mt('quota'),
+                utilization,
+                resetsAt: values.resets_at || values.resetsAt || values.reset_at || values.resetTime || '',
+            });
+        }
+    }
+    if (!tiers.length) return null;
+    const maxUtilization = tiers.reduce((max, tier) => Math.max(max, tier.utilization), 0);
+    return {
+        tiers,
+        maxUtilization,
+        warning: maxUtilization >= 70,
+        danger: maxUtilization >= 90,
+        providerId: snapshot.provider_id || '',
+        type: snapshot.type || snapshot.probe_type || '',
+    };
+}
+
+function formatResetTime(value) {
+    if (!value) return '';
+    const ts = Date.parse(String(value));
+    if (!Number.isFinite(ts)) return '';
+    const deltaMinutes = Math.round((ts - Date.now()) / 60000);
+    if (deltaMinutes <= 0) return '';
+    if (deltaMinutes < 60) return `${deltaMinutes}m`;
+    const hours = Math.round(deltaMinutes / 60);
+    if (hours < 48) return `${hours}h`;
+    return `${Math.round(hours / 24)}d`;
+}
+
+function formatQuotaLine(snapshot) {
+    const parsed = quotaPercentSnapshot(snapshot);
+    if (!parsed) return '';
+    const parts = parsed.tiers.slice(0, 3).map(tier => {
+        const reset = formatResetTime(tier.resetsAt);
+        const resetText = reset ? ` ${mt('quotaResetIn')} ${reset}` : '';
+        return `${tier.name} ${tier.utilization.toFixed(0)}%${resetText}`;
+    });
+    return `${mt('quota')}: ${parts.join(' · ')}`;
 }
 
 function quotaBalanceSnapshot(snapshot) {
@@ -343,15 +460,16 @@ function formatMoney(value, currency) {
 }
 
 function formatBalanceLine(snapshot) {
+    const quotaLine = formatQuotaLine(snapshot);
     const sample = rememberBalanceSample(snapshot);
-    if (!sample) return mt('balanceUnavailable');
+    if (!sample) return quotaLine || mt('balanceUnavailable');
     const primary = sample.balance !== null
         ? `${mt('balance')}: ${formatMoney(sample.balance, sample.currency)}`
         : `${mt('balanceDecrease')}: ${formatMoney(sample.spent, sample.currency)}`;
     const burn = sample.burn === null || sample.burn === undefined
         ? ''
         : ` · ${mt('balanceDecrease')} ${formatMoney(sample.burn, sample.currency)}${mt('moneyPerMin')}`;
-    return `${primary}${burn} · ${mt('sampleCount')}: ${sample.samples}`;
+    return `${quotaLine ? quotaLine + ' · ' : ''}${primary}${burn} · ${mt('sampleCount')}: ${sample.samples}`;
 }
 
 function firstCostSnapshot(data) {
@@ -513,8 +631,10 @@ async function refreshMonitor() {
         data = await api(oneHourQuery());
         value = Number(data.total_tokens || 0);
     }
+    lastStatsData = data || {};
 
-    let quota = providerQuotaSnapshot;
+    let quota = data.quota || providerQuotaSnapshot;
+    if (data.quota) providerQuotaSnapshot = data.quota;
     try {
         quota = await loadFocusedQuota(false);
     } catch {
@@ -535,6 +655,8 @@ function render(value, threshold, mode, data, quota) {
     const contextEl = document.getElementById('monitor-context');
     const speedEl = document.getElementById('monitor-speed');
     const balanceEl = document.getElementById('monitor-balance');
+    const quotaMeterEl = document.getElementById('monitor-quota-meter');
+    const quotaFillEl = document.getElementById('monitor-quota-fill');
     const progressEl = document.querySelector('.progress');
     const fields = monitorFields();
 
@@ -560,10 +682,20 @@ function render(value, threshold, mode, data, quota) {
     cacheEl.title = cacheEl.textContent;
     const provider = focusedProvider();
     const showOfficialUsage = isOfficialFocusProvider(provider) || data.official_usage_default;
-    balanceEl.textContent = quota
-        ? formatBalanceLine(quota)
-        : (showOfficialUsage ? formatOfficialUsageLine(data) : formatEstimatedCostLine(data));
+    const quotaInfo = quotaPercentSnapshot(quota);
+    const quotaLine = quota && quota.success !== false ? formatBalanceLine(quota) : '';
+    balanceEl.textContent = quotaLine || (showOfficialUsage ? formatOfficialUsageLine(data) : formatEstimatedCostLine(data));
     balanceEl.title = balanceEl.textContent;
+    balanceEl.classList.toggle('quota-warning', Boolean(quotaInfo && quotaInfo.warning && !quotaInfo.danger));
+    balanceEl.classList.toggle('quota-danger', Boolean(quotaInfo && quotaInfo.danger));
+    if (quotaMeterEl && quotaFillEl) {
+        const showMeter = Boolean(quotaInfo && fields.balance);
+        quotaMeterEl.style.display = showMeter ? 'block' : 'none';
+        quotaMeterEl.classList.toggle('warning', Boolean(quotaInfo && quotaInfo.warning && !quotaInfo.danger));
+        quotaMeterEl.classList.toggle('danger', Boolean(quotaInfo && quotaInfo.danger));
+        quotaFillEl.style.width = showMeter ? `${quotaInfo.maxUtilization.toFixed(1)}%` : '0%';
+        quotaMeterEl.title = balanceEl.textContent;
+    }
     const contextWindow = Number(data.current_context_window || 0);
     const contextUsed = Number(data.current_context_used_tokens || 0);
     if (contextWindow && contextUsed) {
@@ -585,6 +717,7 @@ function render(value, threshold, mode, data, quota) {
     contextEl.style.display = fields.context_window ? 'block' : 'none';
 
     maybeAlert(value, threshold);
+    maybeQuotaAlert(quotaInfo, quota);
     scheduleMonitorResize();
 }
 
@@ -595,6 +728,20 @@ function maybeAlert(value, threshold) {
     lastAlertBucket = bucket;
     if (window.pywebview?.api?.notify_monitor_alert) {
         window.pywebview.api.notify_monitor_alert(`${mt('tokenReached')} ${formatCompact(value)}`);
+    }
+}
+
+function maybeQuotaAlert(quotaInfo, snapshot) {
+    if (!quotaInfo || !quotaInfo.danger) return;
+    const providerId = snapshot?.provider_id || quotaInfo.providerId || 'quota';
+    const dangerous = quotaInfo.tiers.filter(tier => tier.utilization >= 90);
+    for (const tier of dangerous) {
+        const bucket = `${providerId}:${tier.name}:90`;
+        if (lastQuotaAlertBuckets[bucket]) continue;
+        lastQuotaAlertBuckets[bucket] = Date.now();
+        if (window.pywebview?.api?.notify_monitor_alert) {
+            window.pywebview.api.notify_monitor_alert(`${mt('quotaAlert')}: ${tier.name} ${tier.utilization.toFixed(0)}%`);
+        }
     }
 }
 
