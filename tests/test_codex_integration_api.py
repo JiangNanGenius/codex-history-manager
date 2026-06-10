@@ -943,14 +943,44 @@ class CodexIntegrationApiTest(unittest.TestCase):
         backup.assert_called_once()
         save.assert_called_once()
         saved = save.call_args.args[1]
-        self.assertEqual(saved["model_provider"], "")
-        self.assertEqual(saved["provider"], "")
+        self.assertEqual(saved["model_provider"], "openai")
         self.assertEqual(saved["model"], "gpt-5")
-        self.assertEqual(saved["defaults"]["model_provider"], "")
-        self.assertNotIn("codex_enhance_manager", saved["providers"])
-        self.assertIn("openai", saved["providers"])
-        self.assertNotIn("codex_enhance_manager", saved["model_providers"])
-        self.assertIn("openai", saved["model_providers"])
+        self.assertNotIn("provider", saved)
+        self.assertNotIn("defaults", saved)
+        self.assertNotIn("providers", saved)
+        self.assertNotIn("model_providers", saved)
+
+    def test_disable_codex_enhance_provider_config_removes_proxy_auto_model_for_official(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.toml"
+            config_path.write_text("model_provider = \"codex_enhance_manager\"\nmodel = \"auto\"\n", encoding="utf-8")
+            mgr = MagicMock()
+            mgr.config_path = config_path
+            mgr.backup_dir = Path(tmp) / "backups"
+            mgr.read_config.return_value = {
+                "model_provider": "codex_enhance_manager",
+                "model": "auto",
+                "provider": "codex_enhance_manager",
+                "defaults": {"model_provider": "codex_enhance_manager", "model": "auto"},
+                "model_providers": {
+                    "codex_enhance_manager": {"base_url": "http://127.0.0.1:51235/v1"},
+                },
+            }
+
+            with patch("app.backup_file", return_value=str(Path(tmp) / "backup.toml")), \
+                    patch("app.save_config_toml") as save:
+                from app import disable_codex_enhance_provider_config
+
+                result = disable_codex_enhance_provider_config(mgr)
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["changed"])
+        saved = save.call_args.args[1]
+        self.assertEqual(saved["model_provider"], "openai")
+        self.assertNotIn("model", saved)
+        self.assertNotIn("provider", saved)
+        self.assertNotIn("defaults", saved)
+        self.assertNotIn("model_providers", saved)
 
     def test_disable_codex_enhance_provider_config_skips_backup_when_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:

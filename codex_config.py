@@ -41,6 +41,7 @@ from local_proxy_auth import generate_local_proxy_bearer_token
 CODEX_CONFIG_BACKUP_DIR = app_data_path("codex_backups")
 REDACTED = "********"
 LOCAL_PROXY_BEARER_TOKEN = generate_local_proxy_bearer_token()
+RESERVED_MODEL_PROVIDER_IDS = {"openai", "ollama", "lmstudio"}
 
 
 def resolve_codex_home(codex_home: str = "") -> Path:
@@ -421,6 +422,32 @@ def merge_codex_goals_feature(config_data: Dict[str, Any], goals_enabled: bool =
     return merge_toml_dict(config_data if isinstance(config_data, dict) else {}, build_codex_goals_config(goals_enabled))
 
 
+def sanitize_codex_config_for_managed_write(config_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove legacy compatibility keys before writing real Codex config.toml.
+
+    Codex's documented provider selector is `model_provider` with optional
+    `[model_providers.<id>]` tables. Earlier builds also wrote `provider` and
+    `[defaults]` for third-party switcher compatibility; those keys can confuse
+    newer desktop builds, so every managed write strips them.
+    """
+    cleaned = copy.deepcopy(config_data if isinstance(config_data, dict) else {})
+    cleaned.pop("provider", None)
+    cleaned.pop("providers", None)
+    cleaned.pop("defaults", None)
+    model_providers = cleaned.get("model_providers")
+    if isinstance(model_providers, dict):
+        model_providers = {
+            str(provider_id): provider
+            for provider_id, provider in model_providers.items()
+            if str(provider_id).strip().lower() not in RESERVED_MODEL_PROVIDER_IDS
+        }
+        if model_providers:
+            cleaned["model_providers"] = model_providers
+        else:
+            cleaned.pop("model_providers", None)
+    return cleaned
+
+
 def build_codex_enhance_provider_config(
     proxy_base_url: str = "http://127.0.0.1:51235/v1",
     proxy_model: str = "auto",
@@ -433,11 +460,6 @@ def build_codex_enhance_provider_config(
     config = {
         "model_provider": "codex_enhance_manager",
         "model": proxy_model,
-        "provider": "codex_enhance_manager",
-        "defaults": {
-            "model_provider": "codex_enhance_manager",
-            "model": proxy_model,
-        },
         "model_providers": {
             "codex_enhance_manager": {
                 "name": "Codex Enhance Manager",
@@ -511,7 +533,7 @@ class CodexConfigManager:
         local_proxy_bearer_token: str = "",
     ) -> Dict[str, Any]:
         """Generate a diff preview without writing anything."""
-        current_config = self.read_config()
+        current_config = sanitize_codex_config_for_managed_write(self.read_config())
         desired_updates = build_codex_enhance_provider_config(
             proxy_base_url,
             proxy_model,
@@ -592,7 +614,7 @@ class CodexConfigManager:
                 result["backups"]["config_toml"] = config_backup
 
         # Build and merge config
-        current_config = self.read_config()
+        current_config = sanitize_codex_config_for_managed_write(self.read_config())
         updates = build_codex_enhance_provider_config(
             proxy_base_url,
             proxy_model,

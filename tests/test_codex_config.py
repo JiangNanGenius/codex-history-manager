@@ -18,6 +18,7 @@ from codex_config import (
     build_codex_enhance_provider_config,
     codex_goals_enabled_from_config,
     merge_codex_goals_feature,
+    sanitize_codex_config_for_managed_write,
 )
 
 
@@ -137,6 +138,27 @@ class CodexConfigManagerTest(unittest.TestCase):
         self.assertEqual(provider["wire_api"], "responses")
         self.assertNotEqual(provider["wire_api"], "chat")
         self.assertEqual(provider["base_url"], "http://127.0.0.1:51235/v1")
+        self.assertNotIn("provider", patch)
+        self.assertNotIn("defaults", patch)
+
+    def test_managed_codex_write_sanitizes_legacy_switcher_fields(self):
+        cleaned = sanitize_codex_config_for_managed_write({
+            "model_provider": "openai",
+            "model": "gpt-5.5",
+            "provider": "openai",
+            "providers": {"openai": {"name": "OpenAI"}},
+            "defaults": {"model_provider": "openai", "model": "auto"},
+            "model_providers": {"openai": {"name": "OpenAI"}},
+            "features": {"goals": True},
+        })
+
+        self.assertEqual(cleaned["model_provider"], "openai")
+        self.assertEqual(cleaned["model"], "gpt-5.5")
+        self.assertEqual(cleaned["features"]["goals"], True)
+        self.assertNotIn("provider", cleaned)
+        self.assertNotIn("providers", cleaned)
+        self.assertNotIn("defaults", cleaned)
+        self.assertNotIn("model_providers", cleaned)
 
     def test_preview_shows_restart_required(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -189,6 +211,8 @@ class CodexConfigManagerTest(unittest.TestCase):
             self.assertTrue(mgr.config_path.exists())
             config = load_config_toml(str(mgr.config_path))
             self.assertEqual(config.get("model_provider"), "codex_enhance_manager")
+            self.assertNotIn("provider", config)
+            self.assertNotIn("defaults", config)
             self.assertTrue(codex_goals_enabled_from_config(config))
             provider = config.get("model_providers", {}).get("codex_enhance_manager", {})
             self.assertEqual(provider.get("base_url"), "http://127.0.0.1:51235/v1")

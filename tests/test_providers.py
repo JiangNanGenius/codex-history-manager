@@ -12,7 +12,7 @@ from providers import (
     validate_provider,
 )
 from provider_routing import provider_allows_local_routing
-from codex_official_provider import build_official_login_provider
+from codex_official_provider import build_official_login_provider, resolve_effective_codex_settings
 
 
 class ProviderRegistryTest(unittest.TestCase):
@@ -143,6 +143,20 @@ class ProviderRegistryTest(unittest.TestCase):
         self.assertTrue(official["switch_only"])
         self.assertTrue(official["amr_excluded"])
         self.assertFalse(provider_allows_local_routing(official))
+
+    def test_official_settings_ignore_legacy_provider_defaults_fields(self):
+        settings = resolve_effective_codex_settings(
+            {
+                "provider": "codex_enhance_manager",
+                "defaults": {"model_provider": "codex_enhance_manager", "model": "auto"},
+            },
+            "official_oauth",
+        )
+
+        self.assertEqual(settings["model_provider"], "openai")
+        self.assertEqual(settings["model_provider_source"], "official_oauth")
+        self.assertEqual(settings["model"], "gpt-5.5")
+        self.assertEqual(settings["model_source"], "default")
 
     def test_registry_extra_official_provider_can_be_focused_without_catalog_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:

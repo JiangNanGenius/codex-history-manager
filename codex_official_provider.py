@@ -13,7 +13,7 @@ from codex_config import detect_auth_mode
 from providers import normalize_provider
 
 DEFAULT_CODEX_PROVIDER = "openai"
-DEFAULT_CODEX_MODEL = "gpt-5"
+DEFAULT_CODEX_MODEL = "gpt-5.5"
 OFFICIAL_PROVIDER_ID = "codex_official"
 OFFICIAL_PROVIDER_ALIAS = "codex"
 
@@ -25,17 +25,11 @@ def _first_config_value(config_data: Dict[str, Any], keys: tuple[str, ...]) -> s
         value = config_data.get(key)
         if value:
             return str(value)
-    defaults = config_data.get("defaults")
-    if isinstance(defaults, dict):
-        for key in keys:
-            value = defaults.get(key)
-            if value:
-                return str(value)
     return ""
 
 
 def resolve_effective_codex_settings(config_data: Dict[str, Any], auth_mode: str = "") -> Dict[str, Any]:
-    raw_provider = _first_config_value(config_data, ("model_provider", "modelProvider", "provider"))
+    raw_provider = _first_config_value(config_data, ("model_provider", "modelProvider"))
     raw_model = _first_config_value(config_data, ("model",))
     official = str(auth_mode or "").strip() == "official_oauth"
 

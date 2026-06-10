@@ -62,6 +62,7 @@ from codex_config import (
     merge_codex_goals_feature,
     redact_auth_for_preview,
     restore_file,
+    sanitize_codex_config_for_managed_write,
     save_config_toml,
     load_config_toml as _load_config_toml,
 )
@@ -436,27 +437,19 @@ def disable_codex_enhance_provider_config(
         "message": "本地代理 provider 已禁用。需要重启 Codex 使变更生效。",
     }
     current_config = mgr.read_config()
-    next_config = dict(current_config)
+    next_config = sanitize_codex_config_for_managed_write(current_config)
     if next_config.get("model_provider") == "codex_enhance_manager":
-        next_config["model_provider"] = ""
-    if next_config.get("provider") == "codex_enhance_manager":
-        next_config["provider"] = ""
-    defaults = next_config.get("defaults")
-    if isinstance(defaults, dict):
-        defaults = dict(defaults)
-        if defaults.get("model_provider") == "codex_enhance_manager":
-            defaults["model_provider"] = ""
-        next_config["defaults"] = defaults
-    providers = next_config.get("providers")
-    if isinstance(providers, dict) and "codex_enhance_manager" in providers:
-        providers = dict(providers)
-        del providers["codex_enhance_manager"]
-        next_config["providers"] = providers
+        next_config["model_provider"] = "openai"
+    if str(next_config.get("model") or "").strip().lower() == "auto":
+        next_config.pop("model", None)
     model_providers = next_config.get("model_providers")
     if isinstance(model_providers, dict) and "codex_enhance_manager" in model_providers:
         model_providers = dict(model_providers)
         del model_providers["codex_enhance_manager"]
-        next_config["model_providers"] = model_providers
+        if model_providers:
+            next_config["model_providers"] = model_providers
+        else:
+            next_config.pop("model_providers", None)
     if goals_enabled is not None:
         next_config = merge_codex_goals_feature(next_config, bool(goals_enabled))
         result["goals_enabled"] = bool(goals_enabled)
@@ -1726,6 +1719,11 @@ def create_app() -> Flask:
                 codex_start_jobs.pop(job_id, None)
 
     def _set_codex_start_progress(job_id: str, stage: str, progress: int, message: str, **extra) -> None:
+        if job_id:
+            try:
+                print(f"codex_start_job {job_id[:8]} stage={stage} progress={int(progress)} message={message}", flush=True)
+            except Exception:
+                pass
         _set_codex_start_job(
             job_id,
             stage=stage,
@@ -1733,6 +1731,23 @@ def create_app() -> Flask:
             message=message,
             **extra,
         )
+
+    def _start_codex_with_timeout(kwargs: Dict[str, Any], timeout_seconds: float = 30.0) -> tuple[bool, str]:
+        result: Dict[str, Any] = {}
+
+        def worker() -> None:
+            try:
+                ok, message = start_codex(**kwargs)
+                result["value"] = (ok, message)
+            except Exception as exc:
+                result["value"] = (False, f"启动 Codex 失败: {exc}")
+
+        thread = threading.Thread(target=worker, name="codex-launch-call", daemon=True)
+        thread.start()
+        thread.join(max(float(timeout_seconds or 30.0), 1.0))
+        if thread.is_alive():
+            return False, "启动 Codex 超时。请检查 config.toml 是否含有 Codex 不支持字段，或先手动关闭残留 Codex 进程后重试。"
+        return result.get("value") or (False, "启动 Codex 未返回结果")
 
     def _run_codex_start_flow(body: Dict[str, Any], job_id: str = "") -> Dict[str, Any]:
         body = dict(body or {})
@@ -1875,14 +1890,14 @@ def create_app() -> Flask:
                     _set_codex_start_progress(job_id, "restart_failed", 100, result["error"], result=result)
                     return result
         _set_codex_start_progress(job_id, "launching", 82, "正在启动 Codex 并确认进程...")
-        ok, msg = start_codex(
-            use_codex_plus_plus=use_cpp,
-            codex_plus_plus_path=config.get("codex_plus_plus_path", ""),
-            codex_cli_path=config.get("codex_cli_path", ""),
-            enable_cdp_injection=injection_settings["enabled"],
-            cdp_port=injection_settings["cdp_port"],
-            backend_url=body.get("_backend_url") or body.get("backend_url") or _current_backend_url(),
-        )
+        ok, msg = _start_codex_with_timeout({
+            "use_codex_plus_plus": use_cpp,
+            "codex_plus_plus_path": config.get("codex_plus_plus_path", ""),
+            "codex_cli_path": config.get("codex_cli_path", ""),
+            "enable_cdp_injection": injection_settings["enabled"],
+            "cdp_port": injection_settings["cdp_port"],
+            "backend_url": body.get("_backend_url") or body.get("backend_url") or _current_backend_url(),
+        })
         if ok:
             try:
                 config.set("codex_last_start_mode", start_mode)
