@@ -1188,7 +1188,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 data.append({
                     "id": f"{alias}/{model_id}",
                     "object": "model",
-                    "owned_by": p.get("display_name", alias),
+                    "owned_by": alias,
                 })
 
         self.send_response(200)

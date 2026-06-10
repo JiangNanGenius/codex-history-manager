@@ -23,7 +23,7 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         ]
         catalog = UnifiedModelCatalog(providers).build_catalog()
         self.assertEqual(catalog["entry_count"], 2)
-        self.assertEqual(catalog["entries"][0]["codex_model_id"], "openai/GPT-5")
+        self.assertEqual(catalog["entries"][0]["codex_model_id"], "openai/gpt-5")
 
     def test_selected_models_only_shows_selected(self):
         providers = [
@@ -119,8 +119,33 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         ]
         injection = UnifiedModelCatalog(providers).build_injection_data()
         self.assertEqual(len(injection), 1)
-        self.assertEqual(injection[0]["id"], "openai/GPT-5")
+        self.assertEqual(injection[0]["id"], "openai/gpt-5")
         self.assertEqual(injection[0]["name"], "GPT-5")
+
+    def test_injection_data_keeps_codex_visible_fields_ascii(self):
+        providers = [
+            {
+                "id": "cn-provider",
+                "short_alias": "cnp",
+                "display_name": "\u4e2d\u6587\u4f9b\u5e94\u5546",
+                "codex_visible_alias": "\u4e2d\u6587\u522b\u540d",
+                "enabled": True,
+                "catalog_visibility": "selected_models",
+                "models": [
+                    {
+                        "id": "qwen-max",
+                        "display_name": "\u5343\u95ee Max",
+                        "codex_visible_id": "\u5343\u95ee",
+                        "enabled": True,
+                        "selected": True,
+                    },
+                ],
+            }
+        ]
+
+        injection = UnifiedModelCatalog(providers).build_injection_data()
+
+        self.assertEqual(injection, [{"id": "cnp/qwen-max", "name": "qwen-max", "provider": "cn-provider"}])
 
     def test_find_entry(self):
         providers = [
@@ -306,7 +331,7 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         self.assertEqual(entry["pricing"]["output_per_million"], 2.0)
         self.assertTrue(entry["has_model_pricing"])
 
-    def test_focused_provider_uses_visible_names_and_other_provider_primary_only(self):
+    def test_focused_provider_uses_codex_visible_ids_and_other_provider_primary_only(self):
         providers = [
             {
                 "id": "ark-code-plan",
@@ -359,7 +384,7 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         catalog = UnifiedModelCatalog(providers, focus_provider_id="ark-code-plan").build_catalog()
         ids = [entry["codex_model_id"] for entry in catalog["entries"]]
 
-        self.assertEqual(ids, ["Ark Coding Plan/Ark Code Latest", "Kimi Code/Kimi K2.6"])
+        self.assertEqual(ids, ["Ark Coding Plan/Ark Code Latest", "Kimi Code/kimi-k2.6"])
         self.assertNotIn("Ark Coding Plan/Hidden Model", ids)
         self.assertTrue(catalog["entries"][0]["focused"])
         self.assertEqual(catalog["entries"][0]["upstream_model_id"], "ark-code-latest")
@@ -386,7 +411,7 @@ class UnifiedModelCatalogTest(unittest.TestCase):
 
         ids = [entry["codex_model_id"] for entry in UnifiedModelCatalog(providers).build_catalog()["entries"]]
 
-        self.assertEqual(ids, ["Shared Provider/Model One", "Shared Provider (p2)/Model Two"])
+        self.assertEqual(ids, ["Shared Provider/m1", "Shared Provider (p2)/m2"])
 
 
 if __name__ == "__main__":

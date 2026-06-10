@@ -1171,6 +1171,8 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(data["object"], "list")
         ids = [m["id"] for m in data["data"]]
         self.assertIn("openai/gpt-5", ids)
+        owners = {m["id"]: m["owned_by"] for m in data["data"]}
+        self.assertEqual(owners["openai/gpt-5"], "openai")
 
     @patch("proxy_server._upstream_request")
     def test_responses_endpoint(self, mock_upstream):

@@ -157,7 +157,7 @@ class UnifiedModelCatalog:
         return [
             {
                 "id": entry["codex_model_id"],
-                "name": entry["display_name"],
+                "name": entry.get("codex_display_name") or entry["display_name"],
                 "provider": entry["provider_id"],
             }
             for entry in catalog["entries"]
@@ -190,6 +190,7 @@ class UnifiedModelCatalog:
         visible_provider_alias = _unique_provider_visible_alias(provider, provider_aliases)
         upstream_model_id = model.get("id") or "default"
         visible_model_id = _model_visible_id(model, upstream_model_id)
+        codex_display_name = _model_codex_display_name(model, upstream_model_id)
         pricing: Dict[str, Any] = {}
         if isinstance(provider.get("pricing"), dict):
             pricing.update(copy.deepcopy(provider["pricing"]))
@@ -198,6 +199,7 @@ class UnifiedModelCatalog:
         return {
             "codex_model_id": f"{visible_provider_alias}/{visible_model_id}",
             "display_name": model.get("display_name") or upstream_model_id,
+            "codex_display_name": codex_display_name,
             "provider_id": provider.get("id"),
             "provider_alias": alias,
             "provider_visible_alias": visible_provider_alias,
@@ -268,14 +270,35 @@ def _model_visible_id(model: Dict[str, Any], fallback: str) -> str:
         model.get("codex_visible_id")
         or model.get("visible_id")
         or model.get("display_id")
-        or model.get("display_name")
+        or fallback
     )
     return _catalog_segment(visible, fallback)
 
 
+def _model_codex_display_name(model: Dict[str, Any], fallback: str) -> str:
+    return _catalog_segment(
+        model.get("codex_visible_id")
+        or model.get("display_name")
+        or fallback,
+        fallback,
+    )
+
+
 def _catalog_segment(value: Any, fallback: str = "") -> str:
-    text = str(value or fallback or "").strip().replace("/", "／")
-    return text or str(fallback or "default").strip() or "default"
+    text = _ascii_catalog_segment(value or fallback)
+    if text:
+        return text
+    return _ascii_catalog_segment(fallback or "default") or "default"
+
+
+def _ascii_catalog_segment(value: Any) -> str:
+    text = str(value or "").strip()
+    if any(ord(ch) > 127 for ch in text):
+        return ""
+    text = text.replace("/", "-").replace("\\", "-")
+    text = "".join(ch for ch in text if 32 <= ord(ch) <= 126).strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
 
 
 def _unique_provider_visible_alias(provider: Dict[str, Any], seen: Optional[Dict[str, str]]) -> str:
@@ -283,9 +306,9 @@ def _unique_provider_visible_alias(provider: Dict[str, Any], seen: Optional[Dict
         provider.get("codex_visible_alias")
         or provider.get("provider_visible_alias")
         or provider.get("visible_alias")
-        or provider.get("display_name")
         or provider.get("short_alias")
-        or provider.get("id"),
+        or provider.get("id")
+        or provider.get("display_name"),
         str(provider.get("short_alias") or provider.get("id") or "provider"),
     )
     if seen is None:

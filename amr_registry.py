@@ -50,7 +50,7 @@ from providers import ProviderRegistry, normalize_capabilities, redact_secrets
 # Schema version：当 group/candidate 数据结构发生不兼容变更时递增。
 SCHEMA_VERSION = 1
 DEFAULT_GROUP_ID = "default"
-DEFAULT_GROUP_DISPLAY_NAME = "默认智能路由"
+DEFAULT_GROUP_DISPLAY_NAME = "Smart Routing"
 # 默认存储路径：Windows 下为 Documents/Codex Enhance Manager/amr/groups.json。
 # 首次使用新路径时会从旧版 ~/.codex_enhance_manager/amr_groups.json 迁移。
 LEGACY_STORE_PATH = Path.home() / ".codex_enhance_manager" / "amr_groups.json"

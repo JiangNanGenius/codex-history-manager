@@ -142,6 +142,32 @@ def _repair_question_corrupted_text(value: Any, fallback: str) -> str:
     return text
 
 
+def _ascii_codex_visible_text(value: Any, fallback: str, preserve_blank: bool = False) -> str:
+    """Return an ASCII-only Codex-visible label/id.
+
+    The manager UI may use localized display names, but values that Codex sees
+    as model/provider identifiers must stay conservative ASCII to avoid desktop
+    parsing and rendering edge cases.
+    """
+    raw = str(value or "").strip()
+    if preserve_blank and not raw:
+        return ""
+    fallback_text = _ascii_catalog_segment(fallback or "provider") or "provider"
+    if not raw or _looks_question_corrupted(raw) or any(ord(ch) > 127 for ch in raw):
+        return fallback_text
+    return _ascii_catalog_segment(raw) or fallback_text
+
+
+def _ascii_catalog_segment(value: Any) -> str:
+    text = str(value or "").strip()
+    if any(ord(ch) > 127 for ch in text):
+        return ""
+    text = text.replace("/", "-").replace("\\", "-")
+    text = "".join(ch for ch in text if 32 <= ord(ch) <= 126).strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
 class ProviderRegistry:
     """
     JSON-backed local provider registry.
@@ -813,12 +839,13 @@ def normalize_provider(data: Dict[str, Any]) -> Dict[str, Any]:
         raw.get("display_name") or display_name_fallback or short_alias,
         display_name_fallback,
     )
-    visible_alias = _repair_question_corrupted_text(
+    visible_alias = _ascii_codex_visible_text(
         raw.get("codex_visible_alias")
         or raw.get("provider_visible_alias")
         or raw.get("visible_alias")
         or "",
-        display_name_fallback,
+        short_alias or provider_id,
+        preserve_blank=True,
     )
     api_format = raw.get("api_format") if raw.get("api_format") in API_FORMATS else "openai_responses"
     auth_mode = raw.get("auth_mode") if raw.get("auth_mode") in AUTH_MODES else "provider_api_key"
@@ -981,12 +1008,14 @@ def _enforce_single_primary_model(models: List[Dict[str, Any]]) -> List[Dict[str
 
 def normalize_model(data: Dict[str, Any]) -> Dict[str, Any]:
     model_id = str(data.get("id") or data.get("model") or "default").strip()
-    codex_visible_id = str(
+    codex_visible_id = _ascii_codex_visible_text(
         data.get("codex_visible_id")
         or data.get("visible_id")
         or data.get("display_id")
-        or ""
-    ).strip()
+        or "",
+        model_id,
+        preserve_blank=True,
+    )
     capabilities = normalize_capabilities(data.get("capabilities"))
     capabilities["tools"] = True
     capabilities["streaming"] = True
@@ -1609,8 +1638,10 @@ def _model_visible_for_catalog(model: Dict[str, Any]) -> bool:
 
 
 def _catalog_segment(value: Any, fallback: str = "") -> str:
-    text = str(value or fallback or "").strip().replace("/", "／")
-    return text or str(fallback or "default").strip() or "default"
+    text = _ascii_catalog_segment(value or fallback)
+    if text:
+        return text
+    return _ascii_catalog_segment(fallback or "default") or "default"
 
 
 def _provider_visible_alias(provider: Dict[str, Any]) -> str:
@@ -1618,9 +1649,9 @@ def _provider_visible_alias(provider: Dict[str, Any]) -> str:
         provider.get("codex_visible_alias")
         or provider.get("provider_visible_alias")
         or provider.get("visible_alias")
-        or provider.get("display_name")
         or provider.get("short_alias")
-        or provider.get("id"),
+        or provider.get("id")
+        or provider.get("display_name"),
         str(provider.get("short_alias") or provider.get("id") or "provider"),
     )
 
@@ -1649,7 +1680,16 @@ def _model_visible_id(model: Dict[str, Any], fallback: str) -> str:
         model.get("codex_visible_id")
         or model.get("visible_id")
         or model.get("display_id")
-        or model.get("display_name"),
+        or fallback,
+        fallback,
+    )
+
+
+def _model_codex_display_name(model: Dict[str, Any], fallback: str) -> str:
+    return _catalog_segment(
+        model.get("codex_visible_id")
+        or model.get("display_name")
+        or fallback,
         fallback,
     )
 
@@ -1693,6 +1733,7 @@ def _catalog_entry(
     visible_provider_alias = _unique_provider_visible_alias(provider, provider_aliases)
     upstream_model_id = model.get("id") or "default"
     visible_model_id = _model_visible_id(model, upstream_model_id)
+    codex_display_name = _model_codex_display_name(model, upstream_model_id)
     pricing: Dict[str, Any] = {}
     if isinstance(provider.get("pricing"), dict):
         pricing.update(copy.deepcopy(provider["pricing"]))
@@ -1701,6 +1742,7 @@ def _catalog_entry(
     return {
         "codex_model_id": f"{visible_provider_alias}/{visible_model_id}",
         "display_name": model.get("display_name") or upstream_model_id,
+        "codex_display_name": codex_display_name,
         "provider_id": provider.get("id"),
         "provider_alias": alias,
         "provider_visible_alias": visible_provider_alias,

@@ -223,11 +223,33 @@ def test_native_responses_and_codex_login_provider_locks_are_wired():
 
     assert "NATIVE_LOCKED_CAPABILITIES" in js
     assert "renderResponsesModeSegment" in js
+    assert js.index("renderResponsesModeSegment(provider, providerReadOnly)") < js.index("providerDetailedProfile")
     assert "syncResponsesModeControls" in js
     assert "isCodexLoginProvider" in js
+    assert "nativeBehaviorLocked" in js
     assert "nativeCapabilitiesLocked" in js
+    assert "nativeProxyBehaviorLocked" in i18n
+    assert "renderProviderModelDetails(provider, providerReadOnly, capabilityLocked)" in js
+    assert "renderApprovalModeSegment(approvalProfile, providerReadOnly || nativeBehaviorLocked)" in js
+    assert "renderMediaModeSegment(mediaProfile, providerReadOnly || nativeBehaviorLocked)" in js
+    assert "provider.codex_visible_alias || provider.short_alias || provider.id" in js
+    assert "provider.codex_visible_alias || provider.display_name" not in js
     assert "codexLoginProviderReadOnly" in js
     assert "preserveLoginProxyModeDesc" in i18n
+
+
+def test_provider_protocol_labels_use_wire_api_names():
+    i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+    assert "apiFormat: '协议'" in i18n
+    assert "apiFormat: 'Protocol'" in i18n
+    assert "Responses 兼容" in i18n
+    assert "Chat Completions" in i18n
+    assert "Anthropic Messages" in i18n
+    assert "Responses 透传" in i18n
+    assert "Responses Pass-through" in i18n
+    assert "Connection Type" not in i18n
+    assert "连接类型" not in i18n
 
 
 def test_media_route_guidance_ui_is_wired():

@@ -101,7 +101,7 @@ class ProviderRegistryTest(unittest.TestCase):
 
             preview = registry.preview_catalog()
             model_ids = [entry["codex_model_id"] for entry in preview["entries"]]
-            self.assertEqual(model_ids, ["Catalog Provider/visible"])
+            self.assertEqual(model_ids, ["cat/visible"])
 
     def test_switch_only_official_provider_is_listed_but_not_catalog_routed(self):
         official = normalize_provider({
@@ -324,7 +324,7 @@ class ProviderRegistryTest(unittest.TestCase):
 
             preview = registry.preview_catalog()
             model_ids = [entry["codex_model_id"] for entry in preview["entries"]]
-            self.assertEqual(model_ids, ["Provider One/shared", "Provider Two/shared"])
+            self.assertEqual(model_ids, ["dup/shared", "dup (provider-two)/shared"])
             self.assertFalse(any(entry["catalog_collision"] for entry in preview["entries"]))
             self.assertFalse(any("Catalog ID collision" in item for item in preview["route_explanation"]))
 
@@ -376,7 +376,7 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(preview["focus_provider_id"], provider["id"])
             self.assertEqual(preview["entry_count"], 1)
             entry = preview["entries"][0]
-            self.assertEqual(entry["codex_model_id"], "Draft Catalog Provider/Unsaved Image")
+            self.assertEqual(entry["codex_model_id"], "draft/unsaved-image")
             self.assertEqual(entry["context_window"], 256000)
             self.assertTrue(entry["capabilities"]["images"])
             self.assertEqual(entry["native_currency"], "CNY")
@@ -406,7 +406,7 @@ class ProviderRegistryTest(unittest.TestCase):
             "models": [{"id": "qwen"}],
         })
         self.assertEqual(bailian["display_name"], "\u963f\u91cc\u4e91\u767e\u70bc")
-        self.assertEqual(bailian["codex_visible_alias"], "\u963f\u91cc\u4e91\u767e\u70bc")
+        self.assertEqual(bailian["codex_visible_alias"], "bailian")
 
         ark = normalize_provider({
             "id": "volcengine-ark-cn",
@@ -416,6 +416,29 @@ class ProviderRegistryTest(unittest.TestCase):
             "models": [{"id": "ark-code-latest"}],
         })
         self.assertEqual(ark["display_name"], "\u706b\u5c71\u5f15\u64ce")
+
+    def test_codex_visible_alias_and_model_id_stay_ascii(self):
+        provider = normalize_provider({
+            "id": "cn-provider",
+            "short_alias": "cnp",
+            "display_name": "\u4e2d\u6587\u4f9b\u5e94\u5546",
+            "codex_visible_alias": "\u4e2d\u6587\u522b\u540d",
+            "api_format": "openai_responses",
+            "catalog_visibility": "selected_models",
+            "models": [{
+                "id": "qwen-max",
+                "display_name": "\u5343\u95ee Max",
+                "codex_visible_id": "\u5343\u95ee",
+                "selected": True,
+            }],
+        })
+
+        self.assertEqual(provider["codex_visible_alias"], "cnp")
+        self.assertEqual(provider["models"][0]["codex_visible_id"], "qwen-max")
+        preview = build_catalog_preview_from_providers([provider])
+        entry = preview["entries"][0]
+        self.assertEqual(entry["codex_model_id"], "cnp/qwen-max")
+        self.assertEqual(entry["codex_display_name"], "qwen-max")
 
     def test_compatible_responses_does_not_force_all_capabilities(self):
         provider = normalize_provider({

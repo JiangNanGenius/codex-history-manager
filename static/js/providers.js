@@ -789,6 +789,7 @@ function renderProviderEditor(provider) {
     const showMediaAsyncFields = shouldShowMediaAsyncFields(mediaProfile, provider.api_format);
     const providerReadOnly = isCodexLoginProvider(provider);
     const capabilityLocked = isNativeCapabilityLocked(provider);
+    const nativeBehaviorLocked = isNativeResponsesProvider(provider);
     const capabilitySource = capabilityLocked ? nativeLockedCapabilities(provider.capabilities || {}) : (provider.capabilities || {});
 
     if (providerReadOnly) {
@@ -812,17 +813,17 @@ function renderProviderEditor(provider) {
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                 ${renderInput('provider-display-name', t('displayName'), provider.display_name, 'text', providerReadOnly)}
-                ${renderInput('provider-codex-visible-alias', t('providerVisibleAlias'), provider.codex_visible_alias || provider.display_name || provider.short_alias || provider.id, 'text', providerReadOnly)}
+                ${renderInput('provider-codex-visible-alias', t('providerVisibleAlias'), provider.codex_visible_alias || provider.short_alias || provider.id, 'text', providerReadOnly)}
                 ${renderInput('provider-short-alias', t('internalShortAlias'), provider.short_alias, 'text', true)}
                 ${renderInput('provider-base-url', t('baseUrl'), provider.base_url, 'text', providerReadOnly)}
                 ${renderSecretInput('provider-api-key', t('apiKey'), provider.api_key || '', 'api_key', providerReadOnly)}
-                ${renderSelect('provider-api-format', t('apiFormat'), provider.api_format, visibleApiFormatOptions(provider.api_format), 'syncResponsesModeControls(true); syncMediaModeControls(true)', providerReadOnly)}
+                ${renderSelect('provider-api-format', t('apiFormat'), provider.api_format, visibleApiFormatOptions(provider.api_format), 'syncResponsesModeControls(true); syncMediaModeControls(true)', providerReadOnly || nativeBehaviorLocked)}
                 ${renderSelect('provider-auth-mode', t('authMode'), provider.auth_mode, [
                     'provider_api_key',
                     'global_auth_json',
                     'official_oauth',
                     'no_auth',
-                ], '', providerReadOnly)}
+                ], '', providerReadOnly || nativeBehaviorLocked)}
                 ${renderInput('provider-country-region', t('countryRegion'), provider.country_region, 'text', providerReadOnly)}
                 ${renderInput('provider-native-currency', t('nativeCurrency'), provider.native_currency, 'text', providerReadOnly)}
                 ${renderSelect('provider-visibility', t('catalogVisibility'), provider.catalog_visibility, [
@@ -834,6 +835,9 @@ function renderProviderEditor(provider) {
                 ${renderInput('provider-user-agent', 'User-Agent', provider.user_agent || (provider.headers || {})['User-Agent'] || '', 'text', providerReadOnly)}
             </div>
 
+            ${renderResponsesModeSegment(provider, providerReadOnly)}
+            ${nativeBehaviorLocked ? `<div id="native-behavior-lock-note" class="mt-3 text-xs text-emerald-200 bg-emerald-950/20 border border-emerald-700/40 rounded-lg p-3">${escapeHtml(t('nativeProxyBehaviorLocked'))}</div>` : ''}
+
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                 <label class="flex items-center gap-2 text-sm cursor-pointer">
                     <input id="provider-enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${provider.enabled ? 'checked' : ''}>
@@ -842,7 +846,7 @@ function renderProviderEditor(provider) {
                 <div class="text-xs text-dark-500">${escapeHtml(t('providerFallbackMoved'))}</div>
             </div>
 
-            ${renderProviderModelDetails(provider, providerReadOnly)}
+            ${renderProviderModelDetails(provider, providerReadOnly, capabilityLocked)}
 
             <details class="advanced-box mt-4">
                 <summary>${escapeHtml(t('providerDetailedProfile'))}</summary>
@@ -874,47 +878,46 @@ function renderProviderEditor(provider) {
                     ${renderCapabilityToggle('cap-images', t('imagesCapability'), capabilitySource.images, 'syncMediaModeControls(true)', capabilityLocked || providerReadOnly)}
                 </div>
                 ${capabilityLocked ? `<div id="native-capability-lock-note" class="mt-3 text-xs text-emerald-200 bg-emerald-950/20 border border-emerald-700/40 rounded-lg p-3">${escapeHtml(t('nativeCapabilitiesLocked'))}</div>` : ''}
-                ${renderResponsesModeSegment(provider, providerReadOnly)}
                 ${renderProviderSectionHeading(t('providerResponsesProfile'), t('providerResponsesProfileDesc'))}
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
-                    ${renderCapabilityToggle('responses-domestic', t('domesticResponses'), provider.responses_profile && provider.responses_profile.domestic_responses)}
-                    ${renderCapabilityToggle('responses-partial', t('partialResponsesCompatibility'), provider.responses_profile && provider.responses_profile.partial_compatibility)}
-                    ${renderCapabilityToggle('responses-requires-adapter', t('responsesAdapterRequired'), provider.responses_profile && provider.responses_profile.requires_adapter)}
+                    ${renderCapabilityToggle('responses-domestic', t('domesticResponses'), provider.responses_profile && provider.responses_profile.domestic_responses, '', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderCapabilityToggle('responses-partial', t('partialResponsesCompatibility'), provider.responses_profile && provider.responses_profile.partial_compatibility, '', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderCapabilityToggle('responses-requires-adapter', t('responsesAdapterRequired'), provider.responses_profile && provider.responses_profile.requires_adapter, '', providerReadOnly || nativeBehaviorLocked)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderInput('responses-profile-id', t('responsesProfileId'), provider.responses_profile && provider.responses_profile.profile_id)}
-                    ${renderInput('responses-docs-url', t('responsesDocsUrl'), provider.responses_profile && provider.responses_profile.verified_docs_url)}
-                    ${renderInput('responses-unsupported', t('unsupportedFields'), provider.responses_profile && (provider.responses_profile.unsupported_fields || []).join(', '))}
+                    ${renderInput('responses-profile-id', t('responsesProfileId'), provider.responses_profile && provider.responses_profile.profile_id, 'text', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderInput('responses-docs-url', t('responsesDocsUrl'), provider.responses_profile && provider.responses_profile.verified_docs_url, 'text', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderInput('responses-unsupported', t('unsupportedFields'), provider.responses_profile && (provider.responses_profile.unsupported_fields || []).join(', '), 'text', providerReadOnly || nativeBehaviorLocked)}
                 </div>
-                ${renderApprovalModeSegment(approvalProfile)}
+                ${renderApprovalModeSegment(approvalProfile, providerReadOnly || nativeBehaviorLocked)}
                 ${renderProviderSectionHeading(t('providerApprovalProfile'), t('providerApprovalProfileDesc'))}
                 <div id="approval-auto-fields" class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 ${approvalModeFromProfile(approvalProfile) === 'proxy_auto_approve' ? '' : 'hidden'}">
-                    ${renderInput('approval-reviewer-model', t('reviewerModel'), approvalProfile.reviewer_model || '')}
-                    ${renderInput('approval-allowed-actions', t('allowedActions'), (approvalProfile.allowed_actions || []).join(', '))}
+                    ${renderInput('approval-reviewer-model', t('reviewerModel'), approvalProfile.reviewer_model || '', 'text', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderInput('approval-allowed-actions', t('allowedActions'), (approvalProfile.allowed_actions || []).join(', '), 'text', providerReadOnly || nativeBehaviorLocked)}
                     ${renderSelect('approval-error-policy', t('reviewErrorPolicy'), approvalProfile.on_review_error || 'decline', [
                         'decline',
                         'ask_user',
                         'allow',
-                    ])}
-                    ${renderInput('approval-timeout-ms', t('timeoutMs'), approvalProfile.timeout_ms || 90000, 'number')}
-                    ${renderInput('approval-max-retries', t('maxRetries'), approvalProfile.max_retries || 1, 'number')}
-                    ${renderCapabilityToggle('approval-audit-decisions', t('auditDecisions'), approvalProfile.audit_decisions !== false)}
-                    ${renderCapabilityToggle('approval-auto-accept-low-risk', t('autoAcceptLowRisk'), approvalProfile.auto_accept_low_risk !== false)}
-                    ${renderCapabilityToggle('approval-auto-decline-high-risk', t('autoDeclineHighRisk'), approvalProfile.auto_decline_high_risk !== false)}
+                    ], '', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderInput('approval-timeout-ms', t('timeoutMs'), approvalProfile.timeout_ms || 90000, 'number', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderInput('approval-max-retries', t('maxRetries'), approvalProfile.max_retries || 1, 'number', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderCapabilityToggle('approval-audit-decisions', t('auditDecisions'), approvalProfile.audit_decisions !== false, '', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderCapabilityToggle('approval-auto-accept-low-risk', t('autoAcceptLowRisk'), approvalProfile.auto_accept_low_risk !== false, '', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderCapabilityToggle('approval-auto-decline-high-risk', t('autoDeclineHighRisk'), approvalProfile.auto_decline_high_risk !== false, '', providerReadOnly || nativeBehaviorLocked)}
                 </div>
                 ${renderProviderSectionHeading(t('providerMediaQuota'), t('providerMediaQuotaDesc'))}
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4">
-                    ${renderCapabilityToggle('media-default-image', t('defaultImageProvider'), mediaProfile.default_image_provider, 'syncMediaModeControls(true)')}
+                    ${renderCapabilityToggle('media-default-image', t('defaultImageProvider'), mediaProfile.default_image_provider, 'syncMediaModeControls(true)', providerReadOnly || nativeBehaviorLocked)}
                 </div>
-                ${renderMediaModeSegment(mediaProfile)}
+                ${renderMediaModeSegment(mediaProfile, providerReadOnly || nativeBehaviorLocked)}
                 ${renderMediaRoutingHint(provider)}
                 <div id="media-async-fields" class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4 ${showMediaAsyncFields ? '' : 'hidden'}">
-                    ${renderCapabilityToggle('media-async-submit', t('asyncSubmit'), mediaProfile.async_submit)}
-                    ${renderCapabilityToggle('media-poll-required', t('pollRequired'), mediaProfile.poll_required)}
-                    ${renderCapabilityToggle('media-cancel-supported', t('cancelSupported'), mediaProfile.cancel_supported)}
+                    ${renderCapabilityToggle('media-async-submit', t('asyncSubmit'), mediaProfile.async_submit, '', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderCapabilityToggle('media-poll-required', t('pollRequired'), mediaProfile.poll_required, '', providerReadOnly || nativeBehaviorLocked)}
+                    ${renderCapabilityToggle('media-cancel-supported', t('cancelSupported'), mediaProfile.cancel_supported, '', providerReadOnly || nativeBehaviorLocked)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    ${renderTextarea('media-image-overrides-json', t('imageOverridesJson'), JSON.stringify(mediaProfile.image_model_overrides || {}, null, 2), 5)}
+                    ${renderTextarea('media-image-overrides-json', t('imageOverridesJson'), JSON.stringify(mediaProfile.image_model_overrides || {}, null, 2), 5, '', providerReadOnly || nativeBehaviorLocked)}
                 </div>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
                     ${renderTextarea('provider-quota-json', t('quotaCheckJson'), JSON.stringify(provider.quota_check || {}, null, 2), 8, t('quotaCheckJsonDesc'), providerReadOnly)}
@@ -974,7 +977,7 @@ function renderCodexOfficialProviderViewer(provider) {
     `;
 }
 
-function renderProviderModelDetails(provider, disabled = false) {
+function renderProviderModelDetails(provider, disabled = false, capabilityLocked = false) {
     const models = Array.isArray(provider.models) && provider.models.length
         ? provider.models
         : [{ id: '', display_name: '', context_window: 0, selected: true, enabled: true, capabilities: {} }];
@@ -997,7 +1000,7 @@ function renderProviderModelDetails(provider, disabled = false) {
             </div>
             ${renderProviderModelBulkActions(disabled)}
             <div id="provider-model-detail-list" class="space-y-3 mt-4">
-                ${models.map((model, index) => renderProviderModelDetailRow(provider, model, index, disabled)).join('')}
+                ${models.map((model, index) => renderProviderModelDetailRow(provider, model, index, disabled, capabilityLocked)).join('')}
             </div>
         </div>
     `;
@@ -1021,13 +1024,14 @@ function renderProviderModelBulkActions(disabled = false) {
     `;
 }
 
-function renderProviderModelDetailRow(provider, model, index, disabled = false) {
+function renderProviderModelDetailRow(provider, model, index, disabled = false, capabilityLocked = false) {
     const effectiveCaps = {
         ...(provider && provider.capabilities ? provider.capabilities : {}),
         ...(model && model.capabilities ? model.capabilities : {}),
         ...(model && model.capability_overrides ? model.capability_overrides : {}),
     };
     const disabledAttr = disabled ? ' disabled' : '';
+    const capabilityDisabledAttr = (disabled || capabilityLocked) ? ' disabled' : '';
     const apiFormat = model && model.api_format ? model.api_format : '';
     const reasoningProfile = model && model.reasoning_effort_profile && typeof model.reasoning_effort_profile === 'object'
         ? model.reasoning_effort_profile
@@ -1076,7 +1080,7 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false) 
                 </div>
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('modelInterface'))}</label>
-                    <select data-model-field="api_format" class="input mt-1 w-full"${disabledAttr}>
+                    <select data-model-field="api_format" class="input mt-1 w-full"${capabilityDisabledAttr}>
                         <option value="" ${apiFormat ? '' : 'selected'}>${escapeHtml(t('inheritProvider'))}</option>
                         ${visibleApiFormatOptions(apiFormat).map(format => `
                             <option value="${escapeAttr(format)}" ${apiFormat === format ? 'selected' : ''}>${escapeHtml(providerOptionLabel(format))}</option>
@@ -1087,7 +1091,7 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false) 
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('reasoningEffortParameter'))}</label>
-                    <select data-model-field="reasoning_effort_parameter" class="input mt-1 w-full"${disabledAttr}>
+                    <select data-model-field="reasoning_effort_parameter" class="input mt-1 w-full"${capabilityDisabledAttr}>
                         ${['auto', 'disabled', 'reasoning.effort', 'reasoning_effort', 'output_config.effort', 'thinking'].map(value => `
                             <option value="${escapeAttr(value)}" ${String(reasoningProfile.parameter || 'auto') === value ? 'selected' : ''}>${escapeHtml(reasoningEffortParameterLabel(value))}</option>
                         `).join('')}
@@ -1095,11 +1099,11 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false) 
                 </div>
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('reasoningEfforts'))}</label>
-                    <input data-model-field="reasoning_efforts" class="input mt-1 w-full" value="${escapeAttr((reasoningProfile.supported_efforts || model.reasoning_efforts || []).join(', '))}" placeholder="low, medium, high"${disabledAttr}>
+                    <input data-model-field="reasoning_efforts" class="input mt-1 w-full" value="${escapeAttr((reasoningProfile.supported_efforts || model.reasoning_efforts || []).join(', '))}" placeholder="low, medium, high"${capabilityDisabledAttr}>
                 </div>
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('reasoningEffortDefault'))}</label>
-                    <input data-model-field="reasoning_effort_default" class="input mt-1 w-full" value="${escapeAttr(reasoningProfile.default_effort || model.reasoning_effort_default || '')}" placeholder="medium"${disabledAttr}>
+                    <input data-model-field="reasoning_effort_default" class="input mt-1 w-full" value="${escapeAttr(reasoningProfile.default_effort || model.reasoning_effort_default || '')}" placeholder="medium"${capabilityDisabledAttr}>
                 </div>
             </div>
             <div class="flex flex-wrap gap-3 mt-3">
@@ -1120,7 +1124,7 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false) 
                     <span>${escapeHtml(t('primaryModel'))}</span>
                 </label>
                 <label class="flex items-center gap-2 text-xs text-dark-300">
-                    <input data-model-field="native_approval" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${model.native_approval ? 'checked' : ''}${disabledAttr}>
+                    <input data-model-field="native_approval" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${capabilityLocked || model.native_approval ? 'checked' : ''}${capabilityDisabledAttr}>
                     <span>${escapeHtml(t('nativeApprovalCapability'))}</span>
                 </label>
             </div>
@@ -1128,8 +1132,8 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false) 
                 <div class="text-xs text-dark-500 mb-2">${escapeHtml(t('modelCapabilities'))}</div>
                 <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
                     ${MODEL_DETAIL_CAPABILITIES.map(([capability, labelKey]) => `
-                        <label class="flex items-center gap-2 text-xs rounded-md border border-dark-800 bg-dark-950/45 px-2 py-1.5 ${disabled ? 'opacity-70' : ''}">
-                            <input data-model-capability="${escapeAttr(capability)}" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${effectiveCaps[capability] ? 'checked' : ''}${disabledAttr}>
+                        <label class="flex items-center gap-2 text-xs rounded-md border border-dark-800 bg-dark-950/45 px-2 py-1.5 ${(disabled || capabilityLocked) ? 'opacity-70' : ''}">
+                            <input data-model-capability="${escapeAttr(capability)}" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${(capabilityLocked ? nativeLockedCapabilities(effectiveCaps)[capability] : effectiveCaps[capability]) ? 'checked' : ''}${capabilityDisabledAttr}>
                             <span>${escapeHtml(t(labelKey))}</span>
                         </label>
                     `).join('')}
@@ -2276,6 +2280,7 @@ function getSelectedProvider() {
 function readProviderModelsFromDetails(existingModels = [], provider = {}) {
     const rows = Array.from(document.querySelectorAll('[data-provider-model-row]'));
     if (!rows.length) return null;
+    const modelCapabilityLocked = isNativeCapabilityLocked(provider);
     const existingByOriginalId = new Map();
     (existingModels || []).forEach(model => {
         if (!model || !model.id) return;
@@ -2292,8 +2297,10 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
         });
         capabilities.tools = true;
         capabilities.streaming = true;
-        const nativeApproval = Boolean(row.querySelector('[data-model-field="native_approval"]')?.checked);
-        const apiFormat = String(row.querySelector('[data-model-field="api_format"]')?.value || '').trim();
+        const nativeApproval = modelCapabilityLocked ? true : Boolean(row.querySelector('[data-model-field="native_approval"]')?.checked);
+        const apiFormat = modelCapabilityLocked
+            ? String(existing.api_format || '').trim()
+            : String(row.querySelector('[data-model-field="api_format"]')?.value || '').trim();
         const displayName = String(row.querySelector('[data-model-field="display_name"]')?.value || '').trim();
         const codexVisibleId = String(row.querySelector('[data-model-field="codex_visible_id"]')?.value || '').trim();
         const hidden = Boolean(row.querySelector('[data-model-field="catalog_hidden"]')?.checked);
@@ -2305,7 +2312,8 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
             .map(item => item.trim())
             .filter(Boolean);
         const reasoningDefault = String(row.querySelector('[data-model-field="reasoning_effort_default"]')?.value || '').trim();
-        const capabilityOverrides = {
+        const lockedCapabilities = nativeLockedCapabilities(existing.capabilities || capabilities);
+        const capabilityOverrides = modelCapabilityLocked ? { ...(existing.capability_overrides || {}) } : {
             ...(existing.capability_overrides || {}),
             ...capabilities,
             native_approval: nativeApproval,
@@ -2324,9 +2332,9 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
             enabled: Boolean(row.querySelector('[data-model-field="enabled"]')?.checked),
             api_format: PROVIDER_API_FORMATS.has(apiFormat) ? apiFormat : '',
             native_approval: nativeApproval,
-            capabilities,
+            capabilities: modelCapabilityLocked ? lockedCapabilities : capabilities,
             capability_overrides: capabilityOverrides,
-            reasoning_effort_profile: {
+            reasoning_effort_profile: modelCapabilityLocked ? (existing.reasoning_effort_profile || {}) : {
                 ...(existing.reasoning_effort_profile || {}),
                 parameter: reasoningParameter,
                 supported_efforts: reasoningEfforts,
@@ -2362,13 +2370,19 @@ function readProviderForm(existing) {
         const responsesMode = getSelectedResponsesMode();
         const apiFormat = document.getElementById('provider-api-format')?.value || 'openai_responses';
         const lockedCapabilities = apiFormat === 'openai_responses' && responsesMode === 'native';
+        const nativeBehaviorLocked = isNativeResponsesProvider({ ...existing, api_format: apiFormat, responses_profile: { ...(existing.responses_profile || {}), mode: responsesMode, native_responses: responsesMode === 'native' } });
+        const lockedResponsesProfile = {
+            ...(existing.responses_profile || {}),
+            mode: 'native',
+            native_responses: true,
+        };
         return {
             ...existing,
             display_name: document.getElementById('provider-display-name')?.value || '',
             codex_visible_alias: document.getElementById('provider-codex-visible-alias')?.value || '',
             short_alias: document.getElementById('provider-short-alias')?.value || '',
             base_url: document.getElementById('provider-base-url')?.value || '',
-            api_format: apiFormat,
+            api_format: nativeBehaviorLocked ? (existing.api_format || 'openai_responses') : apiFormat,
             country_region: document.getElementById('provider-country-region')?.value || '',
             native_currency: document.getElementById('provider-native-currency')?.value || 'USD',
             catalog_visibility: document.getElementById('provider-visibility')?.value || 'focused_only',
@@ -2378,7 +2392,7 @@ function readProviderForm(existing) {
                 ? document.getElementById('provider-fallback-enabled').checked
                 : Boolean(existing.fallback_enabled),
             api_key: document.getElementById('provider-api-key') ? document.getElementById('provider-api-key').value : (existing.api_key || ''),
-            auth_mode: document.getElementById('provider-auth-mode')?.value || 'provider_api_key',
+            auth_mode: nativeBehaviorLocked ? (existing.auth_mode || 'provider_api_key') : (document.getElementById('provider-auth-mode')?.value || 'provider_api_key'),
             headers,
             aliases,
             alias_patterns: aliasPatterns,
@@ -2395,7 +2409,7 @@ function readProviderForm(existing) {
                 images: document.getElementById('cap-images')?.checked || false,
                 videos: false,
             },
-            approval_profile: {
+            approval_profile: nativeBehaviorLocked ? (existing.approval_profile || {}) : {
                 ...(existing.approval_profile || {}),
                 mode: approvalMode,
                 official_guardian: approvalMode === 'official_guardian',
@@ -2419,7 +2433,7 @@ function readProviderForm(existing) {
                 retry_attempts: parseInt(document.getElementById('proxy-retry-attempts')?.value || '0', 10) || 0,
                 retry_backoff_ms: parseInt(document.getElementById('proxy-retry-backoff-ms')?.value || '0', 10) || 0,
             },
-            media_profile: {
+            media_profile: nativeBehaviorLocked ? (existing.media_profile || {}) : {
                 ...existing.media_profile,
                 default_image_provider: document.getElementById('media-default-image')?.checked || false,
                 default_video_provider: false,
@@ -2431,7 +2445,7 @@ function readProviderForm(existing) {
                 image_model_overrides: imageModelOverrides,
                 video_model_overrides: {},
             },
-            responses_profile: {
+            responses_profile: nativeBehaviorLocked ? lockedResponsesProfile : {
                 ...(existing.responses_profile || {}),
                 mode: responsesMode,
                 native_responses: responsesMode === 'native',
@@ -2725,8 +2739,9 @@ function approvalModeFromProfile(profile) {
     return 'proxy_auto_approve';
 }
 
-function renderApprovalModeSegment(profile) {
+function renderApprovalModeSegment(profile, disabled = false) {
     const mode = approvalModeFromProfile(profile || {});
+    const disabledAttr = disabled ? ' disabled' : '';
     const options = [
         ['manual_only', t('manualOnly'), t('userDecides')],
         ['official_guardian', t('officialGuardian'), t('codexNative')],
@@ -2737,13 +2752,14 @@ function renderApprovalModeSegment(profile) {
             <div class="text-xs text-dark-400 mb-2">${escapeHtml(t('approvalMode'))}</div>
             <div class="segmented-control" role="radiogroup" aria-label="${escapeAttr(t('approvalMode'))}">
                 ${options.map(([value, label, hint]) => `
-                    <label class="segmented-option ${mode === value ? 'active' : ''}">
+                    <label class="segmented-option ${mode === value ? 'active' : ''} ${disabled ? 'opacity-60 cursor-not-allowed' : ''}">
                         <input
                             type="radio"
                             name="approval-mode"
                             value="${escapeAttr(value)}"
                             onchange="syncApprovalModeControls()"
                             ${mode === value ? 'checked' : ''}
+                            ${disabledAttr}
                         >
                         <span class="segmented-label">${escapeHtml(label)}</span>
                         <span class="segmented-hint">${escapeHtml(hint)}</span>
@@ -2860,8 +2876,9 @@ function renderMediaRoutingHint(provider) {
     `;
 }
 
-function renderMediaModeSegment(profile) {
+function renderMediaModeSegment(profile, disabled = false) {
     const mode = mediaModeFromProfile(profile || {});
+    const disabledAttr = disabled ? ' disabled' : '';
     const options = [
         ['openai_compatible', t('openaiCompatibleMode'), t('directPassthrough')],
         ['adapter_required', t('adapterRequiredMode'), t('vendorSpecificMedia')],
@@ -2872,13 +2889,14 @@ function renderMediaModeSegment(profile) {
             <div class="text-xs text-dark-400 mb-2">${escapeHtml(t('mediaProfile'))}</div>
             <div class="segmented-control" role="radiogroup" aria-label="${escapeAttr(t('mediaProfile'))}">
                 ${options.map(([value, label, hint]) => `
-                    <label class="segmented-option ${mode === value ? 'active' : ''}">
+                    <label class="segmented-option ${mode === value ? 'active' : ''} ${disabled ? 'opacity-60 cursor-not-allowed' : ''}">
                         <input
                             type="radio"
                             name="media-mode"
                             value="${escapeAttr(value)}"
                             onchange="syncMediaModeControls(true)"
                             ${mode === value ? 'checked' : ''}
+                            ${disabledAttr}
                         >
                         <span class="segmented-label">${escapeHtml(label)}</span>
                         <span class="segmented-hint">${escapeHtml(hint)}</span>
