@@ -47,8 +47,14 @@ class CodexDB:
         Raises:
             FileNotFoundError: 数据库文件不存在时抛出（常见于首次启动未配置路径）。
         """
-        if not os.path.exists(self.db_path):
-            raise FileNotFoundError(f"数据库文件不存在: {self.db_path}")
+        if not self.db_path or not os.path.exists(self.db_path):
+            hint = ""
+            if not self.db_path:
+                hint = "（db_path 未配置，请在设置中指定 Codex 数据库路径）"
+            raise FileNotFoundError(
+                f"数据库文件不存在: {self.db_path}{hint}\n"
+                f"Codex 数据库通常位于 ~/.codex/state_5.sqlite 或 ~/.codex/threads.db"
+            )
         with self._lock:
             if self._conn is None:
                 self._conn = sqlite3.connect(self.db_path, check_same_thread=False)

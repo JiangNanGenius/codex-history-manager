@@ -22,6 +22,8 @@ Thumbs.db
 _pytest_tmp/
 _pytest_run_tmp*/
 kimi-export-*.md
+.playwright-mcp/
+RESTART_HANDOFF.md
 
 # Local-only research and planning notes. Do not push these.
 research/

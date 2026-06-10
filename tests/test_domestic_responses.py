@@ -6,6 +6,7 @@ from domestic_responses import (
     build_domestic_responses_probe_preview,
     domestic_responses_url,
     resolve_domestic_responses_profile,
+    sanitize_domestic_responses_request,
 )
 
 
@@ -98,6 +99,79 @@ class DomesticResponsesProfileTest(unittest.TestCase):
 
         self.assertFalse(preview["available"])
         self.assertFalse(preview["network_request_performed"])
+
+    def test_sanitize_removes_unsupported_tools_and_keeps_allowed_ones(self):
+        provider = {
+            "id": "bailian",
+            "short_alias": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "responses_profile": {
+                "domestic_responses": True,
+                "profile_id": "alibaba_bailian",
+                "partial_compatibility": True,
+                "requires_adapter": True,
+            },
+        }
+        request = {
+            "model": "qwen/qwen-plus",
+            "input": "test",
+            "tools": [
+                {"type": "function", "name": "get_weather"},
+                {"type": "custom", "name": "shell"},
+                {"type": "image_generation", "name": "dalle"},
+                {"type": "web_search", "name": "search"},
+            ],
+        }
+        sanitized, warnings = sanitize_domestic_responses_request(provider, request)
+        # custom is removed; image_generation is replaced with generate_image function tool
+        self.assertEqual(len(sanitized["tools"]), 3)
+        self.assertEqual(sanitized["tools"][0]["type"], "function")
+        self.assertEqual(sanitized["tools"][0]["name"], "get_weather")
+        self.assertEqual(sanitized["tools"][1]["type"], "function")
+        self.assertEqual(sanitized["tools"][1]["function"]["name"], "generate_image")
+        self.assertEqual(sanitized["tools"][2]["type"], "web_search")
+        self.assertTrue(any("custom" in w for w in warnings))
+        self.assertTrue(any("image_generation" in w for w in warnings))
+        self.assertTrue(sanitized.get("_cem_image_gen_fallback"))
+
+    def test_sanitize_removes_unsupported_input_content_types(self):
+        provider = {
+            "id": "bailian",
+            "short_alias": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "responses_profile": {
+                "domestic_responses": True,
+                "profile_id": "alibaba_bailian",
+                "partial_compatibility": True,
+                "requires_adapter": True,
+            },
+        }
+        request = {
+            "model": "qwen/qwen-plus",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "hello"},
+                        {"type": "input_audio", "audio_url": "https://example.test/a.mp3"},
+                        {"type": "input_image", "image_url": "https://example.test/a.png"},
+                    ],
+                }
+            ],
+        }
+        sanitized, warnings = sanitize_domestic_responses_request(provider, request)
+        self.assertEqual(len(sanitized["input"]), 1)
+        self.assertEqual(len(sanitized["input"][0]["content"]), 2)
+        self.assertEqual(sanitized["input"][0]["content"][0]["type"], "input_text")
+        self.assertEqual(sanitized["input"][0]["content"][1]["type"], "input_image")
+        self.assertTrue(any("input_audio" in w for w in warnings))
+
+    def test_sanitize_returns_original_for_non_domestic_provider(self):
+        provider = {"id": "openai", "base_url": "https://api.openai.com/v1"}
+        request = {"model": "gpt-4", "tools": [{"type": "custom", "name": "x"}]}
+        sanitized, warnings = sanitize_domestic_responses_request(provider, request)
+        self.assertEqual(sanitized, request)
+        self.assertEqual(warnings, [])
 
 
 if __name__ == "__main__":

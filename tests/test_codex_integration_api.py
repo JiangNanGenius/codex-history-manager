@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import time
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -89,6 +90,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
                 }
 
             MockAMRRegistry.return_value.list_groups.side_effect = current_amr_groups
+            self.amr_registry = MockAMRRegistry.return_value
             MockDesktopShortcutManager.return_value.create_shortcuts.return_value = {
                 "success": True,
                 "shortcuts": [],
@@ -150,6 +152,56 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertNotIn("secret_reveal_password_salt", data)
         self.assertNotIn("secret_reveal_password_iterations", data)
         self.assertNotIn("secret_reveal_password_hash", data["defaults"])
+
+    def test_sync_preview_allows_running_codex_because_it_is_read_only(self):
+        app = self._app()
+        stats = SimpleNamespace(
+            db_threads_seen=2,
+            db_threads_updated=1,
+            rollout_files_seen=0,
+            rollout_files_updated=0,
+            index_rows_seen=0,
+            index_rows_updated=0,
+            malformed_lines=0,
+            errors=[],
+            changed=True,
+        )
+        with (
+            patch("app.full_sync", return_value=stats) as full_sync,
+            patch("app.is_codex_running", return_value=(True, [123])) as running,
+        ):
+            response = app.test_client().post("/api/sync/preview", json={
+                "target_provider": "codex_enhance_manager",
+                "target_model": "amr/default",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["changed"])
+        running.assert_not_called()
+        full_sync.assert_called_once()
+
+    def test_amr_group_create_hydrates_context_from_provider_model(self):
+        app = self._app()
+        self.amr_registry.create_group.side_effect = lambda payload: payload
+
+        response = app.test_client().post("/api/amr/groups", json={
+            "display_name": "Smart Routing",
+            "candidates": [{
+                "provider_id": "test-provider",
+                "model_id": "test-model",
+                "priority": 2,
+                "enabled": True,
+                "context_window": 1,
+                "capabilities": {"text": True, "vision": True},
+            }],
+        })
+
+        self.assertEqual(response.status_code, 200)
+        candidate = response.get_json()["group"]["candidates"][0]
+        self.assertEqual(candidate["context_window"], 128000)
+        self.assertFalse(candidate["capabilities"]["vision"])
+        self.amr_registry.create_group.assert_called_once()
 
     def test_provider_secret_reveal_is_direct_when_secondary_password_unset(self):
         app = self._app()
@@ -621,6 +673,85 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertEqual(data["sync"]["current_family"], "third_party")
         self.assertEqual(data["sync"]["target_family"], "third_party")
         sync_with_backup.assert_not_called()
+
+    def test_start_codex_skips_third_party_to_third_party_even_if_db_looks_official(self):
+        app = self._app()
+        self.last_config.get.side_effect = lambda key, default=None: (
+            "preserve_login_proxy" if key == "codex_last_start_mode" else default
+        )
+        provider = {
+            "id": "volcengine-plan",
+            "display_name": "Ark Coding Plan",
+            "enabled": True,
+            "switch_only": False,
+            "local_proxy_routing": True,
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "models": [{"id": "ark-code-latest", "enabled": True, "context_window": 256000}],
+        }
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "volcengine-plan",
+            "providers": [provider],
+        }
+        self.proxy_server.status.return_value = {
+            "running": True,
+            "port": 51235,
+            "base_url": "http://127.0.0.1:51235/v1",
+        }
+        with (
+            patch("app._run_sync_with_backup") as sync_with_backup,
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", return_value=(True, "started")),
+        ):
+            response = app.test_client().post("/api/codex/start", json={"start_mode": "current_focus"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["sync"]["skipped"])
+        self.assertEqual(data["sync"]["reason"], "history_sync_same_provider_family")
+        self.assertEqual(data["sync"]["previous_start_mode"], "preserve_login_proxy")
+        self.assertEqual(data["sync"]["target_start_mode"], "preserve_login_proxy")
+        sync_with_backup.assert_not_called()
+
+    def test_start_codex_runs_official_to_third_party_migration_even_if_db_looks_third_party(self):
+        app = self._app()
+        self.last_config.get.side_effect = lambda key, default=None: (
+            "official_direct" if key == "codex_last_start_mode" else default
+        )
+        self.db.get_provider_distribution.return_value = [{"provider": "codex_enhance_manager", "count": 6}]
+        provider = {
+            "id": "volcengine-plan",
+            "display_name": "Ark Coding Plan",
+            "enabled": True,
+            "switch_only": False,
+            "local_proxy_routing": True,
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "models": [{"id": "ark-code-latest", "enabled": True, "context_window": 256000}],
+        }
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "volcengine-plan",
+            "providers": [provider],
+        }
+        self.proxy_server.status.return_value = {
+            "running": True,
+            "port": 51235,
+            "base_url": "http://127.0.0.1:51235/v1",
+        }
+        with (
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": True}, 200)) as sync_with_backup,
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", return_value=(True, "started")),
+        ):
+            response = app.test_client().post("/api/codex/start", json={"start_mode": "current_focus"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        sync_with_backup.assert_called_once()
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_provider"], "codex_enhance_manager")
 
     def test_start_codex_history_sync_reports_heartbeat_while_running(self):
         app = self._app()

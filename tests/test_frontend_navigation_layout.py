@@ -112,6 +112,11 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert "syncMonitorOpacityLabel" in js
     assert "setting-update-check-enabled" in html
     assert "setting-update-include-prerelease" in html
+    assert "setting-debug-mode" in html
+    assert "setting-debug-log-path" in html
+    assert "debug_mode" in js
+    assert "loadDebugLogs" in js
+    assert "/api/debug/logs" in js
     assert "setting-plugin-unlock-enabled" in html
     assert "setting-codex-sandbox-auto-repair-enabled" in html
     assert "setting-secret-reveal-password" in html
@@ -344,8 +349,14 @@ def test_amr_candidate_capabilities_are_inherited_from_providers():
     i18n = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
 
     assert "getAmrCandidateCapabilities" in amr_js
+    assert "getAmrCandidateContextWindow" in amr_js
+    assert 'data-amr-context-locked="true"' in amr_js
+    assert 'type="number" min="0" step="1000" data-amr-field="context_window"' not in amr_js
+    assert "getAmrCandidateContextWindow({ provider_id, model_id })" in amr_js
     assert "data-amr-derived-capabilities" in amr_js
+    assert "data-amr-derived-capability-badges" in amr_js
     assert "amrCandidateCapabilitiesInherited" in i18n
+    assert "amrContextInheritedFromProvider" in i18n
     assert "amrEditCapabilitiesInProviders" in i18n
     assert "data-amr-capability" not in amr_js
     assert "data-amr-route-capability" not in amr_js

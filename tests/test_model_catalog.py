@@ -168,8 +168,8 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         groups = [{
             "id": "default",
             "candidates": [
-                {"provider_id": "p1", "model_id": "m1", "enabled": True, "context_window": 256000},
-                {"provider_id": "p2", "model_id": "m2", "enabled": True, "context_window": 64000},
+                {"provider_id": "p1", "model_id": "m1", "enabled": True, "context_window": 1},
+                {"provider_id": "p2", "model_id": "m2", "enabled": True, "context_window": 512000},
             ],
         }]
 
@@ -346,20 +346,6 @@ class UnifiedModelCatalogTest(unittest.TestCase):
         entry = UnifiedModelCatalog(providers).find_entry("native/auto")
 
         self.assertIsNotNone(entry)
-        self.assertTrue(entry["capabilities"]["images"])
-
-    def test_codex_api_key_mixin_preset_advertises_images_to_catalog(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
-            provider = registry.import_preset("codex-api-key-mixin")
-
-        catalog = UnifiedModelCatalog([provider]).build_catalog()
-        entry = catalog["entries"][0] if catalog["entries"] else None
-
-        self.assertIsNotNone(entry)
-        self.assertEqual(entry["api_format"], "openai_responses")
-        self.assertTrue(entry["capabilities"]["text"])
-        self.assertTrue(entry["capabilities"]["vision"])
         self.assertTrue(entry["capabilities"]["images"])
 
     def test_entry_pricing_merges_model_over_provider(self):

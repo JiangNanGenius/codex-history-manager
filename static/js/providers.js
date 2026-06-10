@@ -629,7 +629,7 @@ function renderProvidersPage() {
                 <p class="text-sm text-dark-400 mt-1">${escapeHtml(t('providersPageDesc'))}</p>
             </div>
             <div class="flex flex-wrap gap-2">
-                <button onclick="createBlankProvider()" class="btn btn-primary">${escapeHtml(t('newProvider'))}</button>
+                <button onclick="showCreateProviderModal()" class="btn btn-primary">${escapeHtml(t('newProvider'))}</button>
                 <button onclick="exportProviderBundle()" class="btn btn-secondary">${escapeHtml(t('exportRedacted'))}</button>
             </div>
         </div>
@@ -643,13 +643,6 @@ function renderProvidersPage() {
                     <div class="space-y-2 mt-3">
                         ${providers.map(renderProviderListItem).join('') || renderEmptyState(t('noProvidersYet'))}
                     </div>
-                </div>
-                <div class="card">
-                    <h3 class="card-title">${escapeHtml(t('presetImport'))}</h3>
-                    <div class="space-y-2 mt-3">
-                        ${(providerState.presets || []).slice(0, 6).map(renderCompactPresetButton).join('')}
-                    </div>
-                    <button onclick="navigateTo('quick-setup')" class="btn btn-ghost text-xs mt-3">${escapeHtml(t('openFullWizard'))}</button>
                 </div>
                 ${renderProxyControlCard()}
             </div>
@@ -1061,7 +1054,7 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false, 
                     ${disabled ? '' : `<button type="button" onclick="removeProviderModelDetail(this)" class="btn btn-ghost text-xs text-red-200 hover:text-red-100">${escapeHtml(t('removeModel'))}</button>`}
                 </div>
             </div>
-            <div class="grid grid-cols-1 xl:grid-cols-[minmax(160px,1fr)_minmax(150px,1fr)_minmax(160px,1fr)_120px_150px] gap-3">
+            <div class="grid grid-cols-1 xl:grid-cols-[minmax(160px,1fr)_minmax(200px,2fr)_120px_150px] gap-3">
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('modelId'))}</label>
                     <input data-model-field="id" class="input mt-1 w-full font-mono" value="${escapeAttr(model.id || '')}" placeholder="gpt-5.5"${disabledAttr}>
@@ -1069,10 +1062,6 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false, 
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('modelDisplayName'))}</label>
                     <input data-model-field="display_name" class="input mt-1 w-full" value="${escapeAttr(model.display_name || model.id || '')}" placeholder="${escapeAttr(t('displayName'))}"${disabledAttr}>
-                </div>
-                <div>
-                    <label class="text-xs text-dark-400">${escapeHtml(t('codexVisibleModelName'))}</label>
-                    <input data-model-field="codex_visible_id" class="input mt-1 w-full" value="${escapeAttr(model.codex_visible_id || '')}" placeholder="${escapeAttr(model.display_name || model.id || '')}"${disabledAttr}>
                 </div>
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('contextWindow'))}</label>
@@ -1088,7 +1077,7 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false, 
                     </select>
                 </div>
             </div>
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3 ${!effectiveCaps.text && effectiveCaps.images ? 'hidden' : ''}" data-llm-only-section>
                 <div>
                     <label class="text-xs text-dark-400">${escapeHtml(t('reasoningEffortParameter'))}</label>
                     <select data-model-field="reasoning_effort_parameter" class="input mt-1 w-full"${capabilityDisabledAttr}>
@@ -1106,11 +1095,37 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false, 
                     <input data-model-field="reasoning_effort_default" class="input mt-1 w-full" value="${escapeAttr(reasoningProfile.default_effort || model.reasoning_effort_default || '')}" placeholder="medium"${capabilityDisabledAttr}>
                 </div>
             </div>
+            <div class="mt-3">
+                <div class="text-xs text-dark-500 mb-2">${escapeHtml(t('modelPricing'))} <span class="text-dark-600">— ${escapeHtml(t('modelPricingDesc'))}</span></div>
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('inputPrice'))}</label>
+                        <input data-model-pricing="input_per_million" type="number" min="0" step="0.01" class="input mt-1 w-full" value="${escapeAttr((model.pricing && model.pricing.input_per_million) || '')}" placeholder="/M"${disabledAttr}>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('outputPrice'))}</label>
+                        <input data-model-pricing="output_per_million" type="number" min="0" step="0.01" class="input mt-1 w-full" value="${escapeAttr((model.pricing && model.pricing.output_per_million) || '')}" placeholder="/M"${disabledAttr}>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('cacheReadPrice'))}</label>
+                        <input data-model-pricing="cache_read_per_million" type="number" min="0" step="0.01" class="input mt-1 w-full" value="${escapeAttr((model.pricing && model.pricing.cache_read_per_million) || '')}" placeholder="/M"${disabledAttr}>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('cacheWritePrice'))}</label>
+                        <input data-model-pricing="cache_write_per_million" type="number" min="0" step="0.01" class="input mt-1 w-full" value="${escapeAttr((model.pricing && model.pricing.cache_write_per_million) || '')}" placeholder="/M"${disabledAttr}>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('reasoningPrice'))}</label>
+                        <input data-model-pricing="reasoning_per_million" type="number" min="0" step="0.01" class="input mt-1 w-full" value="${escapeAttr((model.pricing && model.pricing.reasoning_per_million) || '')}" placeholder="/M"${disabledAttr}>
+                    </div>
+                </div>
+            </div>
             <div class="flex flex-wrap gap-3 mt-3">
                 <label class="flex items-center gap-2 text-xs text-dark-300">
                     <input data-model-field="enabled" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${enabled ? 'checked' : ''}${disabledAttr}>
                     <span>${escapeHtml(t('enabledLabel'))}</span>
                 </label>
+                <span class="flex flex-wrap gap-3 ${!effectiveCaps.text && effectiveCaps.images ? 'hidden' : ''}" data-llm-only-checkboxes>
                 <label class="flex items-center gap-2 text-xs text-dark-300">
                     <input data-model-field="selected" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${selected ? 'checked' : ''}${disabledAttr}>
                     <span>${escapeHtml(t('selectedModel'))}</span>
@@ -1127,20 +1142,59 @@ function renderProviderModelDetailRow(provider, model, index, disabled = false, 
                     <input data-model-field="native_approval" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${capabilityLocked || model.native_approval ? 'checked' : ''}${capabilityDisabledAttr}>
                     <span>${escapeHtml(t('nativeApprovalCapability'))}</span>
                 </label>
+                </span>
             </div>
             <div class="mt-3">
                 <div class="text-xs text-dark-500 mb-2">${escapeHtml(t('modelCapabilities'))}</div>
                 <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
                     ${MODEL_DETAIL_CAPABILITIES.map(([capability, labelKey]) => `
-                        <label class="flex items-center gap-2 text-xs rounded-md border border-dark-800 bg-dark-950/45 px-2 py-1.5 ${(disabled || capabilityLocked) ? 'opacity-70' : ''}">
-                            <input data-model-capability="${escapeAttr(capability)}" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${(capabilityLocked ? nativeLockedCapabilities(effectiveCaps)[capability] : effectiveCaps[capability]) ? 'checked' : ''}${capabilityDisabledAttr}>
+                        <label class="flex items-center gap-2 text-xs rounded-md border border-dark-800 bg-dark-950/45 px-2 py-1.5 ${(disabled || capabilityLocked) ? 'opacity-70' : ''} ${capability !== 'images' ? 'non-image-cap' : ''}">
+                            <input data-model-capability="${escapeAttr(capability)}" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500" ${effectiveCaps[capability] ? 'checked' : ''}${capabilityDisabledAttr} onchange="onModelCapabilityChange(this, '${escapeAttr(capability)}')">
                             <span>${escapeHtml(t(labelKey))}</span>
                         </label>
                     `).join('')}
                 </div>
             </div>
+            <div class="mt-3 ${!effectiveCaps.text && effectiveCaps.images ? '' : 'hidden'}" data-image-advanced>
+                <div class="text-xs text-dark-500 mb-2">${escapeHtml(t('imageModelAdvanced'))} <span class="text-dark-600">— ${escapeHtml(t('imageModelAdvancedDesc'))}</span></div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('modelBaseUrl'))}</label>
+                        <input data-model-field="model_base_url" class="input mt-1 w-full font-mono" value="${escapeAttr(model.model_base_url || '')}" placeholder="https://api.example.com/v1"${disabledAttr}>
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400">${escapeHtml(t('modelBasePath'))}</label>
+                        <input data-model-field="model_base_path" class="input mt-1 w-full font-mono" value="${escapeAttr(model.model_base_path || '')}" placeholder="/images/generations"${disabledAttr}>
+                    </div>
+                </div>
+            </div>
         </div>
     `;
+}
+
+function onModelCapabilityChange(checkbox, capability) {
+    if (capability !== 'images') return;
+    const row = checkbox.closest('[data-provider-model-row]');
+    if (!row) return;
+    const isImage = checkbox.checked;
+    // Update other capability checkboxes: image mode clears others; LLM mode restores text+vision defaults
+    row.querySelectorAll('[data-model-capability]').forEach(input => {
+        const cap = input.getAttribute('data-model-capability');
+        if (cap === 'images') return;
+        input.checked = !isImage && (cap === 'text' || cap === 'vision');
+    });
+    // Toggle non-image capability labels
+    row.querySelectorAll('.non-image-cap').forEach(el => {
+        el.classList.toggle('hidden', isImage);
+    });
+    // Toggle LLM-only sections
+    const llmSection = row.querySelector('[data-llm-only-section]');
+    if (llmSection) llmSection.classList.toggle('hidden', isImage);
+    const llmCheckboxes = row.querySelector('[data-llm-only-checkboxes]');
+    if (llmCheckboxes) llmCheckboxes.classList.toggle('hidden', isImage);
+    // Toggle image-only advanced settings
+    const imageAdvanced = row.querySelector('[data-image-advanced]');
+    if (imageAdvanced) imageAdvanced.classList.toggle('hidden', !isImage);
 }
 
 function renderProviderSectionHeading(title, detail) {
@@ -1843,6 +1897,45 @@ async function importPreset(presetId) {
     }
 }
 
+function showCreateProviderModal() {
+    const modal = document.getElementById('create-provider-modal');
+    if (!modal) return;
+    const presets = (providerState.presets || []).filter(p => !p.hidden);
+    const generic = presets.filter(p => p.category !== 'domestic');
+    const domestic = presets.filter(p => p.category === 'domestic');
+    document.getElementById('create-provider-modal-presets').innerHTML = `
+        <div class="space-y-4">
+            ${generic.length ? `
+                <div>
+                    <h4 class="text-sm font-semibold text-dark-200 mb-2">${escapeHtml(t('genericPresets'))}</h4>
+                    <div class="grid grid-cols-1 gap-2">${generic.map(renderPresetCardCompact).join('')}</div>
+                </div>
+            ` : ''}
+            ${domestic.length ? `
+                <div>
+                    <h4 class="text-sm font-semibold text-dark-200 mb-2">${escapeHtml(t('domesticPresets'))}</h4>
+                    <div class="grid grid-cols-1 gap-2">${domestic.map(renderPresetCardCompact).join('')}</div>
+                </div>
+            ` : ''}
+        </div>
+    `;
+    modal.classList.remove('hidden');
+}
+
+function hideCreateProviderModal() {
+    const modal = document.getElementById('create-provider-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function renderPresetCardCompact(preset) {
+    return `
+        <button onclick="importPreset('${escapeAttr(preset.preset_id)}'); hideCreateProviderModal();" class="preset-card text-left w-full">
+            <div class="font-medium text-white">${escapeHtml(preset.name)}</div>
+            <div class="text-xs text-dark-400 mt-1">${escapeHtml(preset.description || '')}</div>
+        </button>
+    `;
+}
+
 async function createBlankProvider() {
     try {
         const result = await api('/api/providers', {
@@ -2302,7 +2395,8 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
             ? String(existing.api_format || '').trim()
             : String(row.querySelector('[data-model-field="api_format"]')?.value || '').trim();
         const displayName = String(row.querySelector('[data-model-field="display_name"]')?.value || '').trim();
-        const codexVisibleId = String(row.querySelector('[data-model-field="codex_visible_id"]')?.value || '').trim();
+        const codexDisplayName = displayName || modelId;
+        const codexVisibleId = modelId;
         const hidden = Boolean(row.querySelector('[data-model-field="catalog_hidden"]')?.checked);
         const primary = !hidden && Boolean(row.querySelector('[data-model-field="primary"]')?.checked);
         const selected = !hidden && (Boolean(row.querySelector('[data-model-field="selected"]')?.checked) || primary);
@@ -2312,6 +2406,14 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
             .map(item => item.trim())
             .filter(Boolean);
         const reasoningDefault = String(row.querySelector('[data-model-field="reasoning_effort_default"]')?.value || '').trim();
+        const pricing = {};
+        row.querySelectorAll('[data-model-pricing]').forEach(input => {
+            const key = input.getAttribute('data-model-pricing');
+            const value = parseFloat(input.value);
+            if (!isNaN(value) && value >= 0) {
+                pricing[key] = value;
+            }
+        });
         const lockedCapabilities = nativeLockedCapabilities(existing.capabilities || capabilities);
         const capabilityOverrides = modelCapabilityLocked ? { ...(existing.capability_overrides || {}) } : {
             ...(existing.capability_overrides || {}),
@@ -2324,6 +2426,7 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
             ...existing,
             id: modelId,
             display_name: displayName || modelId,
+            codex_display_name: codexDisplayName,
             codex_visible_id: codexVisibleId,
             context_window: parseInt(row.querySelector('[data-model-field="context_window"]')?.value || '0', 10) || 0,
             selected,
@@ -2340,6 +2443,9 @@ function readProviderModelsFromDetails(existingModels = [], provider = {}) {
                 supported_efforts: reasoningEfforts,
                 default_effort: reasoningDefault,
             },
+            pricing: Object.keys(pricing).length ? pricing : (existing.pricing || {}),
+            model_base_url: String(row.querySelector('[data-model-field="model_base_url"]')?.value || '').trim() || (existing.model_base_url || ''),
+            model_base_path: String(row.querySelector('[data-model-field="model_base_path"]')?.value || '').trim() || (existing.model_base_path || ''),
             display_order: Number.isFinite(Number(existing.display_order)) ? existing.display_order : index,
         };
     }).filter(Boolean);
@@ -2606,7 +2712,8 @@ function isNativeCapabilityLocked(provider) {
 }
 
 function nativeLockedCapabilities(existing = {}) {
-    return { ...(existing || {}), ...NATIVE_LOCKED_CAPABILITIES };
+    // 原生 provider 的能力按实际值显示，仅强制 native_approval 为 true
+    return { ...(existing || {}), native_approval: true };
 }
 
 function providerQuotaScriptCode(provider = {}) {
@@ -4363,3 +4470,18 @@ function renderDiffPreviewShell() {
         </div>
     `;
 }
+
+// Close create-provider modal on Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        hideCreateProviderModal();
+    }
+});
+
+// Close create-provider modal on overlay click
+document.addEventListener('click', (e) => {
+    const modal = document.getElementById('create-provider-modal');
+    if (e.target === modal) {
+        hideCreateProviderModal();
+    }
+});

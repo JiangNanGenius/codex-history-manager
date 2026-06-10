@@ -252,6 +252,49 @@ def _write_desktop_backend_state(port: int) -> bool:
         return False
 
 
+def _pid_is_running(pid: int) -> bool:
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x1000, False, int(pid))
+            if not handle:
+                return False
+            kernel32.CloseHandle(handle)
+            return True
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _clear_desktop_backend_state(expected_pid: int | None = None) -> bool:
+    path = _desktop_backend_state_path()
+    if path is None or not path.exists():
+        return False
+    try:
+        if expected_pid is not None:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if int(data.get("pid") or 0) != int(expected_pid):
+                return False
+        path.unlink()
+        return True
+    except Exception:
+        return False
+
+
 def _desktop_backend_port_candidates() -> list[int]:
     candidates: list[int] = []
     path = _desktop_backend_state_path()
@@ -259,7 +302,10 @@ def _desktop_backend_port_candidates() -> list[int]:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             port = int(data.get("port") or 0)
-            if 0 < port <= 65535:
+            pid = int(data.get("pid") or 0)
+            if pid and not _pid_is_running(pid):
+                _clear_desktop_backend_state(expected_pid=pid)
+            elif 0 < port <= 65535:
                 candidates.append(port)
         except Exception:
             pass
@@ -1442,6 +1488,7 @@ def _exit_app(window):
                 candidate.destroy()
         except Exception:
             pass
+    _clear_desktop_backend_state(expected_pid=os.getpid())
     _flush_desktop_run_logging()
     # 先尝试正常退出，让 Python 执行 atexit、刷新缓冲区等清理
     try:

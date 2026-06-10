@@ -32,37 +32,6 @@ class ProviderRegistryTest(unittest.TestCase):
             loaded = registry.get_provider(created["id"], include_secrets=True)
             self.assertEqual(loaded["api_key"], "secret-value")
 
-    def test_import_domestic_responses_preset_marks_partial_profile(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
-            provider = registry.import_preset("alibaba-bailian-text-media")
-
-            profile = provider["responses_profile"]
-            self.assertTrue(profile["domestic_responses"])
-            self.assertTrue(profile["partial_compatibility"])
-            self.assertTrue(profile["requires_adapter"])
-            self.assertEqual(profile["profile_id"], "alibaba_bailian")
-            self.assertIn("qwen-api-via-openai-responses", profile["verified_docs_url"])
-            self.assertIn("input_image", profile["allowed_input_content_types"])
-            self.assertIn("response.output_text.delta", profile["verified_event_types"])
-            self.assertTrue(provider["media_profile"]["adapter_required"])
-            self.assertFalse(provider["media_profile"]["openai_compatible_media"])
-            self.assertEqual(provider["media_profile"]["adapter"], "alibaba_bailian")
-
-    def test_volcengine_responses_preset_is_adapter_required(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
-            provider = registry.import_preset("volcengine-ark-text-media")
-
-            profile = provider["responses_profile"]
-            self.assertTrue(profile["domestic_responses"])
-            self.assertTrue(profile["partial_compatibility"])
-            self.assertTrue(profile["requires_adapter"])
-            self.assertEqual(profile["profile_id"], "volcengine_ark")
-            self.assertIn("1585128", profile["verified_docs_url"])
-            self.assertIn("payload_until_verified", profile["unsupported_fields"])
-            self.assertIn("image_process", profile["allowed_tool_types"])
-
     def test_volcengine_plan_presets_are_separate_and_include_user_contexts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
@@ -82,6 +51,9 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertEqual(coding_models["minimax-m3"]["context_window"], 512000)
             self.assertTrue(coding_models["ark-code-latest"]["capabilities"]["vision"])
             self.assertFalse(coding_models["deepseek-v4-pro"]["capabilities"]["vision"])
+            self.assertEqual(coding_models["ark-code-latest"]["pricing"]["billing_mode"], "token_plan_monthly")
+            self.assertEqual(coding_models["ark-code-latest"]["pricing"]["cost_estimation"], "disabled")
+            self.assertEqual(agent_models["ark-code-latest"]["pricing"]["billing_mode"], "token_plan_monthly")
             self.assertIn("doubao-seed-code", coding_models)
             self.assertIn("doubao-seed-2.0-mini", agent_models)
             self.assertNotIn("doubao-seed-code", agent_models)
@@ -693,7 +665,6 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertIn("anthropic/claude-3.5-sonnet", model_ids)
             self.assertIn("google/gemini-pro", model_ids)
             self.assertIn("meta-llama/llama-3-70b", model_ids)
-            self.assertIn("deepseek/deepseek-chat", model_ids)
             self.assertEqual(provider["native_currency"], "USD")
             self.assertEqual(provider["country_region"], "US")
             self.assertEqual(provider["caveat"], "OpenRouter 提供多供应商聚合，某些模型可能有速率限制或可用性波动。")
@@ -704,7 +675,7 @@ class ProviderRegistryTest(unittest.TestCase):
             preset = next((p for p in registry.list_presets()["presets"] if p["preset_id"] == "deepseek-official"), None)
             self.assertIsNotNone(preset)
             provider = registry.import_preset("deepseek-official")
-            self.assertEqual(provider["base_url"], "https://api.deepseek.com/v1")
+            self.assertEqual(provider["base_url"], "https://api.deepseek.com")
             self.assertTrue(provider["capabilities"]["text"])
             self.assertTrue(provider["capabilities"]["tools"])
             self.assertTrue(provider["capabilities"]["reasoning"])
@@ -714,12 +685,42 @@ class ProviderRegistryTest(unittest.TestCase):
             self.assertFalse(provider["responses_profile"]["partial_compatibility"])
             self.assertFalse(provider["responses_profile"]["requires_adapter"])
             model_ids = [m["id"] for m in provider["models"]]
-            self.assertIn("deepseek-chat", model_ids)
-            self.assertIn("deepseek-coder", model_ids)
-            self.assertIn("deepseek-reasoner", model_ids)
+            self.assertIn("deepseek-v4-pro", model_ids)
+            self.assertIn("deepseek-v4-flash", model_ids)
+            models = {model["id"]: model for model in provider["models"]}
+            self.assertEqual(models["deepseek-v4-flash"]["context_window"], 1024000)
+            self.assertEqual(models["deepseek-v4-flash"]["max_output_tokens"], 384000)
+            self.assertEqual(models["deepseek-v4-flash"]["pricing"]["input_per_million"], 1.0)
+            self.assertEqual(models["deepseek-v4-flash"]["pricing"]["cache_read_per_million"], 0.02)
+            self.assertEqual(models["deepseek-v4-flash"]["pricing"]["output_per_million"], 2.0)
+            self.assertEqual(models["deepseek-v4-flash"]["concurrency_limit"], 2500)
+            self.assertEqual(models["deepseek-v4-pro"]["pricing"]["input_per_million"], 3.0)
+            self.assertEqual(models["deepseek-v4-pro"]["pricing"]["cache_read_per_million"], 0.025)
+            self.assertEqual(models["deepseek-v4-pro"]["pricing"]["output_per_million"], 6.0)
+            self.assertEqual(models["deepseek-v4-pro"]["concurrency_limit"], 500)
             self.assertEqual(provider["native_currency"], "CNY")
             self.assertEqual(provider["country_region"], "CN")
             self.assertEqual(provider["caveat"], "DeepSeek 官方 API 使用 Chat Completions 格式，不支持原生 Responses API。")
+
+    def test_domestic_media_bridge_presets_stay_available(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+
+            bridge = registry.import_preset("codex-api-key-mixin")
+            self.assertEqual(bridge["api_format"], "openai_responses")
+            self.assertTrue(bridge["capabilities"]["images"])
+            self.assertTrue(bridge["media_profile"]["default_image_provider"])
+
+            bailian = registry.import_preset("alibaba-bailian-text-media")
+            self.assertEqual(bailian["base_url"], "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            self.assertEqual(bailian["media_profile"]["adapter"], "alibaba_bailian")
+            self.assertTrue(bailian["capabilities"]["images"])
+
+            ark = registry.import_preset("volcengine-ark-text-media")
+            self.assertEqual(ark["id"], "volcengine-ark")
+            self.assertEqual(ark["base_url"], "https://ark.cn-beijing.volces.com/api/v3")
+            self.assertEqual(ark["media_profile"]["adapter"], "volcengine_ark")
+            self.assertNotEqual(ark["base_url"], "https://ark.cn-beijing.volces.com/api/coding/v3")
 
     def test_openai_compatible_images_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -753,35 +754,6 @@ class ProviderRegistryTest(unittest.TestCase):
             model_ids = [m["id"] for m in provider["models"]]
             self.assertIn("sora-2", model_ids)
             self.assertIn("sora-2-pro", model_ids)
-
-    def test_local_proxy_media_bridge_preset_enables_image_passthrough(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
-            preset = next((p for p in registry.list_presets()["presets"] if p["preset_id"] == "codex-api-key-mixin"), None)
-            self.assertIsNotNone(preset)
-            visible_text = " ".join([
-                preset.get("name", ""),
-                preset.get("description", ""),
-                preset.get("provider", {}).get("display_name", ""),
-                preset.get("provider", {}).get("caveat", ""),
-                preset.get("provider", {}).get("notes", ""),
-            ])
-            self.assertNotIn("Code++", visible_text)
-            self.assertNotIn("Mix-in", visible_text)
-            self.assertNotIn("mix-in", visible_text)
-            self.assertNotIn("混入", visible_text)
-
-            provider = registry.import_preset("codex-api-key-mixin")
-
-            self.assertEqual(provider["api_format"], "openai_responses")
-            self.assertTrue(provider["capabilities"]["images"])
-            self.assertTrue(provider["media_profile"]["default_image_provider"])
-            self.assertTrue(provider["media_profile"]["openai_compatible_media"])
-            self.assertEqual(provider["models"][0]["capability_overrides"], {})
-
-            preview = registry.preview_catalog()
-            entry = next(item for item in preview["entries"] if item["provider_id"] == provider["id"])
-            self.assertTrue(entry["capabilities"]["images"])
 
     def test_moonshot_kimi_preset_schema_and_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:

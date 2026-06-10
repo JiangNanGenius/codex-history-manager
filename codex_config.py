@@ -125,6 +125,12 @@ def save_config_toml(config_path: str, data: Dict[str, Any]) -> None:
       - 简单扁平序列化：当前实现仅支持单层嵌套表（[section]），这是 pragmatic
         的权衡——Codex config.toml 结构简单，无需引入 tomli_w 等第三方依赖。
 
+    Windows 文件锁定防御：
+      - 若目标文件被其他进程锁定，replace() 会抛出 PermissionError；
+        此时进行 3 次短暂重试（50ms 间隔）。
+      - 最终仍失败时抛出 RuntimeError，由调用方决定回滚或提示用户。
+      - 临时文件在失败时会被清理。
+
     Args:
         config_path: 目标文件路径。
         data: 要写入的字典。值为 dict 的键会被序列化为 [section]。
@@ -136,11 +142,30 @@ def save_config_toml(config_path: str, data: Dict[str, Any]) -> None:
 
     content = "\n".join(lines) + "\n"
     tmp_path = path.with_suffix(".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        f.write(content)
-    if path.exists():
-        shutil.copystat(path, tmp_path, follow_symlinks=False)
-    tmp_path.replace(path)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        if path.exists():
+            shutil.copystat(path, tmp_path, follow_symlinks=False)
+        # Windows 上若文件被其他进程锁定，replace 可能失败；短暂重试
+        for _attempt in range(3):
+            try:
+                tmp_path.replace(path)
+                break
+            except PermissionError:
+                import time
+                time.sleep(0.05)
+        else:
+            raise RuntimeError(
+                f"无法保存配置到 {path}：文件可能被其他进程锁定。"
+            )
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+        raise
 
 
 def _ensure_section(root: Dict[str, Any], section_name: str) -> Dict[str, Any]:

@@ -54,7 +54,9 @@ from domestic_responses import (
     assess_domestic_responses_request,
     format_domestic_unsupported_reason,
 )
+from media_adapters import execute_image_generation
 from media_proxy import (
+    MEDIA_KIND_IMAGE,
     canonical_media_path,
     evaluate_media_approval,
     extract_json_model,
@@ -76,7 +78,13 @@ from responses_adapter import (
     responses_to_chat_completions,
     responses_url,
 )
-from request_logs import RequestLogStore, build_proxy_log_entry, extract_usage_from_response, normalize_usage
+from request_logs import (
+    RequestLogStore,
+    build_proxy_log_entry,
+    extract_usage_from_response,
+    normalize_usage,
+    redact_secrets,
+)
 from request_capabilities import classify_request_capabilities
 from amr_registry import AMRRegistry, DEFAULT_STORE_PATH as DEFAULT_AMR_STORE_PATH
 from provider_routing import provider_allows_local_routing
@@ -175,6 +183,171 @@ def _set_local_proxy_bearer_token(token: str = "") -> None:
     """Configure the bearer token required for inbound local proxy requests."""
     global _local_proxy_bearer_token
     _local_proxy_bearer_token = str(token or "").strip()
+
+
+# Debug/diagnostics logging
+_debug_mode_enabled = False
+_debug_logs: List[Dict[str, Any]] = []
+_debug_logs_maxlen = 500
+_debug_logs_lock = threading.Lock()
+_debug_log_path: Optional[Path] = None
+_debug_log_retention_days = 7
+_debug_log_max_bytes = 10 * 1024 * 1024
+_debug_log_last_prune = 0.0
+
+
+def _set_debug_mode(
+    enabled: bool,
+    path: Optional[str] = None,
+    retention_days: Optional[int] = None,
+    max_mb: Optional[float] = None,
+) -> None:
+    global _debug_mode_enabled, _debug_log_path, _debug_log_retention_days, _debug_log_max_bytes
+    _debug_mode_enabled = bool(enabled)
+    if path is not None:
+        _debug_log_path = Path(path).expanduser() if path else None
+    if retention_days is not None:
+        try:
+            _debug_log_retention_days = max(int(retention_days), 1)
+        except (TypeError, ValueError):
+            _debug_log_retention_days = 7
+    if max_mb is not None:
+        try:
+            _debug_log_max_bytes = int(max(float(max_mb), 1.0) * 1024 * 1024)
+        except (TypeError, ValueError):
+            _debug_log_max_bytes = 10 * 1024 * 1024
+    if _debug_mode_enabled and _debug_log_path:
+        _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _debug_log(event: str, **kwargs: Any) -> None:
+    if not _debug_mode_enabled:
+        return
+    entry = {"time": time.time(), "event": event}
+    entry.update(kwargs)
+    entry = _safe_debug_entry(entry)
+    with _debug_logs_lock:
+        _debug_logs.append(entry)
+        while len(_debug_logs) > _debug_logs_maxlen:
+            _debug_logs.pop(0)
+        _append_debug_log_file(entry)
+
+
+def get_debug_logs() -> List[Dict[str, Any]]:
+    persisted = _read_debug_log_file(_debug_logs_maxlen)
+    if persisted:
+        return persisted
+    with _debug_logs_lock:
+        return list(_debug_logs)
+
+
+def clear_debug_logs() -> None:
+    with _debug_logs_lock:
+        _debug_logs.clear()
+        if _debug_log_path:
+            try:
+                _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+                _debug_log_path.write_text("", encoding="utf-8")
+            except OSError:
+                pass
+
+
+def _safe_debug_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    redacted = redact_secrets(entry)
+    if not isinstance(redacted, dict):
+        return {"time": time.time(), "event": "debug.invalid_entry"}
+    return {
+        str(key): _trim_debug_value(value)
+        for key, value in redacted.items()
+        if key not in {"request_body", "response_body", "messages", "input", "prompt"}
+    }
+
+
+def _trim_debug_value(value: Any, depth: int = 0) -> Any:
+    if depth > 4:
+        return "[truncated]"
+    if isinstance(value, dict):
+        trimmed: Dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 40:
+                trimmed["__truncated__"] = True
+                break
+            trimmed[str(key)] = _trim_debug_value(item, depth + 1)
+        return trimmed
+    if isinstance(value, list):
+        return [_trim_debug_value(item, depth + 1) for item in value[:40]]
+    if isinstance(value, str) and len(value) > 2000:
+        return value[:2000] + "...[truncated]"
+    return value
+
+
+def _append_debug_log_file(entry: Dict[str, Any]) -> None:
+    if not _debug_log_path:
+        return
+    try:
+        _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(_debug_log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
+        _prune_debug_log_file()
+    except OSError:
+        pass
+
+
+def _read_debug_log_file(limit: int = 500) -> List[Dict[str, Any]]:
+    if not _debug_log_path or not _debug_log_path.exists():
+        return []
+    try:
+        lines = _debug_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    entries: List[Dict[str, Any]] = []
+    for line in lines[-max(int(limit or 500), 1):]:
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            entries.append(_safe_debug_entry(item))
+    return entries
+
+
+def _prune_debug_log_file(force: bool = False) -> None:
+    global _debug_log_last_prune
+    if not _debug_log_path or not _debug_log_path.exists():
+        return
+    now = time.time()
+    if not force and now - _debug_log_last_prune < 60:
+        return
+    _debug_log_last_prune = now
+    try:
+        lines = _debug_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
+    cutoff = now - (_debug_log_retention_days * 86400)
+    kept: List[str] = []
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(item, dict):
+            continue
+        try:
+            timestamp = float(item.get("time") or 0)
+        except (TypeError, ValueError):
+            timestamp = now
+        if timestamp >= cutoff:
+            kept.append(json.dumps(_safe_debug_entry(item), ensure_ascii=False, separators=(",", ":")))
+    encoded = ("\n".join(kept) + ("\n" if kept else "")).encode("utf-8")
+    if len(encoded) > _debug_log_max_bytes:
+        encoded = encoded[-_debug_log_max_bytes:]
+        newline = encoded.find(b"\n")
+        if newline >= 0:
+            encoded = encoded[newline + 1:]
+    try:
+        _debug_log_path.write_bytes(encoded)
+    except OSError:
+        pass
 
 
 def _authorization_bearer_value(header_value: Any) -> str:
@@ -342,6 +515,7 @@ def _resolve_provider_route_for_model(
             or raw_model_id.startswith(("amr/", "rotation/"))
         )
     )
+    _debug_log("route.resolve_start", model_id=model_id, amr_group_id=amr_group_id, force_amr=force_amr, classification=classification)
     provider = None if force_amr else _resolve_provider_for_model(model_id)
     if provider:
         upstream_model = _extract_model_id_for_upstream({"model": model_id}, provider)
@@ -350,7 +524,7 @@ def _resolve_provider_route_for_model(
         explanation = ["Direct provider/model route."]
         if upstream_model and upstream_model != requested_upstream:
             explanation.append(f"Model alias rewrite: {requested_upstream} -> {upstream_model}.")
-        return {
+        result = {
             "success": True,
             "provider": provider,
             "model": route_model,
@@ -360,10 +534,12 @@ def _resolve_provider_route_for_model(
             "route_explanation": explanation,
             "request_capabilities": (classification or {}).get("capabilities", ["text"]),
         }
+        _debug_log("route.direct", model_id=model_id, provider_id=provider.get("id"), upstream_model=upstream_model, api_format=result["api_format"])
+        return result
 
     group_id = amr_group_id
     if not group_id:
-        return {
+        err = {
             "success": False,
             "status": 404,
             "error_type": "provider_not_found",
@@ -372,10 +548,12 @@ def _resolve_provider_route_for_model(
                 "Use 'provider/model' format, configure a provider model, or create an AMR group."
             ),
         }
+        _debug_log("route.fail", model_id=model_id, reason="no_provider_no_amr_group")
+        return err
 
     registry = AMRRegistry(str(_get_amr_store_path()))
     if not registry.get_group(group_id):
-        return {
+        err = {
             "success": False,
             "status": 404,
             "error_type": "provider_not_found",
@@ -384,10 +562,14 @@ def _resolve_provider_route_for_model(
                 "Use 'provider/model' format or configure an AMR group with that id."
             ),
         }
+        _debug_log("route.fail", model_id=model_id, reason="amr_group_not_found", group_id=group_id)
+        return err
 
     caps = set((classification or {}).get("capabilities") or ["text"])
-    decision = registry.route(group_id, request_capabilities=caps, required_context=0)
+    candidate_list = "image_candidates" if "images" in caps else "candidates"
+    decision = registry.route(group_id, request_capabilities=caps, required_context=0, candidate_list=candidate_list)
     if not decision.get("success"):
+        _debug_log("route.amr_fail", model_id=model_id, group_id=group_id, error=decision.get("error"), explanation=decision.get("explanation"))
         return {
             "success": False,
             "status": 400,
@@ -417,7 +599,7 @@ def _resolve_provider_route_for_model(
     explanation = []
     explanation.extend((classification or {}).get("explanation") or [])
     explanation.extend(decision.get("explanation") or [])
-    return {
+    result = {
         "success": True,
         "provider": selected,
         "model": _find_enabled_model(selected, upstream_model) or {},
@@ -428,6 +610,8 @@ def _resolve_provider_route_for_model(
         "route_explanation": explanation,
         "request_capabilities": sorted(caps),
     }
+    _debug_log("route.amr_success", model_id=model_id, group_id=group_id, provider_id=selected.get("id"), upstream_model=upstream_model, api_format=result["api_format"], amr_candidate=decision.get("candidate_id"))
+    return result
 
 
 def _amr_group_id_from_model_id(model_id: str) -> str:
@@ -694,6 +878,106 @@ def _native_responses_unsupported_reason(
     if not report.get("domestic_responses") or report.get("safe_to_forward"):
         return None
     return format_domestic_unsupported_reason(report)
+
+
+def _intercept_image_generation(
+    response_json: Dict[str, Any],
+    provider: Dict[str, Any],
+    model_id: str = "",
+) -> Dict[str, Any]:
+    """Intercept generate_image function_call and replace with image_generation_call result.
+
+    If the provider does not support image generation, the function_call is left
+    in place with an error annotation so the user sees a clear message.
+
+    当传入 model_id 且对应 AMR group 存在 image_candidates 时，
+    会优先通过 AMR 图像路由选择最佳图像 provider，而非绑定当前文本 provider。
+    """
+    output = response_json.get("output")
+    if not isinstance(output, list):
+        return response_json
+
+    # 尝试通过 AMR image_candidates 路由选择最佳图像 provider
+    image_provider = provider
+    image_upstream_model = ""
+    amr_group_id = _amr_group_id_from_model_id(model_id)
+    if amr_group_id:
+        try:
+            registry = AMRRegistry(str(_get_amr_store_path()))
+            if registry.get_group(amr_group_id):
+                decision = registry.route(
+                    amr_group_id,
+                    request_capabilities={"images"},
+                    required_context=0,
+                    candidate_list="image_candidates",
+                )
+                if decision.get("success"):
+                    providers = _load_providers_with_secrets()
+                    selected = _find_enabled_provider_by_id(providers, str(decision.get("provider_id") or ""))
+                    if selected:
+                        image_provider = selected
+                        image_upstream_model = str(decision.get("model_id") or "")
+                        _debug_log("image.amr_route", group_id=amr_group_id, provider_id=selected.get("id"), model_id=image_upstream_model)
+        except Exception as exc:
+            _debug_log("image.amr_route_fail", group_id=amr_group_id, error=str(exc))
+
+    new_output: List[Dict[str, Any]] = []
+    changed = False
+    for item in output:
+        if not isinstance(item, dict):
+            new_output.append(item)
+            continue
+        if item.get("type") != "function_call" or item.get("name") != "generate_image":
+            new_output.append(item)
+            continue
+
+        # Parse arguments
+        args: Dict[str, Any] = {}
+        try:
+            raw_args = item.get("arguments", "{}")
+            args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            args = {}
+
+        prompt = str(args.get("prompt") or "").strip()
+        if not prompt:
+            new_output.append(item)
+            continue
+
+        # Execute image generation
+        result = execute_image_generation(
+            image_provider,
+            prompt=prompt,
+            size=str(args.get("size") or ""),
+            quality=str(args.get("quality") or ""),
+            n=int(args.get("n") or 1),
+            upstream_model_id=image_upstream_model,
+        )
+        if not result.get("success"):
+            # Leave function_call but add error annotation
+            item = dict(item)
+            item["_cem_image_gen_error"] = str(result.get("error") or "Image generation failed.")
+            new_output.append(item)
+            changed = True
+            continue
+
+        data = result.get("data") or []
+        first = data[0] if data else {}
+        image_data = first.get("b64_json") or first.get("url") or ""
+
+        new_output.append({
+            "type": "image_generation_call",
+            "id": item.get("id", ""),
+            "call_id": item.get("call_id", ""),
+            "result": str(image_data),
+            "status": "completed",
+        })
+        changed = True
+
+    if changed:
+        response_json = dict(response_json)
+        response_json["output"] = new_output
+    return response_json
 
 
 def _provider_proxy_profile(provider: Dict[str, Any]) -> Dict[str, Any]:
@@ -1253,9 +1537,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
         classification = classify_request_capabilities("chat_completions", request_json)
         route = _resolve_provider_route_for_model(model_id, classification)
         if not route.get("success"):
+            _debug_log("chat.fail", model_id=model_id, error=route.get("error"), error_type=route.get("error_type"))
             _send_route_error(self, route)
             return
         provider = route["provider"]
+        _debug_log("chat.route", model_id=model_id, route_type=route.get("route_type"), provider_id=provider.get("id"), upstream_model=route.get("upstream_model"), api_format=route.get("api_format"))
 
         base_url = provider.get("base_url", "").rstrip("/")
         if not base_url:
@@ -1343,12 +1629,38 @@ class ProxyHandler(BaseHTTPRequestHandler):
         media_operation = media_operation_for_request(method, canonical_path)
         content_type = self.headers.get("Content-Type", "")
         model_id = extract_json_model(body, content_type)
-        store = _load_provider_store_with_secrets()
-        route = resolve_media_route(
-            _prioritize_focus_provider(store.get("providers", []), store.get("focus_provider_id", "")),
-            media_kind,
-            model_id=model_id,
-        )
+        route = None
+        amr_group_id = _amr_group_id_from_model_id(model_id)
+        if amr_group_id and media_kind == MEDIA_KIND_IMAGE:
+            try:
+                registry = AMRRegistry(str(_get_amr_store_path()))
+                if registry.get_group(amr_group_id):
+                    decision = registry.route(
+                        amr_group_id,
+                        request_capabilities={"images"},
+                        required_context=0,
+                        candidate_list="image_candidates",
+                    )
+                    if decision.get("success"):
+                        providers = _load_providers_with_secrets()
+                        selected = _find_enabled_provider_by_id(providers, str(decision.get("provider_id") or ""))
+                        upstream_model = str(decision.get("model_id") or "")
+                        if selected and _provider_has_enabled_model(selected, upstream_model):
+                            route = {
+                                "provider": selected,
+                                "upstream_model_id": upstream_model,
+                                "route_explanation": [f"AMR image_candidates route for group '{amr_group_id}'."],
+                            }
+                            _debug_log("media.amr_route", group_id=amr_group_id, provider_id=selected.get("id"), model_id=upstream_model)
+            except Exception as exc:
+                _debug_log("media.amr_route_fail", group_id=amr_group_id, error=str(exc))
+        if not route:
+            store = _load_provider_store_with_secrets()
+            route = resolve_media_route(
+                _prioritize_focus_provider(store.get("providers", []), store.get("focus_provider_id", "")),
+                media_kind,
+                model_id=model_id,
+            )
         provider = route.get("provider")
         if not provider:
             _send_error(
@@ -1467,8 +1779,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
         classification = classify_request_capabilities("responses", request_json, compact=compact)
         route = _resolve_provider_route_for_model(model_id, classification)
         if not route.get("success"):
+            _debug_log("responses.fail", model_id=model_id, error=route.get("error"), error_type=route.get("error_type"))
             _send_route_error(self, route)
             return
+        _debug_log("responses.route", model_id=model_id, route_type=route.get("route_type"), provider_id=route["provider"].get("id"), upstream_model=route.get("upstream_model"), api_format=route.get("api_format"))
         provider = route["provider"]
 
         base_url = provider.get("base_url", "").rstrip("/")
@@ -1571,9 +1885,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
     ) -> None:
         """Forward a Responses request to an upstream that natively speaks Responses."""
         unsupported_reason = _native_responses_unsupported_reason(provider, request_json, compact=compact)
+        sanitization_warnings: List[str] = []
         if unsupported_reason:
-            _send_error(self, 400, unsupported_reason, "domestic_responses_unsupported")
-            return
+            # Try to sanitize the request by removing unsupported tools/items
+            # instead of outright blocking it.
+            from domestic_responses import sanitize_domestic_responses_request
+
+            request_json, sanitization_warnings = sanitize_domestic_responses_request(
+                provider, request_json
+            )
+            unsupported_reason = _native_responses_unsupported_reason(
+                provider, request_json, compact=compact
+            )
+            if unsupported_reason:
+                _send_error(self, 400, unsupported_reason, "domestic_responses_unsupported")
+                return
 
         upstream_request = dict(request_json)
         upstream_model = upstream_model_override or _extract_model_id_for_upstream(request_json, provider)
@@ -1589,6 +1915,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
         upstream_url = responses_url(base_url)
         headers = _build_upstream_headers(provider)
         is_stream = bool(upstream_request.get("stream"))
+        effective_route_explanation = route_explanation
+        if sanitization_warnings:
+            effective_route_explanation = (
+                route_explanation + "; sanitized: " + "; ".join(sanitization_warnings)
+            )
         log_context = _make_request_log_context(
             "responses",
             "POST",
@@ -1596,7 +1927,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             model=str(request_json.get("model") or ""),
             upstream_model=upstream_model,
             stream=is_stream,
-            route_explanation=route_explanation,
+            route_explanation=effective_route_explanation,
         )
 
         try:
@@ -1626,7 +1957,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if is_stream:
             self._forward_stream(upstream_resp, log_context=log_context, log_mode="responses")
         else:
-            self._forward_non_streaming(upstream_resp, log_context=log_context)
+            # Native Responses non-streaming: read, intercept image generation, forward
+            try:
+                resp_body = upstream_resp.read()
+                response_json = json.loads(resp_body.decode("utf-8", errors="replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                _record_request_log(log_context, 502, error_type="upstream_error", error_message=f"Invalid JSON: {e}")
+                _send_error(self, 502, f"Upstream returned invalid JSON: {e}", "upstream_error")
+                return
+            if request_json.get("_cem_image_gen_fallback"):
+                response_json = _intercept_image_generation(response_json, provider, model_id=str(request_json.get("model") or ""))
+            _record_request_log(log_context, 200, response_json=response_json)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(response_json, ensure_ascii=False).encode("utf-8"))
 
     def _handle_responses_anthropic(
         self,
@@ -1806,6 +2151,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
             _send_error(self, 502, f"Anthropic response conversion failed: {e}", "proxy_error")
             return
 
+        if original_request.get("_cem_image_gen_fallback"):
+            provider = log_context.get("provider") if isinstance(log_context, dict) else {}
+            response_json = _intercept_image_generation(response_json, provider, model_id=str(original_request.get("model") or ""))
+
         _record_request_log(log_context, 200, response_json=response_json)
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1912,6 +2261,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
             _record_request_log(log_context, 502, error_type="proxy_error", error_message=f"Response conversion failed: {e}")
             _send_error(self, 502, f"Response conversion failed: {e}", "proxy_error")
             return
+
+        if original_request.get("_cem_image_gen_fallback"):
+            provider = log_context.get("provider") if isinstance(log_context, dict) else {}
+            response_json = _intercept_image_generation(response_json, provider)
 
         _record_request_log(log_context, 200, response_json=response_json)
         self.send_response(200)
@@ -2091,10 +2444,12 @@ class LocalProxyServer:
 
     def start(self) -> bool:
         if self._server is not None:
-            _set_media_approval_reviewer(self.media_approval_reviewer)
-            _set_local_proxy_bearer_token(self.local_proxy_bearer_token)
-            self.port = int(self._server.server_address[1])
-            return True
+            if self._thread is not None and self._thread.is_alive():
+                _set_media_approval_reviewer(self.media_approval_reviewer)
+                _set_local_proxy_bearer_token(self.local_proxy_bearer_token)
+                self.port = int(self._server.server_address[1])
+                return True
+            self.stop()
         # 设置全局 provider store 路径，供 ProxyHandler 使用
         if self.provider_store_path:
             _set_provider_store_path(self.provider_store_path)
@@ -2173,19 +2528,23 @@ class LocalProxyServer:
         return True
 
     def stop(self) -> None:
-        if self._server is not None:
-            server = self._server
-            self._server = None
-            server.shutdown()
-            server.server_close()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
+        server = self._server
+        thread = self._thread
+        self._server = None
+        self._thread = None
+        if server is not None:
+            try:
+                if thread is not None and thread.is_alive():
+                    server.shutdown()
+            finally:
+                server.server_close()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=5)
         _set_media_approval_reviewer(None)
         _set_local_proxy_bearer_token("")
 
     def is_running(self) -> bool:
-        return self._server is not None
+        return self._server is not None and self._thread is not None and self._thread.is_alive()
 
     def status(self) -> Dict[str, Any]:
         bound_port = int(self._server.server_address[1]) if self._server is not None else self.port
@@ -2206,6 +2565,10 @@ class LocalProxyServer:
             "request_log_path": str(effective_log_path) if effective_log_path is not None else "",
             "request_log_retention_days": effective_retention_days,
             "request_log_max_mb": effective_max_mb,
+            "debug_log_enabled": _debug_mode_enabled,
+            "debug_log_path": str(_debug_log_path) if _debug_log_path is not None else "",
+            "debug_log_retention_days": _debug_log_retention_days,
+            "debug_log_max_mb": round(_debug_log_max_bytes / 1024 / 1024, 3),
             "upstream_timeout_seconds": _upstream_timeout_seconds,
             "retry_attempts": _upstream_retry_attempts,
             "retry_backoff_ms": _upstream_retry_backoff_ms,

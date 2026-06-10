@@ -1,13 +1,16 @@
 """
-Source-backed media adapter previews.
+Source-backed media adapter previews and live image-generation backend.
 
-This module intentionally does not submit vendor media requests yet. It records
-the adapter contract we can verify from official docs and returns dry-run
-previews so the proxy can block adapter-required providers with useful details
-instead of guessing payload/response conversion.
+Preview functions (build_media_adapter_preview*) remain metadata-only.
+Live execution (execute_image_generation*) performs actual network calls
+for the image-generation fallback pipeline.
 """
 from __future__ import annotations
 
+import base64
+import json
+import urllib.error
+import urllib.request
 from typing import Any, Dict, List, Optional
 
 
@@ -254,3 +257,191 @@ def _unsupported_kind_preview(adapter_id: str, media_kind: str, operation: str, 
         "source_status": "unsupported",
         "blockers": [f"{adapter_id} {media_kind} {operation} is not enabled until official media docs are verified."],
     }
+
+
+# ─────────────── Live Image Generation Backend ───────────────
+
+
+def execute_image_generation(
+    provider: Dict[str, Any],
+    prompt: str,
+    size: str = "",
+    quality: str = "",
+    n: int = 1,
+    upstream_model_id: str = "",
+) -> Dict[str, Any]:
+    """Unified image generation backend.
+
+    Returns a dict with either:
+        {"success": True, "data": [{"url": ..., "b64_json": ...}]}
+    or:
+        {"success": False, "error": "..."}
+    """
+    # 若指定了 upstream_model_id，临时覆盖 provider 的 model 字段
+    if upstream_model_id:
+        provider = dict(provider)
+        provider["model"] = upstream_model_id
+    adapter_id = resolve_media_adapter_id(provider)
+    if adapter_id == ADAPTER_ALIBABA_BAILIAN:
+        return _call_alibaba_bailian_image_generation(provider, prompt, size, n)
+    if adapter_id == ADAPTER_VOLCENGINE_ARK:
+        return _call_volcengine_ark_image_generation(provider, prompt, size, n)
+    api_format = str(provider.get("api_format") or "")
+    if api_format in ("openai_images", "openai_chat", "openai_responses", "custom"):
+        return _call_openai_compatible_image_generation(provider, prompt, size, quality, n)
+    return {"success": False, "error": f"No image generation adapter available for provider format '{api_format}'."}
+
+
+def _provider_base_url(provider: Dict[str, Any]) -> str:
+    return str(provider.get("base_url") or "").rstrip("/")
+
+
+def _provider_api_key(provider: Dict[str, Any]) -> str:
+    return str(provider.get("api_key") or "")
+
+
+def _provider_headers(provider: Dict[str, Any]) -> Dict[str, str]:
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    raw_headers = provider.get("headers")
+    if isinstance(raw_headers, dict):
+        for key, value in raw_headers.items():
+            headers[str(key)] = str(value)
+    api_key = _provider_api_key(provider)
+    auth_mode = str(provider.get("auth_mode") or "provider_api_key")
+    if auth_mode != "no_auth" and api_key and not any(
+        k.lower() == "authorization" for k in headers
+    ):
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def _post_json(url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+
+def _call_openai_compatible_image_generation(
+    provider: Dict[str, Any],
+    prompt: str,
+    size: str,
+    quality: str,
+    n: int,
+) -> Dict[str, Any]:
+    base_url = _provider_base_url(provider)
+    if not base_url:
+        return {"success": False, "error": "Provider has no base_url configured."}
+    url = f"{base_url}/images/generations"
+    headers = _provider_headers(provider)
+    payload: Dict[str, Any] = {"model": provider.get("model", ""), "prompt": prompt}
+    if size:
+        payload["size"] = size
+    if quality:
+        payload["quality"] = quality
+    if n > 0:
+        payload["n"] = n
+    try:
+        resp = _post_json(url, headers, payload)
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
+        return {"success": False, "error": f"Image generation request failed: {exc}"}
+    data = resp.get("data") if isinstance(resp.get("data"), list) else []
+    normalized: List[Dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        entry: Dict[str, str] = {}
+        if item.get("url"):
+            entry["url"] = str(item["url"])
+        if item.get("b64_json"):
+            entry["b64_json"] = str(item["b64_json"])
+        normalized.append(entry)
+    if not normalized:
+        return {"success": False, "error": "Image generation returned no image data."}
+    return {"success": True, "data": normalized}
+
+
+def _call_alibaba_bailian_image_generation(
+    provider: Dict[str, Any],
+    prompt: str,
+    size: str,
+    n: int,
+) -> Dict[str, Any]:
+    base_url = _provider_base_url(provider)
+    if not base_url:
+        return {"success": False, "error": "Provider has no base_url configured."}
+    url = f"{base_url}/api/v1/services/aigc/multimodal-generation/generation"
+    headers = _provider_headers(provider)
+    payload: Dict[str, Any] = {
+        "model": provider.get("model", "wanx-v1"),
+        "input": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"text": prompt}],
+                }
+            ]
+        },
+        "parameters": {},
+    }
+    if size:
+        payload["parameters"]["size"] = size
+    if n > 0:
+        payload["parameters"]["n"] = n
+    try:
+        resp = _post_json(url, headers, payload)
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
+        return {"success": False, "error": f"Alibaba image generation request failed: {exc}"}
+    output = resp.get("output") if isinstance(resp.get("output"), dict) else {}
+    choices = output.get("choices") if isinstance(output.get("choices"), list) else []
+    normalized: List[Dict[str, str]] = []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        content = message.get("content") if isinstance(message.get("content"), list) else []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            image_b64 = part.get("image")
+            if image_b64:
+                normalized.append({"b64_json": str(image_b64)})
+    if not normalized:
+        return {"success": False, "error": "Alibaba image generation returned no image data."}
+    return {"success": True, "data": normalized}
+
+
+def _call_volcengine_ark_image_generation(
+    provider: Dict[str, Any],
+    prompt: str,
+    size: str,
+    n: int,
+) -> Dict[str, Any]:
+    base_url = _provider_base_url(provider)
+    if not base_url:
+        return {"success": False, "error": "Provider has no base_url configured."}
+    url = f"{base_url}/images/generations"
+    headers = _provider_headers(provider)
+    payload: Dict[str, Any] = {"model": provider.get("model", ""), "prompt": prompt}
+    if size:
+        payload["size"] = size
+    if n > 0:
+        payload["n"] = n
+    try:
+        resp = _post_json(url, headers, payload)
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
+        return {"success": False, "error": f"Volcengine image generation request failed: {exc}"}
+    data = resp.get("data") if isinstance(resp.get("data"), list) else []
+    normalized: List[Dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        entry: Dict[str, str] = {}
+        if item.get("url"):
+            entry["url"] = str(item["url"])
+        if item.get("b64_json"):
+            entry["b64_json"] = str(item["b64_json"])
+        normalized.append(entry)
+    if not normalized:
+        return {"success": False, "error": "Volcengine image generation returned no image data."}
+    return {"success": True, "data": normalized}

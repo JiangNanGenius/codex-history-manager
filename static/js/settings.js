@@ -411,6 +411,9 @@ function fillSettingsWizardDefaults() {
         'setting-request-log-path': 'request_log_path',
         'setting-request-log-retention-days': 'request_log_retention_days',
         'setting-request-log-max-mb': 'request_log_max_mb',
+        'setting-debug-log-path': 'debug_log_path',
+        'setting-debug-log-retention-days': 'debug_log_retention_days',
+        'setting-debug-log-max-mb': 'debug_log_max_mb',
         'setting-proxy-upstream-timeout': 'proxy_upstream_timeout_seconds',
         'setting-proxy-retry-attempts': 'proxy_retry_attempts',
         'setting-proxy-retry-backoff-ms': 'proxy_retry_backoff_ms',
@@ -488,6 +491,9 @@ function populateSettingsForm(data) {
         'setting-request-log-path': 'request_log_path',
         'setting-request-log-retention-days': 'request_log_retention_days',
         'setting-request-log-max-mb': 'request_log_max_mb',
+        'setting-debug-log-path': 'debug_log_path',
+        'setting-debug-log-retention-days': 'debug_log_retention_days',
+        'setting-debug-log-max-mb': 'debug_log_max_mb',
         'setting-close-button-action': 'close_button_action',
         'setting-desktop-launch-action': 'desktop_launch_action',
         'setting-desktop-monitor-opacity': 'desktop_monitor_opacity',
@@ -529,6 +535,7 @@ function populateSettingsForm(data) {
         'setting-desktop-monitor-enabled': 'desktop_monitor_enabled',
         'setting-update-check-enabled': 'update_check_enabled',
         'setting-update-include-prerelease': 'update_include_prerelease',
+        'setting-debug-mode': 'debug_mode',
         'setting-plugin-unlock-enabled': 'plugin_unlock_enabled',
         'setting-codex-goals-enabled': 'codex_goals_enabled',
         'setting-codex-sandbox-auto-repair-enabled': 'codex_sandbox_auto_repair_enabled',
@@ -568,6 +575,38 @@ function renderSecretRevealPasswordStatus(data = latestSettings) {
     const configured = Boolean(data && data.secret_reveal_password_configured);
     el.textContent = configured ? t('secretRevealPasswordConfigured') : t('secretRevealPasswordNotConfigured');
     el.className = configured ? 'text-xs text-emerald-300 mt-1' : 'text-xs text-dark-500 mt-1';
+}
+
+async function loadDebugLogs() {
+    const output = document.getElementById('debug-logs-output');
+    if (!output) return;
+    output.classList.remove('hidden');
+    output.textContent = t('loading');
+    try {
+        const data = await api('/api/debug/logs');
+        const logs = Array.isArray(data.logs) ? data.logs : [];
+        output.textContent = logs.length
+            ? JSON.stringify(logs, null, 2)
+            : t('debugLogsEmpty');
+        showToast(t('debugLogsLoaded'), 'success');
+    } catch (err) {
+        output.textContent = t('debugLogsFailed') + err.message;
+        showToast(t('debugLogsFailed') + err.message, 'error');
+    }
+}
+
+async function clearDebugLogs() {
+    const output = document.getElementById('debug-logs-output');
+    try {
+        await api('/api/debug/logs/clear', { method: 'POST' });
+        if (output) {
+            output.classList.remove('hidden');
+            output.textContent = t('debugLogsEmpty');
+        }
+        showToast(t('debugLogsCleared'), 'success');
+    } catch (err) {
+        showToast(t('debugLogsFailed') + err.message, 'error');
+    }
 }
 
 async function loadCurrencySettings() {
@@ -1026,6 +1065,10 @@ async function saveSettings() {
         request_log_path: document.getElementById('setting-request-log-path')?.value || '',
         request_log_retention_days: parseInt(document.getElementById('setting-request-log-retention-days')?.value, 10) || 30,
         request_log_max_mb: parseFloat(document.getElementById('setting-request-log-max-mb')?.value) || 50,
+        debug_mode: document.getElementById('setting-debug-mode')?.checked || false,
+        debug_log_path: document.getElementById('setting-debug-log-path')?.value || '',
+        debug_log_retention_days: parseInt(document.getElementById('setting-debug-log-retention-days')?.value, 10) || 7,
+        debug_log_max_mb: parseFloat(document.getElementById('setting-debug-log-max-mb')?.value) || 10,
         close_button_action: document.getElementById('setting-close-button-action')?.value || 'ask',
         desktop_launch_action: document.getElementById('setting-desktop-launch-action')?.value || 'show_window',
         desktop_monitor_enabled: document.getElementById('setting-desktop-monitor-enabled')?.checked ?? true,
@@ -1261,6 +1304,7 @@ async function loadStorageInfo() {
             [t('tempDir'), data.temp_dir],
             [t('diagnosticsDir'), data.diagnostics_dir],
             [t('exportsDir'), data.exports_dir],
+            [t('debugLogPath'), data.debug_log_path],
             [t('legacyConfig'), data.legacy_config_exists ? data.legacy_config_file : t('notPresent')],
         ];
         container.innerHTML = rows.map(([label, value]) => `

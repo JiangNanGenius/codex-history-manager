@@ -470,3 +470,161 @@ def _string_set(value: Any) -> Set[str]:
     if not isinstance(value, list):
         return set()
     return {str(item).strip() for item in value if str(item).strip()}
+
+
+def sanitize_domestic_responses_request(
+    provider: Dict[str, Any],
+    request_json: Dict[str, Any],
+) -> tuple[Dict[str, Any], List[str]]:
+    """Remove unsupported tools/input items so the request can still be forwarded.
+
+    Returns a tuple of (sanitized_request, warnings).  When the provider has no
+    domestic Responses profile the request is returned unchanged.
+    """
+    profile = resolve_domestic_responses_profile(provider)
+    if not profile:
+        return dict(request_json), []
+
+    sanitized = dict(request_json)
+    warnings: List[str] = []
+
+    # ---- tools ---------------------------------------------------------------
+    tools = sanitized.get("tools")
+    image_generation_replaced = False
+    if isinstance(tools, list):
+        allowed = _string_set(profile.get("allowed_tool_types"))
+        blocked = _string_set(profile.get("blocking_tool_types"))
+        kept_tools: List[Dict[str, Any]] = []
+        removed_tool_types: List[str] = []
+        for tool in tools:
+            if not isinstance(tool, dict):
+                kept_tools.append(tool)
+                continue
+            tool_type = str(tool.get("type") or "").strip()
+            if not tool_type:
+                kept_tools.append(tool)
+                continue
+            if tool_type in blocked or (allowed and tool_type not in allowed):
+                # image_generation fallback: replace with generate_image function tool
+                # instead of silently dropping it.
+                if tool_type == "image_generation":
+                    kept_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": "generate_image",
+                            "description": (
+                                "Generate an image based on a text prompt. "
+                                "Call this when the user asks to create, draw, or generate an image."
+                            ),
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "prompt": {
+                                        "type": "string",
+                                        "description": "Detailed description of the image to generate",
+                                    },
+                                    "size": {
+                                        "type": "string",
+                                        "enum": ["1024x1024", "1024x1536", "1536x1024", "512x512"],
+                                        "description": "Image dimensions (optional)",
+                                    },
+                                    "quality": {
+                                        "type": "string",
+                                        "enum": ["low", "medium", "high"],
+                                        "description": "Image quality (optional)",
+                                    },
+                                    "n": {
+                                        "type": "integer",
+                                        "description": "Number of images to generate (optional, default 1)",
+                                    },
+                                },
+                                "required": ["prompt"],
+                            },
+                        },
+                    })
+                    image_generation_replaced = True
+                    warnings.append("replaced image_generation with generate_image function tool")
+                    continue
+                removed_tool_types.append(tool_type)
+                continue
+            kept_tools.append(tool)
+        if removed_tool_types:
+            sanitized["tools"] = kept_tools
+            warnings.append(
+                "removed unsupported tools: " + ", ".join(sorted(set(removed_tool_types)))
+            )
+        elif image_generation_replaced:
+            sanitized["tools"] = kept_tools
+
+    # ---- image_generation fallback hint --------------------------------------
+    if image_generation_replaced:
+        sanitized.setdefault("_cem_image_gen_fallback", True)
+        input_value = sanitized.get("input")
+        hint = {
+            "type": "message",
+            "role": "system",
+            "content": (
+                "If the user asks to generate, create, or draw an image, "
+                "use the generate_image function with a detailed prompt."
+            ),
+        }
+        if isinstance(input_value, list):
+            sanitized["input"] = [hint] + list(input_value)
+        else:
+            sanitized["input"] = [hint, {"type": "message", "role": "user", "content": str(input_value or "")}]
+
+    # ---- input items ---------------------------------------------------------
+    input_value = sanitized.get("input")
+    if isinstance(input_value, list):
+        blocked_items = _string_set(profile.get("blocking_input_item_types"))
+        blocked_content = _string_set(profile.get("blocking_input_content_types"))
+        allowed_content = _string_set(profile.get("allowed_input_content_types"))
+        kept_input: List[Dict[str, Any]] = []
+        removed_item_types: List[str] = []
+        removed_content_types: List[str] = []
+        for item in input_value:
+            if not isinstance(item, dict):
+                kept_input.append(item)
+                continue
+            item_type = str(item.get("type") or "").strip()
+            if item_type in blocked_items:
+                removed_item_types.append(item_type)
+                continue
+            content = item.get("content")
+            if isinstance(content, list):
+                kept_content: List[Dict[str, Any]] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        kept_content.append(part)
+                        continue
+                    part_type = str(part.get("type") or "").strip()
+                    if part_type in blocked_content or (
+                        allowed_content and part_type not in allowed_content
+                    ):
+                        removed_content_types.append(part_type)
+                        continue
+                    kept_content.append(part)
+                if kept_content:
+                    new_item = dict(item)
+                    new_item["content"] = kept_content
+                    kept_input.append(new_item)
+                else:
+                    # All content parts removed – drop the whole item.
+                    removed_item_types.append(item_type or "message")
+                    continue
+            else:
+                kept_input.append(item)
+        if removed_item_types or removed_content_types:
+            sanitized["input"] = kept_input
+            if removed_item_types:
+                warnings.append(
+                    "removed unsupported input items: "
+                    + ", ".join(sorted(set(removed_item_types)))
+                )
+            if removed_content_types:
+                warnings.append(
+                    "removed unsupported content types: "
+                    + ", ".join(sorted(set(removed_content_types)))
+                )
+
+    return sanitized, warnings

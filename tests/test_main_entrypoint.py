@@ -1,7 +1,7 @@
 import unittest
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import webview
 
@@ -68,6 +68,15 @@ class MainEntrypointTest(unittest.TestCase):
             self.assertTrue(main._existing_instance_responds(main.DESKTOP_LAUNCH_ACTION_START_CODEX))
 
         start_request.assert_called_once_with(51234)
+
+    def test_desktop_backend_port_candidates_drop_dead_pid_state(self):
+        state_path = MagicMock()
+        state_path.exists.return_value = True
+        state_path.read_text.return_value = '{"port": 51239, "pid": 999999}'
+        with patch.object(main, "_desktop_backend_state_path", return_value=state_path), \
+                patch.object(main, "_pid_is_running", return_value=False):
+            self.assertEqual(main._desktop_backend_port_candidates(), [main.DEFAULT_PORT])
+        state_path.unlink.assert_called_once()
 
     def test_monitor_window_uses_stable_non_white_background_and_auto_shows(self):
         original_windows = list(webview.windows)

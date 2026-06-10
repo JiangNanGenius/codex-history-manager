@@ -81,7 +81,7 @@ Codex Enhance Manager 做的就是这件事：尽量不破坏 Codex 原生体验
 - 写入 Codex 配置时只使用 `wire_api = "responses"`，并把 base URL 指向本地代理的 `/v1`。
 - 原生 Responses 供应商会直通到上游 `/responses`，保留 Codex 的请求形态。
 - 只有 Chat-only 供应商才由本地代理做 Responses 到 Chat Completions 的适配。
-- 纯原生代理供应商不会被强行接到 `/images/generations`；OpenAI 兼容媒体桥是单独的供应商媒体设置。
+- **图像路由独立化**：直接 `POST /v1/images/generations` 请求以及国内代理（百炼、火山等）的 LLM-mediated 图像生成，都通过 AMR `image_candidates` 自动路由到最佳图像 provider；纯原生代理（如新思路）直接透传，代理层不干预。
 
 参考：[openai/codex `responses.rs`](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/endpoint/responses.rs) 和 [OpenAI: Unrolling the Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/)。
 

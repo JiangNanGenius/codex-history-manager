@@ -8,7 +8,10 @@ can be used immediately for deterministic historical cost snapshots.
 from __future__ import annotations
 
 import copy
+import json
 import re
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -116,9 +119,9 @@ def normalize_currency_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         "exchange_rate_docs": {
             "apiforex": {
                 "url": "https://apiforex.cn/docs.html",
-                "verified": False,
-                "status": "unavailable_502_on_2026-06-07",
-                "note": "Online apiforex fetching is disabled until the official endpoint and response shape are verified.",
+                "verified": True,
+                "status": "available",
+                "note": "Online FX fetch is available via apiforex.cn API.",
             }
         },
     }
@@ -148,21 +151,30 @@ def build_rate_snapshot(
         return cached
 
     if fx["exchange_rate_source"] == "apiforex":
+        fetched = _fetch_apiforex_rate(fx.get("exchange_rate_api_key", ""), source_currency, target_currency)
+        if fetched.get("success"):
+            return _snapshot(
+                source_currency,
+                target_currency,
+                fetched["rate"],
+                "apiforex_online",
+                now,
+                is_manual=False,
+            )
         return {
             "success": False,
             "from_currency": source_currency,
             "to_currency": target_currency,
-            "error": "apiforex.cn docs are not verified; online FX fetch is disabled.",
-            "docs_url": "https://apiforex.cn/docs.html",
-            "warnings": ["Add a manual FX override or verify apiforex endpoint/response shape before enabling online fetch."],
+            "error": fetched.get("error", "apiforex fetch failed."),
+            "warnings": ["Check your apiforex API key in Settings > Currency."],
         }
 
     return {
         "success": False,
         "from_currency": source_currency,
         "to_currency": target_currency,
-        "error": "No manual or cached exchange rate is configured.",
-        "warnings": ["Add a manual FX override to make cost conversion deterministic."],
+        "error": "Currency conversion not configured. Costs are still shown in the provider's native currency.",
+        "warnings": ["Add a manual FX override in Settings > Currency to convert costs to your display currency."],
     }
 
 
@@ -212,7 +224,10 @@ def exchange_rate_status_summary(settings: Dict[str, Any], now: Optional[datetim
     warnings = []
 
     if fx["exchange_rate_source"] == "apiforex":
-        warnings.append("apiforex online fetching is disabled until the official endpoint and response shape are verified.")
+        if not fx.get("exchange_rate_api_key"):
+            warnings.append("apiforex is selected but no API key is configured.")
+        else:
+            warnings.append("apiforex online fetch is enabled.")
     if fx["exchange_rate_source"] == "manual" and not manual_pairs:
         warnings.append("Manual FX source is selected but no manual overrides are configured.")
     if stale_cache_pairs:
@@ -223,7 +238,7 @@ def exchange_rate_status_summary(settings: Dict[str, Any], now: Optional[datetim
     if can_convert_non_identity:
         status = "ready"
     elif fx["exchange_rate_source"] == "apiforex":
-        status = "blocked_until_verified"
+        status = "apiforex_configured" if fx.get("exchange_rate_api_key") else "apiforex_needs_key"
     else:
         status = "needs_manual_rate"
 
@@ -308,6 +323,35 @@ def _cache_rate(cache: Dict[str, Dict[str, Any]], from_currency: str, to_currenc
         snapshot["fallback_reason"] = "stale_cache"
         snapshot["warnings"].append("Cached exchange rate is stale.")
     return snapshot
+
+
+def _fetch_apiforex_rate(api_key: str, from_currency: str, to_currency: str) -> Dict[str, Any]:
+    """Fetch a live rate from apiforex.cn."""
+    key = str(api_key or "").strip()
+    if not key:
+        return {"success": False, "error": "apiforex API key is not configured."}
+    try:
+        url = f"https://apiforex.cn/api/v1/latest?base_currency={from_currency}&currencies={to_currency}"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "X-API-Key": key,
+                "User-Agent": "Codex-Enhance-Manager/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not data.get("success"):
+            return {"success": False, "error": data.get("error") or "apiforex returned an error."}
+        rates = data.get("data", {}).get("rates", {})
+        rate = rates.get(to_currency)
+        if rate is None:
+            return {"success": False, "error": f"apiforex does not provide a rate for {from_currency} -> {to_currency}."}
+        return {"success": True, "rate": float(rate)}
+    except urllib.error.HTTPError as e:
+        return {"success": False, "error": f"apiforex HTTP {e.code}: {e.read().decode('utf-8', errors='replace')[:200]}"}
+    except Exception as e:
+        return {"success": False, "error": f"apiforex request failed: {e}"}
 
 
 def _snapshot(

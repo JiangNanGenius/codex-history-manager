@@ -602,6 +602,13 @@ def build_injection_script(backend_url: str = "") -> str:
     status.textContent = message;
     status.classList.toggle('cem-error', Boolean(error));
   }};
+  const cemHumanizeError = (err) => {{
+    const msg = String(err && err.message || err || 'unknown error');
+    if (msg.includes('Failed to fetch')) return 'Backend connection failed';
+    if (msg.includes('NetworkError')) return 'Backend connection failed';
+    if (msg.includes('abort')) return 'Request cancelled';
+    return msg;
+  }};
   let cemQuickSettings = null;
   const cemRenderQuickSettings = (data) => {{
     cemQuickSettings = data || cemQuickSettings;
@@ -654,7 +661,7 @@ def build_injection_script(backend_url: str = "") -> str:
       cemSetStatus('Loading...');
       cemLoadQuickSettings()
         .then(() => cemSetStatus('Ready'))
-        .catch((error) => cemSetStatus(error.message || 'Backend unavailable', true));
+        .catch((error) => cemSetStatus(cemHumanizeError(error) || 'Backend unavailable', true));
     }}
   }});
   root.addEventListener('click', (event) => {{
@@ -666,7 +673,7 @@ def build_injection_script(backend_url: str = "") -> str:
       cemPostQuickSettings({{ provider_id: providerId }})
         .then(() => refreshCemBackendStatus())
         .then(() => cemSetStatus('Route updated'))
-        .catch((error) => cemSetStatus(error.message || 'Switch failed', true));
+        .catch((error) => cemSetStatus(cemHumanizeError(error) || 'Switch failed', true));
     }}
   }});
   root.addEventListener('change', (event) => {{
@@ -681,7 +688,7 @@ def build_injection_script(backend_url: str = "") -> str:
       .catch((error) => {{
         input.checked = !input.checked;
         cemRenderQuickSettings(cemQuickSettings);
-        cemSetStatus(error.message || 'Save failed', true);
+        cemSetStatus(cemHumanizeError(error) || 'Save failed', true);
       }});
   }});
   document.documentElement.appendChild(root);
@@ -982,6 +989,13 @@ def build_injection_script(backend_url: str = "") -> str:
     status.textContent = message;
     status.classList.toggle('cem-error', Boolean(error));
   }};
+  const cemHumanizeError = (err) => {{
+    const msg = String(err && err.message || err || 'unknown error');
+    if (msg.includes('Failed to fetch')) return 'Backend connection failed';
+    if (msg.includes('NetworkError')) return 'Backend connection failed';
+    if (msg.includes('abort')) return 'Request cancelled';
+    return msg;
+  }};
   const cemFormatNumber = (value) => {{
     const number = Number(value || 0);
     if (!Number.isFinite(number) || number <= 0) return '--';
@@ -1131,7 +1145,7 @@ def build_injection_script(backend_url: str = "") -> str:
       cemSetStatus('Loading...');
       cemLoadQuickSettings()
         .then(() => cemSetStatus('Ready'))
-        .catch((error) => cemSetStatus(error.message || 'Backend unavailable', true));
+        .catch((error) => cemSetStatus(cemHumanizeError(error) || 'Backend unavailable', true));
     }}
   }});
   root.addEventListener('click', (event) => {{
@@ -1142,7 +1156,7 @@ def build_injection_script(backend_url: str = "") -> str:
       cemSetStatus('Refreshing...');
       cemLoadQuickSettings()
         .then(() => cemSetStatus('Ready'))
-        .catch((error) => cemSetStatus(error.message || 'Refresh failed', true));
+        .catch((error) => cemSetStatus(cemHumanizeError(error) || 'Refresh failed', true));
       return;
     }}
     const providerButton = event.target.closest?.('[data-cem-provider-id]');

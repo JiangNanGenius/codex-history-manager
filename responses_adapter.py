@@ -125,6 +125,16 @@ def responses_to_chat_completions(body: Dict[str, Any]) -> Dict[str, Any]:
         if text:
             messages.append({"role": "system", "content": text})
 
+    # image_generation fallback hint -> system message
+    if _has_image_generation_tool(body.get("tools")):
+        messages.append({
+            "role": "system",
+            "content": (
+                "If the user asks to generate, create, or draw an image, "
+                "use the generate_image function with a detailed prompt."
+            ),
+        })
+
     # input -> messages
     if "input" in body:
         _append_responses_input(body["input"], messages)
@@ -183,6 +193,15 @@ def responses_to_chat_completions(body: Dict[str, Any]) -> Dict[str, Any]:
             result[key] = body[key]
 
     return result
+
+
+def _has_image_generation_tool(tools: Any) -> bool:
+    if not isinstance(tools, list):
+        return False
+    for tool in tools:
+        if isinstance(tool, dict) and str(tool.get("type") or "") == "image_generation":
+            return True
+    return False
 
 
 def _instruction_text(instructions: Any) -> str:
@@ -478,6 +497,43 @@ def _responses_tools_to_chat_tools(tools: Any, context: Dict[str, Any]) -> List[
                     "name": tool.get("name", ""),
                     "description": tool.get("description", ""),
                     "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            })
+        elif tool_type == "image_generation":
+            # Fallback: 将 image_generation 内置 tool 替换为 function tool，
+            # 让不支持 image_generation 的 upstream provider 仍能通过 function call 生成图像
+            result.append({
+                "type": "function",
+                "function": {
+                    "name": "generate_image",
+                    "description": (
+                        "Generate an image based on a text prompt. "
+                        "Call this when the user asks to create, draw, or generate an image."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {
+                                "type": "string",
+                                "description": "Detailed description of the image to generate",
+                            },
+                            "size": {
+                                "type": "string",
+                                "enum": ["1024x1024", "1024x1536", "1536x1024", "512x512"],
+                                "description": "Image dimensions (optional)",
+                            },
+                            "quality": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high"],
+                                "description": "Image quality (optional)",
+                            },
+                            "n": {
+                                "type": "integer",
+                                "description": "Number of images to generate (optional, default 1)",
+                            },
+                        },
+                        "required": ["prompt"],
+                    },
                 },
             })
     return result

@@ -77,18 +77,18 @@ class CurrencyTest(unittest.TestCase):
         self.assertEqual(update["exchange_rate_manual_overrides"], {"USD:CNY": 7.2})
         self.assertEqual(update["exchange_rate_ttl_hours"], 12)
 
-    def test_apiforex_source_is_blocked_until_docs_verified(self):
+    def test_apiforex_source_with_key_attempts_fetch(self):
         settings = {
             "exchange_rate_source": "apiforex",
-            "exchange_rate_api_key": "secret-key",
+            "exchange_rate_api_key": "invalid-key-for-unit-test",
             "exchange_rate_manual_overrides": {},
         }
 
         result = build_rate_snapshot(settings, "USD", "AUD")
 
         self.assertFalse(result["success"])
-        self.assertIn("not verified", result["error"])
-        self.assertIn("https://apiforex.cn/docs.html", result["docs_url"])
+        # With an invalid key, apiforex fetch should fail gracefully
+        self.assertIn("apiforex", result.get("error", "").lower())
 
     def test_stale_cache_rate_is_used_as_explicit_fallback(self):
         settings = {
@@ -134,10 +134,9 @@ class CurrencyTest(unittest.TestCase):
         self.assertEqual(summary["display_currency"], "AUD")
         self.assertEqual(summary["status"], "ready")
         self.assertTrue(summary["api_key_configured"])
-        self.assertFalse(summary["online_fetch_enabled"])
+        self.assertTrue(summary["online_fetch_enabled"])
         self.assertEqual(summary["manual_pairs"], ["USD:AUD"])
         self.assertEqual(summary["stale_cache_pairs"], ["CNY:AUD"])
-        self.assertIn("apiforex online fetching is disabled", " ".join(summary["warnings"]))
         self.assertNotIn("secret-key", str(summary))
 
 

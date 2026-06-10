@@ -75,6 +75,9 @@ from proxy_server import (
     _provider_alias_map,
     _provider_alias_patterns,
     _route_api_format,
+    _set_debug_mode,
+    get_debug_logs,
+    clear_debug_logs,
 )
 from domestic_responses import build_domestic_responses_probe_preview
 from diagnostics import DiagnosticsCollector
@@ -1293,6 +1296,12 @@ def create_app() -> Flask:
         proxy_server.retry_attempts = config.get("proxy_retry_attempts", 0)
         proxy_server.retry_backoff_ms = config.get("proxy_retry_backoff_ms", 250)
         proxy_server.local_proxy_bearer_token = config.get("local_proxy_bearer_token", "")
+        _set_debug_mode(
+            bool(config.get("debug_mode", False)),
+            path=config.get("debug_log_path", ""),
+            retention_days=config.get("debug_log_retention_days", 7),
+            max_mb=config.get("debug_log_max_mb", 10),
+        )
 
     def _require_codex_mutation_confirmation(body: Dict, action: str):
         """Require a typed confirmation for endpoints that mutate Codex state."""
@@ -1566,6 +1575,38 @@ def create_app() -> Flask:
             return "third_party"
         return ""
 
+    def _history_start_mode_family(start_mode: str) -> str:
+        normalized = str(start_mode or "").strip()
+        if normalized == START_MODE_OFFICIAL_DIRECT:
+            return "official"
+        if normalized in {START_MODE_PROXY_INJECTION, START_MODE_PRESERVE_LOGIN_PROXY}:
+            return "third_party"
+        return ""
+
+    def _history_sync_transition_decision(start_mode: str, target_provider: str) -> Dict[str, Any]:
+        target_family = _history_start_mode_family(start_mode) or _history_provider_family(target_provider)
+        previous_start_mode = str(config.get("codex_last_start_mode", "") or "").strip()
+        previous_family = _history_start_mode_family(previous_start_mode)
+        decision = {
+            "skip": False,
+            "reason": "",
+            "message": "",
+            "previous_start_mode": previous_start_mode,
+            "previous_family": previous_family,
+            "target_start_mode": str(start_mode or ""),
+            "target_family": target_family,
+            "has_transition_context": bool(previous_family and target_family),
+        }
+        if not decision["has_transition_context"]:
+            return decision
+        if previous_family == target_family:
+            decision.update({
+                "skip": True,
+                "reason": "history_sync_same_provider_family",
+                "message": "上次启动模式与本次同属官方或第三方，已跳过历史迁移。",
+            })
+        return decision
+
     def _history_sync_skip_decision(target_provider: str) -> Dict[str, Any]:
         target_family = _history_provider_family(target_provider)
         decision = {
@@ -1682,7 +1723,7 @@ def create_app() -> Flask:
             start_mode=start_mode,
         )
         previous_signature = str(config.get("history_sync_signature", "") or "")
-        if not force_history_sync and not backup_before and previous_signature == sync_signature:
+        if not force_history_sync and previous_signature == sync_signature:
             sync_payload = _history_sync_skip_payload(sync_signature, sync_signature_payload)
             sync_payload["target_provider"] = target_provider
             sync_payload["target_model"] = target_model
@@ -1695,19 +1736,20 @@ def create_app() -> Flask:
             )
             return sync_payload, 200
 
-        skip_decision = _history_sync_skip_decision(target_provider)
-        if not force_history_sync and not backup_before and skip_decision.get("skip"):
+        transition_decision = _history_sync_transition_decision(start_mode, target_provider)
+        if not force_history_sync and transition_decision.get("skip"):
             sync_payload = _history_sync_skip_payload(
                 sync_signature,
                 sync_signature_payload,
-                reason=skip_decision.get("reason") or "history_sync_same_provider_family",
-                message=skip_decision.get("message") or "当前历史记录与启动目标同类，已跳过历史迁移。",
+                reason=transition_decision.get("reason") or "history_sync_same_provider_family",
+                message=transition_decision.get("message") or "上次启动模式与本次同类，已跳过历史迁移。",
             )
             sync_payload["target_provider"] = target_provider
             sync_payload["target_model"] = target_model
-            sync_payload["target_family"] = skip_decision.get("target_family", "")
-            sync_payload["current_family"] = skip_decision.get("current_family", "")
-            sync_payload["provider_distribution"] = skip_decision.get("distribution", [])
+            sync_payload["target_family"] = transition_decision.get("target_family", "")
+            sync_payload["current_family"] = transition_decision.get("previous_family", "")
+            sync_payload["previous_start_mode"] = transition_decision.get("previous_start_mode", "")
+            sync_payload["target_start_mode"] = transition_decision.get("target_start_mode", "")
             _persist_history_sync_signature(sync_signature, target_provider, target_model, sync_payload)
             _set_codex_start_progress(
                 job_id,
@@ -1717,6 +1759,30 @@ def create_app() -> Flask:
                 sync=sync_payload,
             )
             return sync_payload, 200
+
+        if not force_history_sync and not transition_decision.get("has_transition_context"):
+            skip_decision = _history_sync_skip_decision(target_provider)
+            if skip_decision.get("skip"):
+                sync_payload = _history_sync_skip_payload(
+                    sync_signature,
+                    sync_signature_payload,
+                    reason=skip_decision.get("reason") or "history_sync_same_provider_family",
+                    message=skip_decision.get("message") or "当前历史记录与启动目标同类，已跳过历史迁移。",
+                )
+                sync_payload["target_provider"] = target_provider
+                sync_payload["target_model"] = target_model
+                sync_payload["target_family"] = skip_decision.get("target_family", "")
+                sync_payload["current_family"] = skip_decision.get("current_family", "")
+                sync_payload["provider_distribution"] = skip_decision.get("distribution", [])
+                _persist_history_sync_signature(sync_signature, target_provider, target_model, sync_payload)
+                _set_codex_start_progress(
+                    job_id,
+                    "history_sync_skipped",
+                    68,
+                    sync_payload["message"],
+                    sync=sync_payload,
+                )
+                return sync_payload, 200
 
         _set_codex_start_progress(job_id, "history_sync", progress, changed_message)
         heartbeat_stop = threading.Event()
@@ -1872,8 +1938,50 @@ def create_app() -> Flask:
         official_mode = start_mode == START_MODE_OFFICIAL_DIRECT
         sandbox_repair_payload = {"success": True, "skipped": True, "reason": "disabled"}
         restart_payload = {"success": True, "skipped": True, "reason": "not_required"}
+        preserve_official_auth = bool(body.get(
+            "preserve_official_auth",
+            start_mode == START_MODE_PRESERVE_LOGIN_PROXY
+            or login_defaults["default_preserve_official_auth"],
+        ))
+        use_cpp = False if official_mode else body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
+        injection_settings = _resolve_codex_injection_settings(
+            config,
+            body,
+            use_codex_plus_plus=bool(use_cpp),
+            official_mode=official_mode,
+            persist=True,
+            avoid_occupied_port=True,
+        )
+        _set_codex_start_progress(job_id, "codex_process_check", 8, "正在检查是否存在运行中的 Codex 进程...")
+        try:
+            running, pids = is_codex_running(timeout=1)
+        except Exception:
+            running, pids = False, []
+        if running:
+            _set_codex_start_progress(
+                job_id,
+                "restarting_codex",
+                10,
+                "检测到 Codex 正在运行，正在关闭后重新启动，避免同步锁库或增强注入失败。",
+                pids=pids,
+            )
+            kill_ok, kill_msg = kill_codex(timeout=8)
+            restart_payload = {
+                "success": bool(kill_ok),
+                "skipped": False,
+                "pids": pids,
+                "message": kill_msg,
+            }
+            if not kill_ok:
+                result = {
+                    "success": False,
+                    "error": "Codex 正在运行，但自动关闭失败；已取消本次启动以避免写坏配置或注入失败。",
+                    "restart": restart_payload,
+                }
+                _set_codex_start_progress(job_id, "restart_failed", 100, result["error"], result=result)
+                return result
         if _coerce_bool(config.get("codex_sandbox_auto_repair_enabled", False), False):
-            _set_codex_start_progress(job_id, "sandbox_repair", 8, "正在修复 Codex sandbox/approval 配置...")
+            _set_codex_start_progress(job_id, "sandbox_repair", 11, "正在修复 Codex sandbox/approval 配置...")
             sandbox_repair_payload = repair_codex_sandbox_permissions(mgr)
             if not sandbox_repair_payload.get("success"):
                 result = {
@@ -1883,11 +1991,6 @@ def create_app() -> Flask:
                 }
                 _set_codex_start_progress(job_id, "sandbox_repair_failed", 100, result["error"], result=result)
                 return result
-        preserve_official_auth = bool(body.get(
-            "preserve_official_auth",
-            start_mode == START_MODE_PRESERVE_LOGIN_PROXY
-            or login_defaults["default_preserve_official_auth"],
-        ))
         official_payload = {}
         if official_mode:
             _set_codex_start_progress(job_id, "official_config", 25, "正在切回官方登录直连配置...")
@@ -1916,7 +2019,6 @@ def create_app() -> Flask:
                 _set_codex_start_progress(job_id, "sync_failed", 100, "历史同步失败，已取消启动。", result=result, sync=sync_payload)
                 return result
         else:
-            use_cpp = body.get("use_codex_plus_plus", config.get("use_codex_plus_plus", False))
             _set_codex_start_progress(job_id, "proxy_start", 12, "正在启动本地代理并自动退避端口...")
             proxy_payload = _ensure_local_proxy_started()
             if not proxy_payload.get("success"):
@@ -1961,43 +2063,7 @@ def create_app() -> Flask:
                 _set_codex_start_progress(job_id, "sync_failed", 100, "历史同步失败，已取消启动。", result=result, sync=sync_payload)
                 return result
 
-        injection_settings = _resolve_codex_injection_settings(
-            config,
-            body,
-            use_codex_plus_plus=bool(use_cpp),
-            official_mode=official_mode,
-            persist=True,
-            avoid_occupied_port=True,
-        )
-        _set_codex_start_progress(job_id, "prelaunch", 74, "正在确认 Codex 进程和增强注入端口...")
-        if injection_settings["enabled"]:
-            try:
-                running, pids = is_codex_running(timeout=1)
-            except Exception:
-                running, pids = False, []
-            if running:
-                _set_codex_start_progress(
-                    job_id,
-                    "restarting_codex",
-                    76,
-                    "检测到 Codex 正在运行，正在重启以确保增强注入能够附加。",
-                    pids=pids,
-                )
-                kill_ok, kill_msg = kill_codex(timeout=8)
-                restart_payload = {
-                    "success": bool(kill_ok),
-                    "skipped": False,
-                    "pids": pids,
-                    "message": kill_msg,
-                }
-                if not kill_ok:
-                    result = {
-                        "success": False,
-                        "error": "Codex 正在运行，但自动重启失败；增强注入无法保证生效。",
-                        "restart": restart_payload,
-                    }
-                    _set_codex_start_progress(job_id, "restart_failed", 100, result["error"], result=result)
-                    return result
+        _set_codex_start_progress(job_id, "prelaunch", 74, "正在准备启动 Codex 与增强注入...")
         _set_codex_start_progress(job_id, "launching", 82, "正在启动 Codex 并确认进程...")
         ok, msg = _start_codex_with_timeout({
             "use_codex_plus_plus": use_cpp,
@@ -2443,6 +2509,10 @@ def create_app() -> Flask:
             target_provider = body.get("target_provider", "")
             target_model = body.get("target_model", "")
 
+            running, _pids = is_codex_running(timeout=1)
+            if running:
+                return jsonify({"error": "Codex 正在运行，请先关闭进程后再同步"}), 409
+
             payload, status = _run_sync_with_backup(
                 backup_mgr,
                 path_config=_sync_paths_from_config(),
@@ -2733,6 +2803,9 @@ def create_app() -> Flask:
                 "request_log_path": settings.get("request_log_path", ""),
                 "request_log_retention_days": settings.get("request_log_retention_days", 30),
                 "request_log_max_mb": settings.get("request_log_max_mb", 50),
+                "debug_log_path": settings.get("debug_log_path", ""),
+                "debug_log_retention_days": settings.get("debug_log_retention_days", 7),
+                "debug_log_max_mb": settings.get("debug_log_max_mb", 10),
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -2878,6 +2951,48 @@ def create_app() -> Flask:
             config.update(update)
             _sync_proxy_request_log_config()
             return jsonify({"success": True, "settings": redact_currency_settings(normalize_currency_settings(config.get_all()))})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/debug/status")
+    def debug_status():
+        try:
+            return jsonify({
+                "debug_mode": bool(config.get("debug_mode", False)),
+                "debug_log_path": config.get("debug_log_path", ""),
+                "debug_log_retention_days": config.get("debug_log_retention_days", 7),
+                "debug_log_max_mb": config.get("debug_log_max_mb", 10),
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/debug/toggle", methods=["POST"])
+    def debug_toggle():
+        try:
+            body = request.get_json(silent=True) or {}
+            enabled = bool(body.get("enabled", not config.get("debug_mode", False)))
+            config.update({"debug_mode": enabled})
+            _sync_proxy_request_log_config()
+            return jsonify({
+                "success": True,
+                "debug_mode": enabled,
+                "debug_log_path": config.get("debug_log_path", ""),
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/debug/logs")
+    def debug_logs():
+        try:
+            return jsonify({"logs": get_debug_logs()})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/debug/logs/clear", methods=["POST"])
+    def debug_logs_clear():
+        try:
+            clear_debug_logs()
+            return jsonify({"success": True})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -3419,8 +3534,10 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/codex-injection/quick-settings", methods=["GET", "POST"])
+    @app.route("/api/codex-injection/quick-settings", methods=["GET", "POST", "OPTIONS"])
     def codex_injection_quick_settings():
+        if request.method == "OPTIONS":
+            return jsonify({"success": True}), 200
         """Small hot-settings surface for the injected Codex quick panel."""
         try:
             if request.method == "POST":
@@ -3728,6 +3845,58 @@ def create_app() -> Flask:
 
     # ─────────────── AMR Registry API ───────────────
 
+    def _amr_provider_model_lookup() -> Dict[str, Dict[str, Dict[str, Any]]]:
+        _refresh_provider_registry_path()
+        payload = _provider_payload(include_secrets=False)
+        lookup: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for provider in payload.get("providers", []):
+            if not isinstance(provider, dict):
+                continue
+            provider_id = str(provider.get("id") or "")
+            if not provider_id:
+                continue
+            models = {}
+            for model in provider.get("models", []):
+                if not isinstance(model, dict):
+                    continue
+                model_id = str(model.get("id") or "")
+                if model_id:
+                    models[model_id] = model
+            lookup[provider_id] = {"provider": provider, "models": models}
+        return lookup
+
+    def _hydrate_amr_candidates_from_providers(data: Dict[str, Any]) -> Dict[str, Any]:
+        hydrated = copy.deepcopy(data or {})
+        lookup = _amr_provider_model_lookup()
+
+        def hydrate_list(key: str) -> None:
+            raw_items = hydrated.get(key)
+            if not isinstance(raw_items, list):
+                return
+            next_items = []
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                candidate = copy.deepcopy(item)
+                provider_id = str(candidate.get("provider_id") or "")
+                model_id = str(candidate.get("model_id") or "")
+                entry = lookup.get(provider_id) or {}
+                provider = entry.get("provider") if isinstance(entry.get("provider"), dict) else {}
+                model = (entry.get("models") or {}).get(model_id) if isinstance(entry.get("models"), dict) else None
+                if isinstance(model, dict):
+                    candidate["context_window"] = _safe_int(model.get("context_window"))
+                    candidate["capabilities"] = merge_provider_model_capabilities(provider, model)
+                    candidate["context_window_source"] = "provider_model"
+                else:
+                    candidate["context_window"] = 0
+                    candidate["context_window_source"] = "unresolved_provider_model"
+                next_items.append(candidate)
+            hydrated[key] = next_items
+
+        hydrate_list("candidates")
+        hydrate_list("image_candidates")
+        return hydrated
+
     @app.route("/api/amr/groups")
     def list_amr_groups():
         """列出所有 rotation groups。"""
@@ -3741,6 +3910,7 @@ def create_app() -> Flask:
         """创建 AMR rotation group。"""
         try:
             data = request.get_json(silent=True) or {}
+            data = _hydrate_amr_candidates_from_providers(data)
             group = amr_registry.create_group(data)
             return jsonify({"success": True, "group": group})
         except ValueError as e:
@@ -3764,6 +3934,7 @@ def create_app() -> Flask:
         """更新 AMR rotation group。"""
         try:
             data = request.get_json(silent=True) or {}
+            data = _hydrate_amr_candidates_from_providers(data)
             group = amr_registry.update_group(group_id, data)
             if not group:
                 return jsonify({"error": "Group not found"}), 404
@@ -3809,10 +3980,14 @@ def create_app() -> Flask:
             if isinstance(capabilities, list):
                 capabilities = set(capabilities)
             context = int(body.get("context", 0))
+            candidate_list = str(body.get("candidate_list") or "candidates").strip()
+            if candidate_list not in ("candidates", "image_candidates"):
+                candidate_list = "candidates"
             decision = amr_registry.route(
                 group_id=group_id,
                 request_capabilities=capabilities,
                 required_context=context,
+                candidate_list=candidate_list,
             )
             return jsonify(decision)
         except ValueError as e:
@@ -4234,8 +4409,10 @@ def create_app() -> Flask:
             "backend_url": _current_backend_url(),
         })
 
-    @app.route("/api/codex-injection/apply", methods=["POST"])
+    @app.route("/api/codex-injection/apply", methods=["POST", "OPTIONS"])
     def codex_injection_apply():
+        if request.method == "OPTIONS":
+            return jsonify({"success": True}), 200
         """Manually retry CDP injection against an already running Codex window."""
         try:
             body = request.get_json(silent=True) or {}
@@ -4814,7 +4991,18 @@ def merge_fetched_provider_models(
     existing_models: list[Dict[str, Any]],
     fetched_models: list[Dict[str, Any]],
 ) -> tuple[list[Dict[str, Any]], int, int]:
-    merged: list[Dict[str, Any]] = [json.loads(json.dumps(model)) for model in existing_models if isinstance(model, dict)]
+    # Deduplicate existing_models by id (keep first occurrence).
+    _seen_ids: set[str] = set()
+    merged: list[Dict[str, Any]] = []
+    for model in existing_models:
+        if not isinstance(model, dict):
+            continue
+        model_id = str(model.get("id") or "").strip()
+        if model_id in _seen_ids:
+            continue
+        if model_id:
+            _seen_ids.add(model_id)
+        merged.append(json.loads(json.dumps(model)))
     index_by_id = {
         str(model.get("id") or "").strip(): idx
         for idx, model in enumerate(merged)
@@ -5341,6 +5529,7 @@ def _run_sync_with_backup(
     target_model: str = "",
     backup_before: bool = False,
 ) -> tuple[Dict, int]:
+    import sqlite3
     path_config = path_config or {}
     preview = full_sync(
         target_provider=target_provider,
@@ -5361,12 +5550,15 @@ def _run_sync_with_backup(
         if not pre_backup.get("success"):
             return {"error": f"同步前数据库备份失败: {pre_backup.get('error', 'unknown')}"}, 500
 
-    stats = full_sync(
-        target_provider=target_provider,
-        target_model=target_model,
-        dry_run=False,
-        **path_config,
-    )
+    try:
+        stats = full_sync(
+            target_provider=target_provider,
+            target_model=target_model,
+            dry_run=False,
+            **path_config,
+        )
+    except sqlite3.OperationalError as e:
+        return {"error": str(e)}, 409
     payload = _sync_stats_to_dict(stats)
     payload["backup_path"] = pre_backup.get("path", "")
     payload["skipped_backup"] = not bool(backup_before)

@@ -130,7 +130,8 @@ async function syncPreview() {
         showSyncResult(data, true);
         showToast(t('previewChanges'), 'info');
     } catch (err) {
-        showToast(t('failedPreviewSync') + err.message, 'error');
+        const msg = err?.response?.error || err.message || String(err);
+        showToast(t('failedPreviewSync') + msg, 'error');
     }
 }
 
@@ -154,7 +155,8 @@ async function syncExecute() {
         showSyncResult(data, false);
         showToast(t('syncCompleted'), 'success');
     } catch (err) {
-        showToast(t('failedExecuteSync') + err.message, 'error');
+        const msg = err?.response?.error || err.message || String(err);
+        showToast(t('failedExecuteSync') + msg, 'error');
     }
 }
 

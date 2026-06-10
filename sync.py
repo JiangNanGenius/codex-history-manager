@@ -665,18 +665,27 @@ def sync_state_database(
         updated = len(to_update)
 
         if to_update and not dry_run:
-            conn.execute("BEGIN IMMEDIATE")
-            assignments = ", ".join(f"{col} = ?" for col in update_cols)
-            values = [target_provider] * len(provider_cols) + [target_model] * len(model_cols)
-            conn.executemany(
-                f"UPDATE threads SET {assignments} WHERE id = ?",
-                ((*values, row_id) for row_id in to_update),
-            )
-            conn.commit()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                assignments = ", ".join(f"{col} = ?" for col in update_cols)
+                values = [target_provider] * len(provider_cols) + [target_model] * len(model_cols)
+                conn.executemany(
+                    f"UPDATE threads SET {assignments} WHERE id = ?",
+                    ((*values, row_id) for row_id in to_update),
+                )
+                conn.commit()
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e).lower():
+                    raise sqlite3.OperationalError("数据库被锁定：Codex 可能正在运行，请先关闭后再同步。") from e
+                raise
 
         return seen, updated
     finally:
         conn.close()
+
+
+_MAX_SYNC_FILE_MB = 50
+_SKIP_SYNC_DIRS = {"node_modules", "__pycache__", ".git", ".venv", "venv", ".env", "env"}
 
 
 def sync_rollout_file(
@@ -684,44 +693,62 @@ def sync_rollout_file(
     target_provider: str,
     target_model: str,
     dry_run: bool = False,
-) -> bool:
+) -> tuple[bool, str]:
     """
     同步单个 jsonl 文件中的所有 session_meta 记录
-    返回是否修改了文件
+    返回 (是否修改了文件, 警告信息)
     """
-    output_lines = []
+    try:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        if size_mb > _MAX_SYNC_FILE_MB:
+            return False, f"跳过超大文件 ({size_mb:.1f} MB): {file_path}"
+    except Exception:
+        pass
+
     changed = False
     saw_session_meta = False
+    tmp_path = ""
     try:
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            for raw_line in f:
-                line_body = raw_line.rstrip("\r\n")
-                newline = raw_line[len(line_body):]
-                if not line_body.strip():
-                    output_lines.append(raw_line)
-                    continue
-                try:
-                    record = json.loads(line_body)
-                except json.JSONDecodeError:
-                    output_lines.append(raw_line)
-                    continue
-                if not isinstance(record, dict) or record.get("type") != "session_meta":
-                    output_lines.append(raw_line)
-                    continue
+        fd, tmp_path = tempfile.mkstemp(prefix=".codex_sync_", dir=os.path.dirname(file_path))
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out_f:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as in_f:
+                for raw_line in in_f:
+                    line_body = raw_line.rstrip("\r\n")
+                    newline = raw_line[len(line_body):]
+                    if not line_body.strip():
+                        out_f.write(raw_line)
+                        continue
+                    try:
+                        record = json.loads(line_body)
+                    except json.JSONDecodeError:
+                        out_f.write(raw_line)
+                        continue
+                    if not isinstance(record, dict) or record.get("type") != "session_meta":
+                        out_f.write(raw_line)
+                        continue
 
-                saw_session_meta = True
-                if _apply_model_fields_to_session_meta(record, target_provider, target_model):
-                    changed = True
-                    output_lines.append(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + (newline or "\n"))
-                else:
-                    output_lines.append(raw_line)
-    except Exception:
-        return False
+                    saw_session_meta = True
+                    if _apply_model_fields_to_session_meta(record, target_provider, target_model):
+                        changed = True
+                        out_f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + (newline or "\n"))
+                    else:
+                        out_f.write(raw_line)
 
-    if changed and not dry_run:
-        _atomic_write_text(file_path, "".join(output_lines))
+        if changed and not dry_run:
+            if os.path.exists(file_path):
+                shutil.copystat(file_path, tmp_path, follow_symlinks=False)
+            os.replace(tmp_path, file_path)
+            tmp_path = ""
 
-    return bool(saw_session_meta and changed)
+        return bool(saw_session_meta and changed), ""
+    except Exception as e:
+        return False, str(e)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 def _apply_model_fields_to_session_meta(record: Dict, target_provider: str, target_model: str) -> bool:
@@ -785,31 +812,46 @@ def sync_rollout_files(
     target_provider: str,
     target_model: str,
     dry_run: bool = False,
-) -> Tuple[int, int]:
+    max_depth: int = 3,
+) -> Tuple[int, int, List[str]]:
     """
     同步所有 rollout jsonl 文件
-    返回 (seen, updated)
+    返回 (seen, updated, warnings)
     """
     seen = 0
     updated = 0
+    warnings: List[str] = []
 
     for base_dir in (sessions_dir, archived_dir):
         if not os.path.exists(base_dir):
             continue
+        base_depth = base_dir.rstrip(os.sep).count(os.sep)
         for root, dirs, files in os.walk(base_dir):
+            # 深度限制
+            current_depth = root.rstrip(os.sep).count(os.sep)
+            if current_depth - base_depth >= max_depth:
+                dirs[:] = []
+                continue
+            # 跳过隐藏目录和已知非会话目录
+            dirs[:] = [
+                d for d in dirs
+                if not d.startswith(".") and d not in _SKIP_SYNC_DIRS
+            ]
             for fname in files:
                 if not fname.endswith(".jsonl"):
                     continue
                 fpath = os.path.join(root, fname)
                 seen += 1
                 try:
-                    changed = sync_rollout_file(fpath, target_provider, target_model, dry_run)
+                    changed, warning = sync_rollout_file(fpath, target_provider, target_model, dry_run)
                     if changed:
                         updated += 1
-                except Exception:
-                    pass
+                    if warning:
+                        warnings.append(warning)
+                except Exception as e:
+                    warnings.append(f"{fpath}: {e}")
 
-    return seen, updated
+    return seen, updated, warnings
 
 
 def sync_session_index(
@@ -867,23 +909,37 @@ def sync_session_index(
             _apply_model_fields(record, target_provider, target_model)
             output.append(record)
 
-    # 比较是否有变化
-    desired_text = "\n".join(json.dumps(e, ensure_ascii=False, separators=(",", ":")) for e in output)
-    if desired_text:
-        desired_text += "\n"
-
-    current_text = ""
-    if os.path.exists(index_path):
-        with open(index_path, "r", encoding="utf-8", errors="replace") as f:
-            current_text = f.read()
-
     seen = len(existing_entries)
-    changed = desired_text != current_text
+
+    # 比较是否有变化：先流式写入临时文件，再与现有文件比较
+    changed = False
+    tmp_path = ""
+    try:
+        fd, tmp_path = tempfile.mkstemp(prefix=".codex_sync_idx_", dir=os.path.dirname(index_path) or ".")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out_f:
+            for entry in output:
+                out_f.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        if os.path.exists(index_path):
+            changed = not _files_equal(tmp_path, index_path)
+        else:
+            changed = os.path.getsize(tmp_path) > 0
+
+        if changed and not dry_run:
+            if os.path.exists(index_path):
+                shutil.copystat(index_path, tmp_path, follow_symlinks=False)
+            os.replace(tmp_path, index_path)
+            tmp_path = ""
+    except Exception:
+        pass
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
     updated = len(output) if changed else 0
-
-    if changed and not dry_run:
-        _atomic_write_text(index_path, desired_text)
-
     return seen, updated, malformed
 
 
@@ -894,6 +950,7 @@ def _read_index_from_db(db_path: str, target_provider: str, target_model: str) -
 
     conn = sqlite3.connect(db_path, timeout=30.0)
     try:
+        conn.execute("PRAGMA busy_timeout = 30000")
         conn.row_factory = sqlite3.Row
         columns = {row[1] for row in conn.execute("PRAGMA table_info(threads)").fetchall()}
         if "id" not in columns:
@@ -958,6 +1015,25 @@ def _apply_model_fields(record: Dict, provider: str, model: str) -> bool:
     return changed
 
 
+def _files_equal(path_a: str, path_b: str, chunk_size: int = 8192) -> bool:
+    """逐块比较两个文件内容，避免一次性加载大文件到内存。"""
+    try:
+        size_a = os.path.getsize(path_a)
+        size_b = os.path.getsize(path_b)
+        if size_a != size_b:
+            return False
+        with open(path_a, "rb") as fa, open(path_b, "rb") as fb:
+            while True:
+                ca = fa.read(chunk_size)
+                cb = fb.read(chunk_size)
+                if ca != cb:
+                    return False
+                if not ca:
+                    return True
+    except Exception:
+        return False
+
+
 def _atomic_write_text(path: str, content: str):
     """原子写入文本文件"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1015,12 +1091,13 @@ def full_sync(
     stats.db_threads_updated = updated
 
     # 3. 同步 jsonl 文件
-    seen, updated = sync_rollout_files(
+    seen, updated, warnings = sync_rollout_files(
         str(sessions_root), str(archived_root),
         target_provider, target_model, dry_run
     )
     stats.rollout_files_seen = seen
     stats.rollout_files_updated = updated
+    stats.errors.extend(warnings)
 
     # 4. 重建 session_index.jsonl
     seen, updated, malformed = sync_session_index(

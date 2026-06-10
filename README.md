@@ -79,7 +79,7 @@ What that means here:
 - The Codex config we write uses `wire_api = "responses"` and points Codex at the local proxy `/v1` base URL.
 - Providers marked as native Responses are forwarded to their upstream `/responses` endpoint with the Codex request shape preserved.
 - Chat-only providers are adapted by the local proxy from Responses to Chat Completions.
-- Pure native proxy providers should not be forced through `/images/generations`; OpenAI-compatible media bridge routing is an explicit provider media setting.
+- **Image routing is independent**: direct `POST /v1/images/generations` requests and LLM-mediated image generation for domestic providers (Bailian, Volcengine, etc.) are routed through AMR `image_candidates`; pure native proxies (e.g., XinSilu) pass through directly without proxy-layer intervention.
 
 References: [openai/codex `responses.rs`](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/endpoint/responses.rs) and [OpenAI: Unrolling the Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/).
 

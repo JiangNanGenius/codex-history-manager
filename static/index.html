@@ -396,6 +396,23 @@
                     <div id="detail-messages" class="space-y-3 max-h-[60vh] overflow-y-auto pr-2"></div>
                 </div>
             </div>
+            <!-- Create Provider Modal -->
+            <div id="create-provider-modal" class="modal-overlay hidden">
+                <div class="modal-content max-w-2xl">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-semibold text-white" data-i18n="createProviderTitle">创建新供应商</h2>
+                        <button onclick="hideCreateProviderModal()" class="text-dark-400 hover:text-white transition">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+                    <p class="text-sm text-dark-400 mb-4" data-i18n="createProviderDesc">选择一种方式开始创建供应商：</p>
+                    <div id="create-provider-modal-presets" class="space-y-4 max-h-[50vh] overflow-y-auto pr-2 mb-4"></div>
+                    <div class="flex justify-end gap-2 pt-3 border-t border-dark-700">
+                        <button onclick="hideCreateProviderModal()" class="btn btn-ghost text-sm" data-i18n="cancel">取消</button>
+                        <button onclick="hideCreateProviderModal(); createBlankProvider();" class="btn btn-primary text-sm" data-i18n="createBlankProviderBtn">创建空白供应商</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Sync Page -->
@@ -601,7 +618,7 @@
                     </div>
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="ccSwitchDbPath">本地缓存记录路径（可选）</label>
-                        <input id="setting-cc-switch-db" type="text" class="input mt-1" placeholder="鏈湴澶嶇敤璁板綍浣嶇疆" data-i18n-placeholder="ccSwitchDbPlaceholder">
+                        <input id="setting-cc-switch-db" type="text" class="input mt-1" placeholder="本地缓存记录位置" data-i18n-placeholder="ccSwitchDbPlaceholder">
                         <p class="text-xs text-dark-500 mt-1" data-i18n="ccSwitchDbDesc">用于补充缓存节省统计；留空也不影响基础用量统计。</p>
                     </div>
                     <div>
@@ -632,6 +649,32 @@
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="requestLogMaxMb">记录最大大小（MB）</label>
                         <input id="setting-request-log-max-mb" type="number" min="1" step="1" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400" data-i18n="debugLogPath">调试日志位置</label>
+                        <input id="setting-debug-log-path" type="text" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400" data-i18n="debugLogRetentionDays">调试日志保留天数</label>
+                        <input id="setting-debug-log-retention-days" type="number" min="1" class="input mt-1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-dark-400" data-i18n="debugLogMaxMb">调试日志最大大小（MB）</label>
+                        <input id="setting-debug-log-max-mb" type="number" min="1" step="1" class="input mt-1">
+                    </div>
+                    <div class="lg:col-span-3 rounded-lg border border-dark-800 bg-dark-950/40 p-3">
+                        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                            <label class="flex items-center gap-2 text-sm cursor-pointer">
+                                <input id="setting-debug-mode" type="checkbox" class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-accent-500">
+                                <span data-i18n="debugMode">保留代理调试日志</span>
+                            </label>
+                            <div class="flex flex-wrap gap-2">
+                                <button type="button" onclick="loadDebugLogs()" class="btn btn-secondary text-xs" data-i18n="debugLogsView">查看最近日志</button>
+                                <button type="button" onclick="clearDebugLogs()" class="btn btn-danger text-xs" data-i18n="debugLogsClear">清空调试日志</button>
+                            </div>
+                        </div>
+                        <p class="text-xs text-dark-500 mt-2" data-i18n="debugModeDesc">开启后记录代理路由、智能路由选择和上游错误摘要；不会保存请求正文或密钥。</p>
+                        <pre id="debug-logs-output" class="preview-code mt-3 hidden"></pre>
                     </div>
                     <div>
                         <label class="text-xs text-dark-400" data-i18n="proxyUpstreamTimeout">供应商响应超时</label>
@@ -834,7 +877,7 @@
                         <label class="text-xs text-dark-400" data-i18n="exchangeSource">汇率来源</label>
                         <select id="currency-source" class="input mt-1 w-full">
                             <option value="manual" data-i18n="exchangeSourceManual">手动</option>
-                            <option value="apiforex" data-i18n="exchangeSourceApiforex">apiforex.cn（验证前关闭）</option>
+                            <option value="apiforex" data-i18n="exchangeSourceApiforex">apiforex.cn</option>
                             <option value="disabled" data-i18n="disabled">未开启</option>
                         </select>
                     </div>

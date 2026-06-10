@@ -143,6 +143,35 @@ def normalize_candidate_health(data: Any) -> Dict[str, Any]:
     }
 
 
+_IMAGE_MODEL_KEYWORDS = frozenset({"image", "seedream", "imagen", "dall-e", "dalle"})
+
+
+def _is_image_generation_model(provider: Dict[str, Any], model: Dict[str, Any]) -> bool:
+    """判断一个模型是否为图像生成专用模型（用于 AMR 候选分离）。"""
+    if not isinstance(provider, dict) or not isinstance(model, dict):
+        return False
+
+    media_profile = provider.get("media_profile") if isinstance(provider.get("media_profile"), dict) else {}
+    overrides = media_profile.get("image_model_overrides") if isinstance(media_profile.get("image_model_overrides"), dict) else {}
+    model_id = str(model.get("id") or "").strip()
+
+    # 1. 明确在 image_model_overrides 的值中
+    if model_id in overrides.values():
+        return True
+
+    # 2. 纯图像模型（不支持文本）
+    caps = merge_provider_model_capabilities(provider, model)
+    if caps.get("images") and not caps.get("text"):
+        return True
+
+    # 3. 名称启发式
+    model_id_lower = model_id.lower()
+    if any(kw in model_id_lower for kw in _IMAGE_MODEL_KEYWORDS):
+        return True
+
+    return False
+
+
 def normalize_group(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     将任意 group 输入消毒为标准 schema。
@@ -181,10 +210,15 @@ def normalize_group(data: Dict[str, Any]) -> Dict[str, Any]:
         # 防御旧数据 corruption：candidates 不是列表时重置为空
         candidates = []
     normalized_candidates = [normalize_candidate(c) for c in candidates if isinstance(c, dict)]
+    image_candidates = raw.get("image_candidates", [])
+    if not isinstance(image_candidates, list):
+        image_candidates = []
+    normalized_image_candidates = [normalize_candidate(c) for c in image_candidates if isinstance(c, dict)]
     return {
         "id": group_id,
         "display_name": display_name,
         "candidates": normalized_candidates,
+        "image_candidates": normalized_image_candidates,
         "created_at": raw.get("created_at") or "",
         "updated_at": raw.get("updated_at") or "",
     }
@@ -304,8 +338,8 @@ class AMRRegistry:
             # ID 是不可变标识，不允许通过 update 修改
             update_copy.pop("id", None)
             for key, value in update_copy.items():
-                if key == "candidates" and isinstance(value, list):
-                    # candidates 需要逐条消毒，防止传入脏数据
+                if key in ("candidates", "image_candidates") and isinstance(value, list):
+                    # candidates / image_candidates 需要逐条消毒，防止传入脏数据
                     merged[key] = [normalize_candidate(c) for c in value if isinstance(c, dict)]
                 else:
                     merged[key] = value
@@ -370,13 +404,14 @@ class AMRRegistry:
             extra_providers=extra_providers,
         )
         candidates: List[Dict[str, Any]] = []
+        image_candidates: List[Dict[str, Any]] = []
         for p in providers_data.get("providers", []):
             if not provider_allows_local_routing(p):
                 continue
             for m in p.get("models", []):
                 if not m.get("enabled", True):
                     continue
-                candidates.append({
+                candidate = {
                     "id": f"{p['id']}/{m['id']}",
                     "provider_id": p["id"],
                     "model_id": m["id"],
@@ -385,13 +420,18 @@ class AMRRegistry:
                     "context_window": m.get("context_window", 0),
                     "capabilities": merge_provider_model_capabilities(p, m),
                     "health": normalize_candidate_health(p.get("status")),
-                })
+                }
+                if _is_image_generation_model(p, m):
+                    image_candidates.append(candidate)
+                else:
+                    candidates.append(candidate)
 
         store = self._load_store()
         groups = store.setdefault("groups", [])
         default_group = next((g for g in groups if g.get("id") == "default"), None)
         if default_group:
             default_group["candidates"] = candidates
+            default_group["image_candidates"] = image_candidates
             default_group["updated_at"] = now_iso()
             default_group = normalize_group(default_group)
             for idx, g in enumerate(groups):
@@ -403,6 +443,7 @@ class AMRRegistry:
                 "id": DEFAULT_GROUP_ID,
                 "display_name": DEFAULT_GROUP_DISPLAY_NAME,
                 "candidates": candidates,
+                "image_candidates": image_candidates,
             })
             default_group["created_at"] = now_iso()
             default_group["updated_at"] = default_group["created_at"]
@@ -473,6 +514,7 @@ class AMRRegistry:
         group_id: str,
         request_capabilities: Optional[Set[str]] = None,
         required_context: int = 0,
+        candidate_list: str = "candidates",
     ) -> Dict[str, Any]:
         """
         使用内部 engine 执行路由。
@@ -481,6 +523,7 @@ class AMRRegistry:
             group_id: 目标旋转组 ID。
             request_capabilities: 请求所需能力集合。默认为 {"text"}。
             required_context: 请求所需上下文长度（token 数）。
+            candidate_list: 使用的候选列表名称，"candidates" 或 "image_candidates"。
 
         Returns:
             路由决策字典，结构与 AdaptiveModelRotation.route 一致。
@@ -490,6 +533,7 @@ class AMRRegistry:
             group_id=group_id,
             required_capabilities=request_capabilities,
             required_context=required_context,
+            candidate_list_name=candidate_list,
         )
 
     def export_bundle(self) -> Dict[str, Any]:

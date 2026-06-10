@@ -17,12 +17,16 @@ from proxy_server import (
     _resolve_provider_for_model,
     _resolve_provider_route_for_model,
     _set_amr_store_path,
+    _debug_log,
+    _set_debug_mode,
     _set_media_approval_reviewer,
     _set_request_log_config,
     _set_provider_store_path,
     _set_upstream_policy,
     _upstream_request,
     _upstream_request_for_provider,
+    clear_debug_logs,
+    get_debug_logs,
 )
 from request_logs import RequestLogStore
 
@@ -100,7 +104,32 @@ class ProviderRoutingTest(unittest.TestCase):
         )
 
     def tearDown(self):
+        _set_debug_mode(False, path="")
+        clear_debug_logs()
         self.tmpdir.cleanup()
+
+    def test_debug_logs_persist_to_file_and_redact_secrets(self):
+        log_path = Path(self.tmpdir.name) / "debug.jsonl"
+        _set_debug_mode(True, path=str(log_path), retention_days=7, max_mb=1)
+        clear_debug_logs()
+
+        _debug_log(
+            "route.test",
+            provider_id="p1",
+            api_key="sk-secret-value",
+            authorization="Bearer secret-token",
+            request_body={"messages": [{"content": "private prompt"}]},
+        )
+
+        logs = get_debug_logs()
+        self.assertEqual(logs[-1]["event"], "route.test")
+        self.assertEqual(logs[-1]["api_key"], "********")
+        self.assertNotIn("request_body", logs[-1])
+        text = log_path.read_text(encoding="utf-8")
+        self.assertIn("route.test", text)
+        self.assertNotIn("sk-secret-value", text)
+        self.assertNotIn("secret-token", text)
+        self.assertNotIn("private prompt", text)
 
     def test_hard_route_by_short_alias(self):
         provider = _resolve_provider_for_model("qwen/qwen3-coder-plus")
@@ -460,6 +489,21 @@ class LocalProxyServerTest(unittest.TestCase):
         self.assertTrue(server.status()["running"])
 
         server.stop()
+        self.assertFalse(server.is_running())
+
+    def test_stop_does_not_shutdown_stale_dead_thread(self):
+        server = LocalProxyServer(port=18081)
+        fake_httpd = MagicMock()
+        fake_thread = MagicMock()
+        fake_thread.is_alive.return_value = False
+        server._server = fake_httpd
+        server._thread = fake_thread
+
+        server.stop()
+
+        fake_httpd.shutdown.assert_not_called()
+        fake_httpd.server_close.assert_called_once()
+        fake_thread.join.assert_not_called()
         self.assertFalse(server.is_running())
 
     def test_idempotent_start(self):
@@ -1540,7 +1584,8 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(upstream_body["model"], "responses-model")
         self.assertNotIn("messages", upstream_body)
 
-    def test_domestic_partial_responses_blocks_unverified_custom_tool(self):
+    @patch("proxy_server._upstream_request")
+    def test_domestic_partial_responses_sanitizes_unverified_custom_tool(self, mock_upstream):
         self._write_providers({
             "providers": [
                 {
@@ -1561,6 +1606,11 @@ class ProxyIntegrationTest(unittest.TestCase):
                 }
             ]
         })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"id": "resp_1", "object": "response"}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
 
         handler, raw = self._make_handler(
             "/v1/responses",
@@ -1574,10 +1624,10 @@ class ProxyIntegrationTest(unittest.TestCase):
         )
 
         status, headers, body = self._parse_response(raw)
-        self.assertEqual(status, 400)
-        response_json = json.loads(body.decode())
-        self.assertEqual(response_json["error"]["type"], "domestic_responses_unsupported")
-        self.assertIn("unsupported tool types: custom", response_json["error"]["message"])
+        self.assertEqual(status, 200)
+        args = mock_upstream.call_args
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body.get("tools", []), [])
 
     @patch("proxy_server._upstream_request")
     def test_domestic_partial_responses_allows_verified_input_image(self, mock_upstream):
@@ -1764,6 +1814,193 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertEqual(status, 404)
         resp_json = json.loads(body.decode())
         self.assertEqual(resp_json["error"]["type"], "provider_not_found")
+
+    @patch("proxy_server._upstream_request")
+    def test_handle_media_uses_amr_image_candidates(self, mock_upstream):
+        """AMR model_id 应通过 image_candidates 路由到图像 provider。"""
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "text-main",
+                    "short_alias": "txt",
+                    "display_name": "Text Provider",
+                    "enabled": True,
+                    "base_url": "https://text.example.test/v1",
+                    "api_key": "testkey-text",
+                    "capabilities": {"text": True, "images": False},
+                    "models": [{"id": "gpt-5", "enabled": True}],
+                },
+                {
+                    "id": "image-main",
+                    "short_alias": "img",
+                    "display_name": "Image Provider",
+                    "enabled": True,
+                    "base_url": "https://image.example.test/v1",
+                    "api_format": "openai_images",
+                    "api_key": "testkey-image",
+                    "capabilities": {"images": True},
+                    "media_profile": {"openai_compatible_media": True},
+                    "models": [{"id": "gpt-image-1", "enabled": True, "capabilities": {"images": True}}],
+                },
+            ]
+        })
+        self._write_amr([
+            {
+                "id": "default",
+                "display_name": "Smart Routing",
+                "candidates": [
+                    {"id": "txt/gpt-5", "provider_id": "text-main", "model_id": "gpt-5", "priority": 100, "enabled": True, "capabilities": {"text": True}},
+                ],
+                "image_candidates": [
+                    {"id": "img/gpt-image-1", "provider_id": "image-main", "model_id": "gpt-image-1", "priority": 100, "enabled": True, "capabilities": {"images": True}},
+                ],
+            }
+        ])
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"created": 1, "data": [{"url": "https://example.test/amr.png"}]}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/images/generations",
+            body={"model": "auto", "prompt": "test amr image"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body.decode())["data"][0]["url"], "https://example.test/amr.png")
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://image.example.test/v1/images/generations")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "gpt-image-1")
+
+    def test_handle_media_amr_image_candidates_no_fallback(self):
+        """image_candidates 为空时不应回退到 candidates 中的文本 provider。"""
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "text-main",
+                    "short_alias": "txt",
+                    "display_name": "Text Provider",
+                    "enabled": True,
+                    "base_url": "https://text.example.test/v1",
+                    "api_key": "testkey-text",
+                    "capabilities": {"text": True, "images": False},
+                    "models": [{"id": "gpt-5", "enabled": True}],
+                },
+            ]
+        })
+        self._write_amr([
+            {
+                "id": "default",
+                "display_name": "Smart Routing",
+                "candidates": [
+                    {"id": "txt/gpt-5", "provider_id": "text-main", "model_id": "gpt-5", "priority": 100, "enabled": True, "capabilities": {"text": True}},
+                ],
+                "image_candidates": [],
+            }
+        ])
+
+        handler, raw = self._make_handler(
+            "/v1/images/generations",
+            body={"model": "auto", "prompt": "test amr fallback"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 404)
+        resp_json = json.loads(body.decode())
+        self.assertEqual(resp_json["error"]["type"], "media_provider_not_found")
+
+    @patch("proxy_server._upstream_request")
+    def test_handle_media_non_amr_model_uses_resolve_media_route(self, mock_upstream):
+        """非 AMR model_id 时 _handle_media 仍使用 resolve_media_route。"""
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "default-image",
+                    "short_alias": "default",
+                    "display_name": "Default Image Provider",
+                    "enabled": True,
+                    "base_url": "https://default-image.example.test/v1",
+                    "api_format": "openai_images",
+                    "api_key": "testkey-default",
+                    "capabilities": {"images": True},
+                    "media_profile": {"default_image_provider": True, "openai_compatible_media": True},
+                    "models": [{"id": "gpt-image-1", "enabled": True, "capabilities": {"images": True}}],
+                },
+            ]
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"created": 1, "data": [{"url": "https://example.test/fallback.png"}]}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/images/generations",
+            body={"model": "unknown-model", "prompt": "test fallback"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body.decode())["data"][0]["url"], "https://example.test/fallback.png")
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://default-image.example.test/v1/images/generations")
+
+    @patch("proxy_server._upstream_request")
+    def test_handle_media_native_proxy_direct_passthrough(self, mock_upstream):
+        """provider/model 硬路由格式应直接透传，不走 AMR。"""
+        self._write_providers({
+            "providers": [
+                {
+                    "id": "native-proxy",
+                    "short_alias": "native",
+                    "display_name": "Native Proxy",
+                    "enabled": True,
+                    "base_url": "https://native.example.test/v1",
+                    "api_format": "openai_responses",
+                    "api_key": "testkey-native",
+                    "capabilities": {"text": True, "images": True},
+                    "media_profile": {"openai_compatible_media": True},
+                    "models": [{"id": "gpt-image-2", "enabled": True, "capabilities": {"images": True}}],
+                },
+            ]
+        })
+        self._write_amr([
+            {
+                "id": "default",
+                "display_name": "Smart Routing",
+                "candidates": [],
+                "image_candidates": [],
+            }
+        ])
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"created": 1, "data": [{"url": "https://example.test/native.png"}]}).encode()
+        mock_resp.getcode.return_value = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_upstream.return_value = mock_resp
+
+        handler, raw = self._make_handler(
+            "/v1/images/generations",
+            body={"model": "native/gpt-image-2", "prompt": "test native"},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body.decode())["data"][0]["url"], "https://example.test/native.png")
+        args = mock_upstream.call_args
+        self.assertEqual(args[0][1], "https://native.example.test/v1/images/generations")
+        upstream_body = json.loads(args[1]["body"])
+        self.assertEqual(upstream_body["model"], "gpt-image-2")
 
 
 if __name__ == "__main__":

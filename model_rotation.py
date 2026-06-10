@@ -46,6 +46,7 @@ class AdaptiveModelRotation:
         group_id: str,
         required_capabilities: Optional[Set[str]] = None,
         required_context: int = 0,
+        candidate_list_name: str = "candidates",
     ) -> Dict[str, Any]:
         """
         将请求路由到旋转组内的最佳候选模型。
@@ -70,6 +71,7 @@ class AdaptiveModelRotation:
             group_id: 旋转组 ID。
             required_capabilities: 请求所需能力集合。
             required_context: 请求所需上下文长度（token 数）。
+            candidate_list_name: 使用的候选列表字段名，默认 "candidates"，图像路由可传 "image_candidates"。
 
         Returns:
             路由决策字典，含 success、provider_id、model_id、explanation 等。
@@ -84,12 +86,13 @@ class AdaptiveModelRotation:
                     "explanation": ["Group lookup failed."],
                 }
 
-            candidates = [c for c in group.get("candidates", []) if c.get("enabled", True)]
+            candidates = [c for c in group.get(candidate_list_name, []) if c.get("enabled", True)]
             if not candidates:
+                list_label = "image_candidates" if candidate_list_name == "image_candidates" else "candidates"
                 return {
                     "success": False,
-                    "error": "No candidates configured in group",
-                    "explanation": ["Group has zero enabled candidates."],
+                    "error": f"No {list_label} configured in group",
+                    "explanation": [f"Group has zero enabled {list_label}."],
                 }
 
             # Same-priority candidates keep the saved list order, so background
@@ -230,7 +233,7 @@ class AdaptiveModelRotation:
         with self._lock:
             self._cooldowns[candidate_id] = time.time() + cooldown_seconds
 
-    def get_group_context_window(self, group_id: str) -> int:
+    def get_group_context_window(self, group_id: str, candidate_list_name: str = "candidates") -> int:
         """
         返回旋转组的 advertised context window。
 
@@ -242,6 +245,7 @@ class AdaptiveModelRotation:
 
         Args:
             group_id: 旋转组 ID。
+            candidate_list_name: 使用的候选列表字段名。
 
         Returns:
             组内启用候选的最小 context_window，或 0（组不存在/无候选时）。
@@ -249,7 +253,7 @@ class AdaptiveModelRotation:
         group = self._find_group(group_id)
         if not group:
             return 0
-        candidates = group.get("candidates", [])
+        candidates = group.get(candidate_list_name, [])
         if not candidates:
             return 0
         enabled = [c for c in candidates if c.get("enabled", True)]
@@ -263,7 +267,8 @@ class AdaptiveModelRotation:
 
         Returns:
             [{"id": str, "display_name": str, "effective_context_window": int,
-              "limiting_candidate_id": str, "candidate_count": int}, ...]
+              "limiting_candidate_id": str, "candidate_count": int,
+              "image_candidate_count": int}, ...]
         """
         result = []
         for group in self.groups:
@@ -275,12 +280,15 @@ class AdaptiveModelRotation:
                 if (c.get("context_window", 0) or 0) == eff_ctx:
                     limiting = c.get("id")
                     break
+            image_candidates = group.get("image_candidates", [])
+            image_enabled = [c for c in image_candidates if c.get("enabled", True)]
             result.append({
                 "id": group.get("id"),
                 "display_name": group.get("display_name"),
                 "effective_context_window": eff_ctx,
                 "limiting_candidate_id": limiting,
                 "candidate_count": len(enabled),
+                "image_candidate_count": len(image_enabled),
             })
         return result
 
@@ -315,9 +323,9 @@ class AdaptiveModelRotation:
         return True
 
     @staticmethod
-    def _all_group_capabilities(group: Dict[str, Any]) -> Set[str]:
+    def _all_group_capabilities(group: Dict[str, Any], candidate_list_name: str = "candidates") -> Set[str]:
         result: Set[str] = set()
-        for c in group.get("candidates", []):
+        for c in group.get(candidate_list_name, []):
             if not c.get("enabled", True):
                 continue
             caps = c.get("capabilities", {})

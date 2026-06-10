@@ -196,14 +196,21 @@ class UnifiedModelCatalog:
         """
         catalog = self.build_catalog()
         models: List[Dict[str, Any]] = []
+        seen_slugs: Set[str] = set()
         priority = 0
         if include_smart_routing:
             smart = _smart_routing_codex_model(self.providers, amr_groups or [], priority=priority)
             if smart:
                 models.append(smart)
+                seen_slugs.add(str(smart.get("slug") or ""))
                 priority += 1
         for entry in catalog["entries"]:
-            models.append(_codex_model_info_from_entry(entry, priority=priority))
+            model_info = _codex_model_info_from_entry(entry, priority=priority)
+            slug = str(model_info.get("slug") or "")
+            if slug in seen_slugs:
+                continue
+            models.append(model_info)
+            seen_slugs.add(slug)
             priority += 1
         return {"models": models}
 
@@ -335,7 +342,8 @@ def _model_visible_id(model: Dict[str, Any], fallback: str) -> str:
 
 def _model_codex_display_name(model: Dict[str, Any], fallback: str) -> str:
     return _catalog_segment(
-        model.get("codex_visible_id")
+        model.get("codex_display_name")
+        or model.get("codex_visible_id")
         or model.get("display_name")
         or fallback,
         fallback,
@@ -343,10 +351,22 @@ def _model_codex_display_name(model: Dict[str, Any], fallback: str) -> str:
 
 
 def _catalog_segment(value: Any, fallback: str = "") -> str:
+    """Codex-facing 字段：严格 ASCII-only，中文会被过滤。"""
     text = _ascii_catalog_segment(value or fallback)
     if text:
         return text
     return _ascii_catalog_segment(fallback or "default") or "default"
+
+
+def _display_catalog_segment(value: Any, fallback: str = "") -> str:
+    """软件内部 UI 展示用：保留中文等所有可见字符。"""
+    text = _ascii_catalog_segment(value or fallback)
+    if text:
+        return text
+    original = str(value or fallback or "default").strip()
+    original = original.replace("/", "-").replace("\\", "-")
+    original = "".join(ch for ch in original if ch.isprintable()).strip()
+    return original or "default"
 
 
 def _ascii_catalog_segment(value: Any) -> str:
@@ -470,10 +490,7 @@ def _smart_routing_codex_model(
         enabled_candidate_count += 1
         caps = merge_provider_model_capabilities(provider or {}, model)
         merged_caps["vision"] = bool(merged_caps.get("vision") or caps.get("vision"))
-        context = _positive_int(
-            candidate.get("context_window") or model.get("context_window"),
-            0,
-        )
+        context = _positive_int(model.get("context_window"), 0)
         if context > 0:
             context_values.append(context)
 

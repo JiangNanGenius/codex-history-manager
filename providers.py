@@ -168,6 +168,13 @@ def _ascii_catalog_segment(value: Any) -> str:
     return text
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class ProviderRegistry:
     """
     JSON-backed local provider registry.
@@ -1022,8 +1029,9 @@ def normalize_model(data: Dict[str, Any]) -> Dict[str, Any]:
     capability_overrides = model_capability_overrides(data)
     capability_overrides.pop("tools", None)
     capability_overrides.pop("streaming", None)
-    context_window = int(data.get("context_window") or data.get("context") or 0)
-    max_output_tokens = int(data.get("max_output_tokens") or data.get("maxTokens") or data.get("max_tokens") or 0)
+    context_window = _safe_int(data.get("context_window") or data.get("context") or 0)
+    max_output_tokens = _safe_int(data.get("max_output_tokens") or data.get("maxTokens") or data.get("max_tokens") or 0)
+    concurrency_limit = _safe_int(data.get("concurrency_limit") or data.get("concurrency") or 0)
     catalog_hidden = bool(data.get("catalog_hidden", False))
     selected = bool(data.get("selected", True))
     primary = bool(data.get("primary", False))
@@ -1044,6 +1052,7 @@ def normalize_model(data: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": model_id,
         "display_name": str(data.get("display_name") or model_id).strip(),
+        "codex_display_name": str(data.get("codex_display_name") or "").strip(),
         "codex_visible_id": codex_visible_id,
         "enabled": bool(data.get("enabled", True)),
         "selected": selected and not catalog_hidden,
@@ -1062,6 +1071,9 @@ def normalize_model(data: Dict[str, Any]) -> Dict[str, Any]:
         "tags": data.get("tags") if isinstance(data.get("tags"), list) else [],
         "aliases": normalize_string_list(data.get("aliases") or data.get("model_aliases")),
         "reasoning_default": data.get("reasoning_default", ""),
+        "model_base_url": str(data.get("model_base_url") or "").strip(),
+        "model_base_path": str(data.get("model_base_path") or "").strip(),
+        "concurrency_limit": max(concurrency_limit, 0),
     }
 
 
@@ -1791,6 +1803,11 @@ def _volcengine_plan_model(
             "streaming": True,
         },
         "native_currency": "CNY",
+        "pricing": {
+            "native_currency": "CNY",
+            "billing_mode": "token_plan_monthly",
+            "cost_estimation": "disabled",
+        },
     }
 
 
@@ -1897,7 +1914,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
         "preset_id": "custom-openai-chat",
         "name": "Custom OpenAI Chat",
         "category": "text",
-        "description": "Chat Completions compatible provider. Responses adapter will be added later.",
+        "description": "Chat Completions format. Codex Responses requests are automatically converted to Chat Completions before forwarding.",
         "provider": {
             "id": "custom-chat",
             "display_name": "Custom Chat Provider",
@@ -2207,7 +2224,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
         "preset_id": "custom-openai-responses",
         "name": "Custom OpenAI Responses",
         "category": "text",
-        "description": "Custom OpenAI-compatible provider.",
+        "description": "Blank OpenAI Responses provider. Enter your own base URL and key; no pre-filled endpoint.",
         "provider": {
             "id": "custom-responses",
             "display_name": "Custom Responses Provider",
@@ -2287,7 +2304,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
         "preset_id": "alibaba-bailian-text-media",
         "name": "Alibaba Bailian / DashScope",
         "category": "domestic",
-        "description": "Placeholder preset for Bailian text and media. Region-specific compatible-mode URLs must be confirmed before live use.",
+        "description": "Template for Bailian text and media. Fill your own China-region key locally.",
         "provider": {
             "id": "alibaba-bailian",
             "display_name": "Alibaba Bailian",
@@ -2306,7 +2323,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
                 "partial_compatibility": True,
                 "requires_adapter": True,
                 "verified_docs_url": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses",
-                "compatibility_notes": "Official Bailian docs confirm OpenAI-compatible /compatible-mode/v1/responses, previous_response_id, and output_text streaming events. It is still marked partial: Codex custom tools, compact, and media item routing need adapter probes before real routing.",
+                "compatibility_notes": "Bailian supports OpenAI-compatible text surfaces; media payloads use provider adapters.",
                 "unsupported_fields": ["codex_custom_tools_until_adapter_verified", "compact_until_verified", "media_items_until_adapter_verified"],
                 "verified_features": ["text_input_output", "streaming_response_output_text_delta", "previous_response_id", "input_image", "function_tools", "code_interpreter", "web_search", "mcp_tool", "json_mode", "structured_outputs"],
                 "verified_event_types": ["response.output_text.delta", "response.completed"],
@@ -2328,14 +2345,14 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             ],
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
-            "notes": "Public docs indicate OpenAI-compatible APIs for text, image, audio, and video; exact media payloads need doc/login verification.",
+            "notes": "Public template only. Fill your own Bailian key locally; no private token is bundled.",
         },
     },
     {
         "preset_id": "volcengine-ark-text-media",
         "name": "火山引擎",
         "category": "domestic",
-        "description": "Placeholder preset for Ark text plus Seedream/Seedance media adapters.",
+        "description": "Standard Ark API template. Separate from Coding Plan and Agent Plan APIs.",
         "provider": {
             "id": "volcengine-ark",
             "display_name": "火山引擎",
@@ -2354,7 +2371,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
                 "partial_compatibility": True,
                 "requires_adapter": True,
                 "verified_docs_url": "https://www.volcengine.com/docs/82379/1585128?lang=zh",
-                "compatibility_notes": "Official Ark Responses docs entry is recorded from the user-provided URL. Treat as partial compatibility: payload details, stream lifecycle, tools, and media behavior must be re-verified from readable docs/source before real routing.",
+                "compatibility_notes": "Standard Ark API; keep it separate from Coding Plan and Agent Plan endpoints.",
                 "unsupported_fields": ["payload_until_verified", "stream_lifecycle_until_verified", "tools_until_verified", "media_items_until_adapter_verified"],
                 "verified_features": ["text_input_output", "streaming_response_events", "previous_response_id", "input_image", "function_tools", "web_search", "image_process_tool", "knowledge_search_tool"],
                 "verified_event_types": ["response.created", "response.reasoning_summary_part.added", "response.reasoning_summary_text_delta"],
@@ -2377,7 +2394,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             ],
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
-            "notes": "Seedream/Seedance payloads require implementation-time doc verification.",
+            "notes": "Public template only. Fill your own Ark key locally; no private token is bundled.",
         },
     },
     {
@@ -2490,7 +2507,6 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
                 {"id": "anthropic/claude-3.5-sonnet", "display_name": "Anthropic Claude 3.5 Sonnet", "selected": True, "context_window": 200000, "capabilities": {"text": True, "vision": True, "tools": True, "reasoning": True, "streaming": True}},
                 {"id": "google/gemini-pro", "display_name": "Google Gemini Pro", "selected": True, "context_window": 128000, "capabilities": {"text": True, "vision": True, "tools": True, "reasoning": True, "streaming": True}},
                 {"id": "meta-llama/llama-3-70b", "display_name": "Meta Llama 3 70B", "selected": True, "context_window": 128000, "capabilities": {"text": True, "vision": False, "tools": True, "reasoning": True, "streaming": True}},
-                {"id": "deepseek/deepseek-chat", "display_name": "DeepSeek Chat", "selected": True, "context_window": 128000, "capabilities": {"text": True, "vision": False, "tools": True, "reasoning": True, "streaming": True}},
             ],
             "headers": {"User-Agent": "OpenAI-Compatible-Client/1.0"},
             "user_agent": "OpenAI-Compatible-Client/1.0",
@@ -2508,7 +2524,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
             "display_name": "DeepSeek Official",
             "kind": "openai_compatible",
             "short_alias": "deepseek",
-            "base_url": "https://api.deepseek.com/v1",
+            "base_url": "https://api.deepseek.com",
             "api_format": "openai_chat",
             "auth_mode": "provider_api_key",
             "native_currency": "CNY",
@@ -2530,14 +2546,53 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
                 "unsupported_fields": [],
             },
             "models": [
-                {"id": "deepseek-chat", "display_name": "DeepSeek Chat", "selected": True, "context_window": 128000},
-                {"id": "deepseek-coder", "display_name": "DeepSeek Coder", "selected": True, "context_window": 128000},
-                {"id": "deepseek-reasoner", "display_name": "DeepSeek Reasoner", "selected": True, "context_window": 128000},
+                {
+                    "id": "deepseek-v4-flash",
+                    "display_name": "DeepSeek V4 Flash",
+                    "selected": True,
+                    "context_window": 1024000,
+                    "max_output_tokens": 384000,
+                    "capabilities": {"text": True, "vision": False, "tools": True, "reasoning": True, "streaming": True},
+                    "reasoning_efforts": ["none", "medium"],
+                    "reasoning_effort_parameter": "thinking_mode",
+                    "reasoning_effort_default": "medium",
+                    "reasoning_effort_semantics": "thinking_mode",
+                    "pricing": {
+                        "native_currency": "CNY",
+                        "input_per_million": 1.0,
+                        "cache_read_per_million": 0.02,
+                        "output_per_million": 2.0,
+                        "input_includes_cache_read": True,
+                    },
+                    "native_currency": "CNY",
+                    "concurrency_limit": 2500,
+                },
+                {
+                    "id": "deepseek-v4-pro",
+                    "display_name": "DeepSeek V4 Pro",
+                    "selected": True,
+                    "context_window": 1024000,
+                    "max_output_tokens": 384000,
+                    "capabilities": {"text": True, "vision": False, "tools": True, "reasoning": True, "streaming": True},
+                    "reasoning_efforts": ["none", "medium"],
+                    "reasoning_effort_parameter": "thinking_mode",
+                    "reasoning_effort_default": "medium",
+                    "reasoning_effort_semantics": "thinking_mode",
+                    "pricing": {
+                        "native_currency": "CNY",
+                        "input_per_million": 3.0,
+                        "cache_read_per_million": 0.025,
+                        "output_per_million": 6.0,
+                        "input_includes_cache_read": True,
+                    },
+                    "native_currency": "CNY",
+                    "concurrency_limit": 500,
+                },
             ],
             "headers": {"User-Agent": "Codex-Enhance-Manager/0.1"},
             "user_agent": "Codex-Enhance-Manager/0.1",
             "caveat": "DeepSeek 官方 API 使用 Chat Completions 格式，不支持原生 Responses API。",
-            "notes": "DeepSeek 提供高性能大语言模型，deepseek-reasoner 支持推理能力。",
+            "notes": "DeepSeek 提供高性能大语言模型，V4 系列支持推理能力。",
         },
     },
     {
@@ -2672,7 +2727,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
         "preset_id": "minimax",
         "name": "MiniMax",
         "category": "domestic",
-        "description": "MiniMax API，部分功能可能与 OpenAI 标准有差异。",
+        "description": "MiniMax API. Does not support vision or reasoning; verify tools and streaming with actual testing.",
         "provider": {
             "id": "minimax",
             "display_name": "MiniMax",
@@ -2755,7 +2810,7 @@ PROVIDER_PRESETS: List[Dict[str, Any]] = [
         "preset_id": "custom-responses",
         "name": "Custom OpenAI Responses Compatible",
         "category": "text",
-        "description": "自定义 OpenAI Responses 兼容网关。需要确认上游功能支持情况。",
+        "description": "Custom Responses-compatible gateway. Pre-filled with an example base URL; replace it with your private or third-party endpoint.",
         "provider": {
             "id": "custom-responses",
             "display_name": "Custom Responses Compatible",

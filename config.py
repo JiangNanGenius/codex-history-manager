@@ -51,6 +51,9 @@ DEFAULT_CONFIG = {
     "request_log_path": str(app_data_path("logs", "proxy_requests.jsonl")),
     "request_log_retention_days": 30,
     "request_log_max_mb": 50,
+    "debug_log_path": str(app_data_path("diagnostics", "proxy_debug.jsonl")),
+    "debug_log_retention_days": 7,
+    "debug_log_max_mb": 10,
     "close_button_action": "ask",
     "desktop_launch_action": "show_window",
     "desktop_monitor_enabled": True,
@@ -121,6 +124,7 @@ DEFAULT_CONFIG = {
     "conversation_width": "default",
     "enable_scroll_restore": True,
     "enable_service_tier": False,
+    "debug_mode": False,
 }
 
 CONFIG_FILE = app_data_path("config.json")
@@ -163,16 +167,40 @@ class Config:
                 pass
 
     def save(self):
-        """Atomically persist settings unless the process is write-locked."""
+        """Atomically persist settings unless the process is write-locked.
+
+        Windows 文件锁定防御：
+          - 使用 tmp + replace 原子写入。
+          - 若目标文件被其他进程（如杀毒软件、备份工具）锁定，
+            replace() 会抛出 PermissionError；此时进行 3 次短暂重试。
+          - 最终仍失败时抛出 RuntimeError，确保调用方知悉保存未成功。
+          - 临时文件在失败时会被清理，避免磁盘污染。
+        """
         self._ensure_writable()
+        tmp = CONFIG_FILE.with_suffix(".tmp")
         try:
-            tmp = CONFIG_FILE.with_suffix(".tmp")
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
-            tmp.replace(CONFIG_FILE)
-        except Exception as exc:
-            print(f"Failed to save config: {exc}")
+            # Windows 上若文件被其他进程锁定，replace 可能失败；短暂重试
+            for _attempt in range(3):
+                try:
+                    tmp.replace(CONFIG_FILE)
+                    break
+                except PermissionError:
+                    import time
+                    time.sleep(0.05)
+            else:
+                raise RuntimeError(
+                    f"无法保存配置到 {CONFIG_FILE}：文件可能被其他进程锁定。"
+                )
+        except Exception:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
+            raise
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)
@@ -222,7 +250,15 @@ class Config:
             self._data["backup_dir"] = DEFAULT_CONFIG["backup_dir"]
         if self._data.get("provider_store_path") == LEGACY_DEFAULT_PROVIDER_STORE:
             self._data["provider_store_path"] = DEFAULT_CONFIG["provider_store_path"]
-        for key in ("backup_dir", "provider_store_path", "temp_dir", "diagnostics_dir", "exports_dir", "request_log_path"):
+        for key in (
+            "backup_dir",
+            "provider_store_path",
+            "temp_dir",
+            "diagnostics_dir",
+            "exports_dir",
+            "request_log_path",
+            "debug_log_path",
+        ):
             if not self._data.get(key):
                 self._data[key] = DEFAULT_CONFIG[key]
         if not isinstance(self._data.get("theme_custom"), dict):
@@ -330,6 +366,14 @@ class Config:
             self._data["request_log_max_mb"] = max(float(self._data.get("request_log_max_mb", 50)), 1.0)
         except (TypeError, ValueError):
             self._data["request_log_max_mb"] = 50
+        try:
+            self._data["debug_log_retention_days"] = max(int(self._data.get("debug_log_retention_days", 7)), 1)
+        except (TypeError, ValueError):
+            self._data["debug_log_retention_days"] = 7
+        try:
+            self._data["debug_log_max_mb"] = max(float(self._data.get("debug_log_max_mb", 10)), 1.0)
+        except (TypeError, ValueError):
+            self._data["debug_log_max_mb"] = 10
         try:
             self._data["proxy_upstream_timeout_seconds"] = min(max(int(self._data.get("proxy_upstream_timeout_seconds", 120)), 1), 3600)
         except (TypeError, ValueError):

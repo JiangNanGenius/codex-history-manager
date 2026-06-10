@@ -57,6 +57,13 @@ def responses_to_anthropic_messages(
         if text:
             system_parts.append(text)
 
+    # image_generation fallback hint
+    if _has_image_generation_tool(body.get("tools")):
+        system_parts.append(
+            "If the user asks to generate, create, or draw an image, "
+            "use the generate_image function with a detailed prompt."
+        )
+
     if "input" in body:
         _append_responses_input(body["input"], messages, system_parts)
 
@@ -789,6 +796,39 @@ def _responses_tools_to_anthropic_tools(tools: Any) -> List[Dict[str, Any]]:
                     result.append(_function_tool_to_anthropic(copy_sub))
         elif _is_responses_web_search_tool(tool):
             result.append(_web_search_tool_to_anthropic(tool))
+        elif tool_type == "image_generation":
+            # Fallback: convert image_generation to an Anthropic function tool
+            result.append({
+                "name": "generate_image",
+                "description": (
+                    "Generate an image based on a text prompt. "
+                    "Call this when the user asks to create, draw, or generate an image."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "Detailed description of the image to generate",
+                        },
+                        "size": {
+                            "type": "string",
+                            "enum": ["1024x1024", "1024x1536", "1536x1024", "512x512"],
+                            "description": "Image dimensions (optional)",
+                        },
+                        "quality": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high"],
+                            "description": "Image quality (optional)",
+                        },
+                        "n": {
+                            "type": "integer",
+                            "description": "Number of images to generate (optional, default 1)",
+                        },
+                    },
+                    "required": ["prompt"],
+                },
+            })
         elif tool_type in ("custom", "built_in", "web_search_preview"):
             raise AnthropicConversionError(
                 f"unsupported Responses tool for Anthropic adapter: {tool_type}. "
@@ -839,6 +879,15 @@ def _responses_tool_choice_to_anthropic(tool_choice: Any, parallel_tool_calls: A
     if choice_type in ("function", "custom", "tool") and name:
         return {"type": "tool", "name": name, "disable_parallel_tool_use": disable_parallel}
     return None
+
+
+def _has_image_generation_tool(tools: Any) -> bool:
+    if not isinstance(tools, list):
+        return False
+    for tool in tools:
+        if isinstance(tool, dict) and str(tool.get("type") or "") == "image_generation":
+            return True
+    return False
 
 
 def _is_responses_web_search_tool(tool: Dict[str, Any]) -> bool:

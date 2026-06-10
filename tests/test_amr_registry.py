@@ -501,6 +501,77 @@ class TestRouteIntegration:
         assert isinstance(engine, AdaptiveModelRotation)
         assert engine.get_group_context_window("test") == 1000
 
+    def test_route_image_candidates_selects_image_model(self, tmp_path):
+        """使用 candidate_list='image_candidates' 应正确选择图像模型。"""
+        reg = AMRRegistry(str(tmp_path / "amr.json"))
+        reg.create_group({
+            "id": "test",
+            "display_name": "Test",
+            "candidates": [
+                {"id": "c1", "provider_id": "p1", "model_id": "m1", "priority": 1, "enabled": True, "context_window": 1000, "capabilities": {"text": True}},
+            ],
+            "image_candidates": [
+                {"id": "img1", "provider_id": "p2", "model_id": "gpt-image-1", "priority": 1, "enabled": True, "context_window": 0, "capabilities": {"images": True}},
+            ],
+        })
+
+        result = reg.route("test", {"images"}, 0, candidate_list="image_candidates")
+        assert result["success"] is True
+        assert result["candidate_id"] == "img1"
+        assert result["provider_id"] == "p2"
+        assert result["model_id"] == "gpt-image-1"
+
+    def test_route_image_candidates_empty_returns_error(self, tmp_path):
+        """image_candidates 为空时应返回失败，不回退到 candidates。"""
+        reg = AMRRegistry(str(tmp_path / "amr.json"))
+        reg.create_group({
+            "id": "test",
+            "display_name": "Test",
+            "candidates": [
+                {"id": "c1", "provider_id": "p1", "model_id": "m1", "priority": 1, "enabled": True, "context_window": 1000, "capabilities": {"text": True}},
+            ],
+            "image_candidates": [],
+        })
+
+        result = reg.route("test", {"images"}, 0, candidate_list="image_candidates")
+        assert result["success"] is False
+        assert "image_candidates" in result["error"]
+
+    def test_build_from_providers_separates_native_and_domestic_image_models(self, tmp_path):
+        """build_from_providers 应将纯原生代理和国内代理的图像模型都归入 image_candidates。"""
+        reg = AMRRegistry(str(tmp_path / "amr.json"))
+        mock_pr = MagicMock()
+        mock_pr.list_providers.return_value = {
+            "providers": [
+                {
+                    "id": "native-proxy",
+                    "enabled": True,
+                    "api_format": "openai_responses",
+                    "capabilities": {"text": True},
+                    "models": [
+                        {"id": "gpt-image-2", "enabled": True, "context_window": 0, "capabilities": normalize_capabilities({"images": True, "text": False})},
+                    ],
+                },
+                {
+                    "id": "domestic-proxy",
+                    "enabled": True,
+                    "api_format": "openai_responses",
+                    "capabilities": {"text": True},
+                    "models": [
+                        {"id": "qwen-image-2.0-pro", "enabled": True, "context_window": 0, "capabilities": normalize_capabilities({"images": True, "text": False})},
+                    ],
+                },
+            ]
+        }
+
+        group = reg.build_from_providers(mock_pr)
+
+        assert len(group["image_candidates"]) == 2
+        image_ids = {c["id"] for c in group["image_candidates"]}
+        assert "native-proxy/gpt-image-2" in image_ids
+        assert "domestic-proxy/qwen-image-2.0-pro" in image_ids
+        assert len(group["candidates"]) == 0
+
 
 # ─────────────── Export ───────────────
 
