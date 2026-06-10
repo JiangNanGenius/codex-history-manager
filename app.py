@@ -1467,18 +1467,112 @@ def create_app() -> Flask:
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest(), payload
 
-    def _history_sync_skip_payload(signature: str, signature_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _history_sync_skip_payload(
+        signature: str,
+        signature_payload: Dict[str, Any],
+        *,
+        reason: str = "history_sync_signature_unchanged",
+        message: str = "历史同步目标未变化，已跳过全量扫描。",
+    ) -> Dict[str, Any]:
         return {
             "success": True,
             "skipped": True,
-            "reason": "history_sync_signature_unchanged",
-            "message": "历史同步目标未变化，已跳过全量扫描。",
+            "reason": reason,
+            "message": message,
             "backup_path": "",
             "skipped_backup": True,
             "backup_before_sync": False,
             "signature": signature,
             "signature_payload": signature_payload,
         }
+
+    def _history_provider_family(provider: str) -> str:
+        normalized = str(provider or "").strip().lower()
+        if normalized in {"openai", "official", "chatgpt", "official_oauth", "openai_official"}:
+            return "official"
+        if normalized:
+            return "third_party"
+        return ""
+
+    def _history_sync_skip_decision(target_provider: str) -> Dict[str, Any]:
+        target_family = _history_provider_family(target_provider)
+        decision = {
+            "skip": False,
+            "reason": "",
+            "message": "",
+            "target_family": target_family,
+            "current_family": "",
+            "distribution": [],
+        }
+        if not target_family:
+            return decision
+        try:
+            distribution = db.get_provider_distribution()
+        except Exception as exc:
+            diagnostics_collector.record_error("history_sync.provider_distribution", str(exc))
+            return decision
+        if not distribution:
+            decision.update({
+                "skip": True,
+                "reason": "history_sync_no_history",
+                "message": "没有检测到可迁移的历史记录，已跳过历史迁移。",
+                "current_family": "empty",
+            })
+            return decision
+        families = set()
+        for row in distribution:
+            provider = str((row or {}).get("provider") or "").strip()
+            family = _history_provider_family(provider)
+            count = int((row or {}).get("count") or 0)
+            decision["distribution"].append({
+                "provider": provider,
+                "count": count,
+                "family": family or "unknown",
+            })
+            if family:
+                families.add(family)
+            else:
+                families.add("unknown")
+        if len(families) != 1:
+            decision["current_family"] = "mixed" if families else "empty"
+            return decision
+        current_family = next(iter(families))
+        decision["current_family"] = current_family
+        if current_family == target_family:
+            decision.update({
+                "skip": True,
+                "reason": "history_sync_same_provider_family",
+                "message": "当前历史记录与启动目标同属官方或第三方，已跳过历史迁移。",
+            })
+        return decision
+
+    def _persist_history_sync_signature(
+        signature: str,
+        target_provider: str,
+        target_model: str,
+        sync_payload: Dict[str, Any],
+    ) -> None:
+        try:
+            config.update({
+                "history_sync_signature": signature,
+                "history_sync_last_at": _codex_start_now(),
+                "history_sync_last_result": {
+                    "target_provider": target_provider,
+                    "target_model": target_model,
+                    "changed": bool(sync_payload.get("changed")),
+                    "skipped": bool(sync_payload.get("skipped")),
+                    "reason": sync_payload.get("reason", ""),
+                    "db_threads_seen": sync_payload.get("db_threads_seen", 0),
+                    "db_threads_updated": sync_payload.get("db_threads_updated", 0),
+                    "rollout_files_seen": sync_payload.get("rollout_files_seen", 0),
+                    "rollout_files_updated": sync_payload.get("rollout_files_updated", 0),
+                    "index_rows_seen": sync_payload.get("index_rows_seen", 0),
+                    "index_rows_updated": sync_payload.get("index_rows_updated", 0),
+                    "malformed_lines": sync_payload.get("malformed_lines", 0),
+                },
+            })
+        except Exception as exc:
+            diagnostics_collector.record_error("history_sync.signature_persist", str(exc))
 
     def _official_history_sync_target(mgr: CodexConfigManager) -> tuple[str, str, Dict[str, Any]]:
         try:
@@ -1529,14 +1623,60 @@ def create_app() -> Flask:
             )
             return sync_payload, 200
 
+        skip_decision = _history_sync_skip_decision(target_provider)
+        if not force_history_sync and not backup_before and skip_decision.get("skip"):
+            sync_payload = _history_sync_skip_payload(
+                sync_signature,
+                sync_signature_payload,
+                reason=skip_decision.get("reason") or "history_sync_same_provider_family",
+                message=skip_decision.get("message") or "当前历史记录与启动目标同类，已跳过历史迁移。",
+            )
+            sync_payload["target_provider"] = target_provider
+            sync_payload["target_model"] = target_model
+            sync_payload["target_family"] = skip_decision.get("target_family", "")
+            sync_payload["current_family"] = skip_decision.get("current_family", "")
+            sync_payload["provider_distribution"] = skip_decision.get("distribution", [])
+            _persist_history_sync_signature(sync_signature, target_provider, target_model, sync_payload)
+            _set_codex_start_progress(
+                job_id,
+                "history_sync_skipped",
+                68,
+                sync_payload["message"],
+                sync=sync_payload,
+            )
+            return sync_payload, 200
+
         _set_codex_start_progress(job_id, "history_sync", progress, changed_message)
-        sync_payload, sync_status = _run_sync_with_backup(
-            backup_mgr,
-            path_config=path_config,
-            target_provider=target_provider,
-            target_model=target_model,
-            backup_before=backup_before,
-        )
+        heartbeat_stop = threading.Event()
+        if job_id:
+            interval = 0.15 if app.config.get("TESTING") else 3.0
+            max_progress = min(66, max(progress + 1, progress + 24))
+
+            def heartbeat() -> None:
+                started_at = time.time()
+                tick = 0
+                while not heartbeat_stop.wait(interval):
+                    tick += 1
+                    elapsed = int(time.time() - started_at)
+                    progress_value = min(max_progress, progress + tick)
+                    _set_codex_start_progress(
+                        job_id,
+                        "history_sync",
+                        progress_value,
+                        f"{changed_message} 已用时 {elapsed} 秒，仍在扫描历史记录...",
+                    )
+
+            threading.Thread(target=heartbeat, daemon=True).start()
+        try:
+            sync_payload, sync_status = _run_sync_with_backup(
+                backup_mgr,
+                path_config=path_config,
+                target_provider=target_provider,
+                target_model=target_model,
+                backup_before=backup_before,
+            )
+        finally:
+            heartbeat_stop.set()
         if sync_status >= 400:
             return sync_payload, sync_status
 
@@ -1544,25 +1684,7 @@ def create_app() -> Flask:
         sync_payload["signature_payload"] = sync_signature_payload
         sync_payload["target_provider"] = target_provider
         sync_payload["target_model"] = target_model
-        try:
-            config.update({
-                "history_sync_signature": sync_signature,
-                "history_sync_last_at": _codex_start_now(),
-                "history_sync_last_result": {
-                    "target_provider": target_provider,
-                    "target_model": target_model,
-                    "changed": bool(sync_payload.get("changed")),
-                    "db_threads_seen": sync_payload.get("db_threads_seen", 0),
-                    "db_threads_updated": sync_payload.get("db_threads_updated", 0),
-                    "rollout_files_seen": sync_payload.get("rollout_files_seen", 0),
-                    "rollout_files_updated": sync_payload.get("rollout_files_updated", 0),
-                    "index_rows_seen": sync_payload.get("index_rows_seen", 0),
-                    "index_rows_updated": sync_payload.get("index_rows_updated", 0),
-                    "malformed_lines": sync_payload.get("malformed_lines", 0),
-                },
-            })
-        except Exception as exc:
-            diagnostics_collector.record_error("history_sync.signature_persist", str(exc))
+        _persist_history_sync_signature(sync_signature, target_provider, target_model, sync_payload)
         _set_codex_start_progress(job_id, "history_synced", 68, "历史同步完成，正在准备启动 Codex...", sync=sync_payload)
         return sync_payload, sync_status
 

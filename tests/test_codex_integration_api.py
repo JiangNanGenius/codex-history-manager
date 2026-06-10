@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -38,7 +39,8 @@ class CodexIntegrationApiTest(unittest.TestCase):
             config.write_lock_reason.return_value = ""
             MockConfig.return_value = config
             self.last_config = config
-            MockDB.return_value.get_provider_distribution.return_value = []
+            self.db = MockDB.return_value
+            self.db.get_provider_distribution.return_value = [{"provider": "openai", "count": 1}]
             MockLocalProxyServer.return_value.status.return_value = {}
             self.proxy_server = MockLocalProxyServer.return_value
             self.provider_registry = MockProviderRegistry.return_value
@@ -367,7 +369,9 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertEqual(data["start_mode"], "official_direct")
         self.assertEqual(data["sync"]["target_provider"], "openai")
         self.assertEqual(data["sync"]["target_model"], "gpt-5.5")
-        sync_with_backup.assert_called_once()
+        self.assertTrue(data["sync"]["skipped"])
+        self.assertEqual(data["sync"]["reason"], "history_sync_same_provider_family")
+        sync_with_backup.assert_not_called()
         disable_proxy.assert_called_once()
         start.assert_called_once()
         self.assertFalse(start.call_args.kwargs["use_codex_plus_plus"])
@@ -413,7 +417,9 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertTrue(data["official_mode"])
         self.assertEqual(data["sync"]["target_provider"], "openai")
         self.assertEqual(data["sync"]["target_model"], "gpt-5.5")
-        sync_with_backup.assert_called_once()
+        self.assertTrue(data["sync"]["skipped"])
+        self.assertEqual(data["sync"]["reason"], "history_sync_same_provider_family")
+        sync_with_backup.assert_not_called()
         disable_proxy.assert_called_once()
         self.proxy_server.start.assert_not_called()
 
@@ -467,6 +473,30 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertEqual(data["sync"]["target_model"], "gpt-5.5")
         sync_with_backup.assert_not_called()
 
+    def test_start_codex_official_mode_migrates_third_party_history_to_official(self):
+        app = self._app()
+        self.db.get_provider_distribution.return_value = [{"provider": "codex_enhance_manager", "count": 4}]
+        fake_mgr = MagicMock()
+        fake_mgr.read_auth.return_value = {"auth_mode": "chatgpt", "tokens": {"access_token": "official"}}
+        fake_mgr.read_config.return_value = {"model": "gpt-5.5"}
+        with (
+            patch("app.CodexConfigManager", return_value=fake_mgr),
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": True}, 200)) as sync_with_backup,
+            patch("app.disable_codex_enhance_provider_config", return_value={"success": True, "changed": True}),
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", return_value=(True, "started")),
+        ):
+            response = app.test_client().post("/api/codex/start", json={"official_mode": True})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["official_mode"])
+        self.assertEqual(data["sync"]["target_provider"], "openai")
+        self.assertEqual(data["sync"]["target_model"], "gpt-5.5")
+        sync_with_backup.assert_called_once()
+
     def test_start_codex_current_focus_third_party_uses_proxy_mode(self):
         app = self._app()
         provider = {
@@ -503,6 +533,95 @@ class CodexIntegrationApiTest(unittest.TestCase):
         sync_with_backup.assert_called_once()
         self.assertEqual(sync_with_backup.call_args.kwargs["target_provider"], "codex_enhance_manager")
         self.assertEqual(sync_with_backup.call_args.kwargs["target_model"], "auto")
+
+    def test_start_codex_current_focus_third_party_skips_history_when_already_third_party(self):
+        app = self._app()
+        self.db.get_provider_distribution.return_value = [{"provider": "codex_enhance_manager", "count": 6}]
+        provider = {
+            "id": "volcengine-plan",
+            "display_name": "Ark Coding Plan",
+            "enabled": True,
+            "switch_only": False,
+            "local_proxy_routing": True,
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        }
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "volcengine-plan",
+            "providers": [provider],
+        }
+        self.proxy_server.status.return_value = {
+            "running": True,
+            "port": 51235,
+            "base_url": "http://127.0.0.1:51235/v1",
+        }
+        with (
+            patch("app._run_sync_with_backup") as sync_with_backup,
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", return_value=(True, "started")),
+        ):
+            response = app.test_client().post("/api/codex/start", json={"start_mode": "current_focus"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["start_mode"], "preserve_login_proxy")
+        self.assertTrue(data["sync"]["skipped"])
+        self.assertEqual(data["sync"]["reason"], "history_sync_same_provider_family")
+        self.assertEqual(data["sync"]["current_family"], "third_party")
+        self.assertEqual(data["sync"]["target_family"], "third_party")
+        sync_with_backup.assert_not_called()
+
+    def test_start_codex_history_sync_reports_heartbeat_while_running(self):
+        app = self._app()
+        provider = {
+            "id": "volcengine-plan",
+            "display_name": "Ark Coding Plan",
+            "enabled": True,
+            "switch_only": False,
+            "local_proxy_routing": True,
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        }
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "volcengine-plan",
+            "providers": [provider],
+        }
+        self.proxy_server.status.return_value = {
+            "running": True,
+            "port": 51235,
+            "base_url": "http://127.0.0.1:51235/v1",
+        }
+
+        def slow_sync(*args, **kwargs):
+            time.sleep(0.45)
+            return {"success": True, "changed": False}, 200
+
+        with (
+            patch("app._run_sync_with_backup", side_effect=slow_sync),
+            patch("app.is_codex_running", return_value=(False, [])),
+            patch("app._tcp_port_is_available", return_value=True),
+            patch("app.start_codex", return_value=(True, "started")),
+        ):
+            client = app.test_client()
+            started = client.post("/api/codex/start", json={"start_mode": "current_focus", "async": True})
+            self.assertEqual(started.status_code, 200)
+            status_url = started.get_json()["status_url"]
+            saw_heartbeat = False
+            for _ in range(12):
+                time.sleep(0.08)
+                status = client.get(status_url).get_json()
+                if status.get("stage") == "history_sync" and int(status.get("progress") or 0) > 20:
+                    saw_heartbeat = True
+                    break
+            self.assertTrue(saw_heartbeat)
+            for _ in range(12):
+                status = client.get(status_url).get_json()
+                if status.get("status") == "complete":
+                    break
+                time.sleep(0.08)
+            self.assertEqual(status.get("status"), "complete")
 
     def test_start_codex_skips_history_sync_when_signature_is_current(self):
         app = self._app()
@@ -609,7 +728,9 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertTrue(data["codex_injection_enabled"])
         self.assertTrue(data["codex_injection_active"])
         self.assertEqual(data["codex_cdp_port"], 51240)
-        sync_with_backup.assert_called_once()
+        self.assertTrue(data["sync"]["skipped"])
+        self.assertEqual(data["sync"]["reason"], "history_sync_same_provider_family")
+        sync_with_backup.assert_not_called()
         self.assertTrue(start.call_args.kwargs["enable_cdp_injection"])
         self.assertEqual(start.call_args.kwargs["cdp_port"], 51240)
         self.last_config.update.assert_any_call({

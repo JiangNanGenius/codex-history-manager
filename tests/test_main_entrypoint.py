@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import webview
@@ -27,6 +29,20 @@ class MainEntrypointTest(unittest.TestCase):
                 patch.object(main, "_port_is_free") as port_is_free:
             self.assertEqual(main._select_backend_port(main.DEFAULT_PORT), main.DEFAULT_PORT)
             port_is_free.assert_not_called()
+
+    def test_desktop_log_rotation_keeps_current_and_two_previous(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_dir = Path(tmpdir)
+            (log_dir / "desktop.log").write_text("current", encoding="utf-8")
+            (log_dir / "desktop.1.log").write_text("previous-1", encoding="utf-8")
+            (log_dir / "desktop.2.log").write_text("previous-2", encoding="utf-8")
+
+            target = main._rotate_desktop_logs(log_dir=log_dir, retain_count=3)
+
+            self.assertEqual(target, log_dir / "desktop.log")
+            self.assertFalse((log_dir / "desktop.log").exists())
+            self.assertEqual((log_dir / "desktop.1.log").read_text(encoding="utf-8"), "current")
+            self.assertEqual((log_dir / "desktop.2.log").read_text(encoding="utf-8"), "previous-1")
 
     def test_set_backend_port_updates_webview_url(self):
         original_port = main.PORT

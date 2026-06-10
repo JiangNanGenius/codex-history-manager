@@ -48,6 +48,8 @@ let providerState = {
     requestPreview: null,
     modelFetchPreview: null,
     focus_provider_id: '',
+    overviewRuntimeStatus: null,
+    overviewProxyStatus: null,
 };
 
 const QUICK_SETUP_STEP_COUNT = 5;
@@ -107,6 +109,7 @@ async function loadEnhanceOverview() {
     setStatus(t('loading') || 'Loading...');
     setTimeout(async () => {
         await ensureProviderData();
+        await refreshOverviewRuntimeStatus();
         if (currentPage !== 'overview') return;
         renderEnhanceOverview();
         setStatus('Overview loaded');
@@ -155,6 +158,19 @@ async function ensureProviderData() {
         providerState.draftError = err.message;
         showToast(t('failed') + err.message, 'error');
     }
+}
+
+async function refreshOverviewRuntimeStatus() {
+    const [syncResult, proxyResult] = await Promise.allSettled([
+        api('/api/sync/status'),
+        api('/api/proxy/status'),
+    ]);
+    providerState.overviewRuntimeStatus = syncResult.status === 'fulfilled'
+        ? syncResult.value
+        : { error: syncResult.reason && syncResult.reason.message ? syncResult.reason.message : t('unknownError') };
+    providerState.overviewProxyStatus = proxyResult.status === 'fulfilled'
+        ? proxyResult.value
+        : { running: false, error: proxyResult.reason && proxyResult.reason.message ? proxyResult.reason.message : t('unknownError') };
 }
 
 async function refreshCatalogPreview(focusProviderId = '') {
@@ -230,6 +246,7 @@ function renderEnhanceOverview() {
     const alwaysVisible = providers.filter(p => p.catalog_visibility === 'always_visible').length;
     const selectedModels = providers.reduce((sum, p) => sum + (p.models || []).filter(m => m.selected).length, 0);
     const mediaProviders = providers.filter(p => p.media_profile && p.media_profile.default_image_provider).length;
+    const focusProvider = providers.find(p => p.id === providerState.focus_provider_id) || null;
 
     root.innerHTML = `
         <div class="animate-in">
@@ -243,6 +260,10 @@ function renderEnhanceOverview() {
                 ${renderStatusPill('preview', t('codexWritesPreviewOnly'), 'amber')}
                 ${renderStatusPill('manual', t('codexMutationManual'), 'accent')}
             </div>
+        </div>
+
+        <div class="mt-6">
+            ${renderCurrentProviderOverviewCard(focusProvider, providerState.overviewRuntimeStatus, providerState.overviewProxyStatus)}
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-6">
@@ -270,6 +291,53 @@ function renderEnhanceOverview() {
     `;
     if (typeof triggerStaggerAnimations === 'function') triggerStaggerAnimations(root);
     if (typeof attachRippleToButtons === 'function') attachRippleToButtons(root);
+}
+
+function renderCurrentProviderOverviewCard(focusProvider, runtimeStatus, proxyStatus) {
+    const runtime = runtimeStatus || {};
+    const proxy = proxyStatus || {};
+    const focusName = focusProvider
+        ? (focusProvider.display_name || focusProvider.provider_visible_alias || focusProvider.short_alias || focusProvider.id)
+        : t('notConfigured');
+    const focusId = focusProvider ? (focusProvider.id || '') : '';
+    const focusMode = focusProvider
+        ? (isCodexLoginProvider(focusProvider) || focusProvider.switch_only || focusProvider.local_proxy_routing === false
+            ? t('overviewOfficialSwitchOnly')
+            : t('overviewLocalProxyRoute'))
+        : t('overviewNoFocusProvider');
+    const codexProvider = runtime.current_provider || runtime.raw_current_provider || t('statusUnknown');
+    const codexModel = runtime.current_model || runtime.raw_current_model || t('statusUnknown');
+    const authMode = runtime.auth_mode ? providerOptionLabel(runtime.auth_mode) : t('statusUnknown');
+    const codexRunning = runtime.codex_running ? t('statusRunning') : t('statusStopped');
+    const proxyBaseUrl = proxy.base_url || (proxy.port ? `http://127.0.0.1:${proxy.port}/v1` : '');
+    const proxyLine = proxy.running
+        ? (proxyBaseUrl || t('statusRunning'))
+        : (proxy.error ? `${t('statusStopped')} · ${proxy.error}` : t('statusStopped'));
+    const proxyTone = proxy.running ? 'emerald' : 'dark';
+    return `
+        <div class="card stagger-item">
+            <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
+                <div>
+                    <div class="card-label">${escapeHtml(t('overviewCurrentProvider'))}</div>
+                    <h3 class="text-xl font-semibold text-white mt-1">${escapeHtml(focusName)}</h3>
+                    <p class="text-xs text-dark-400 mt-1">${escapeHtml(focusId || t('emptyValue'))} · ${escapeHtml(focusMode)}</p>
+                </div>
+                <div class="enhance-status-strip">
+                    ${renderStatusPill('codex', `${t('codexLabel')}: ${codexRunning}`, runtime.codex_running ? 'emerald' : 'dark')}
+                    ${renderStatusPill('proxy', `${t('localProxyTitle')}: ${proxy.running ? t('statusRunning') : t('statusStopped')}`, proxyTone)}
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-sm">
+                ${renderReadonlyKV(t('overviewFocusedProvider'), focusName)}
+                ${renderReadonlyKV(t('overviewCodexProvider'), codexProvider)}
+                ${renderReadonlyKV(t('modelLabel'), codexModel)}
+                ${renderReadonlyKV(t('authMode'), authMode)}
+            </div>
+            <div class="mt-3 rounded-md border border-dark-800 bg-dark-900/50 px-3 py-2 text-xs text-dark-400 break-all">
+                ${escapeHtml(t('overviewProxyStatus'))}: ${escapeHtml(proxyLine)}
+            </div>
+        </div>
+    `;
 }
 
 /**

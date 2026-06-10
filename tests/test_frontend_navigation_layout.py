@@ -75,6 +75,18 @@ def test_navigation_resets_window_and_main_scroll():
     assert "document.querySelector('main')?.scrollTo({ top: 0, left: 0, behavior: 'auto' });" in js
 
 
+def test_provider_overview_shows_current_runtime_provider():
+    providers_js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    i18n_js = (ROOT / "static" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+    assert "refreshOverviewRuntimeStatus" in providers_js
+    assert "/api/sync/status" in providers_js
+    assert "/api/proxy/status" in providers_js
+    assert "renderCurrentProviderOverviewCard" in providers_js
+    assert "overviewCurrentProvider" in i18n_js
+    assert "overviewCodexProvider" in i18n_js
+
+
 def test_settings_wizard_exposes_prompt_and_source_link():
     html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
     js = (ROOT / "static" / "js" / "settings.js").read_text(encoding="utf-8")

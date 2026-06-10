@@ -36,6 +36,8 @@ import queue
 import socket
 import time
 import webview
+from datetime import datetime
+from pathlib import Path
 
 try:
     import pystray
@@ -54,6 +56,7 @@ PORT = DEFAULT_PORT
 URL = f"http://127.0.0.1:{PORT}"
 APP_TITLE = "Codex 历史记录管理器"
 SMOKE_TEST_ARG = "--smoke-test"
+DESKTOP_LOG_RETAIN_COUNT = 3
 DESKTOP_LAUNCH_ACTION_SHOW_WINDOW = "show_window"
 DESKTOP_LAUNCH_ACTION_START_CODEX = "start_codex"
 SMOKE_TEST_ENV = "CODEX_ENHANCE_MANAGER_SMOKE_TEST"
@@ -106,6 +109,63 @@ desktop_api = None
 single_instance_lock = None
 loaded_icon_handles: list[int] = []
 pending_launch_action = DESKTOP_LAUNCH_ACTION_SHOW_WINDOW
+desktop_log_handle = None
+
+
+def _desktop_log_files(log_dir=None, retain_count: int = DESKTOP_LOG_RETAIN_COUNT) -> list[Path]:
+    from app_paths import app_data_path
+
+    safe_count = max(1, int(retain_count or 1))
+    base_dir = Path(log_dir) if log_dir is not None else app_data_path("logs")
+    files = [base_dir / "desktop.log"]
+    files.extend(base_dir / f"desktop.{index}.log" for index in range(1, safe_count))
+    return files
+
+
+def _rotate_desktop_logs(log_dir=None, retain_count: int = DESKTOP_LOG_RETAIN_COUNT) -> Path:
+    files = _desktop_log_files(log_dir=log_dir, retain_count=retain_count)
+    files[0].parent.mkdir(parents=True, exist_ok=True)
+    for index in range(len(files) - 1, 0, -1):
+        if files[index].exists():
+            files[index].unlink()
+        if files[index - 1].exists():
+            files[index - 1].replace(files[index])
+    return files[0]
+
+
+def _configure_desktop_run_logging(retain_count: int = DESKTOP_LOG_RETAIN_COUNT) -> dict:
+    global desktop_log_handle
+    if os.environ.get("CODEX_ENHANCE_MANAGER_DISABLE_RUN_LOGS") == "1":
+        return {"success": True, "disabled": True}
+    try:
+        from app_paths import ensure_app_dirs
+
+        ensure_app_dirs()
+        log_path = _rotate_desktop_logs(retain_count=retain_count)
+        desktop_log_handle = open(log_path, "w", encoding="utf-8", buffering=1)
+        sys.stdout = desktop_log_handle
+        sys.stderr = desktop_log_handle
+        print(f"Codex Enhance Manager started at {datetime.now().isoformat(timespec='seconds')}")
+        print(f"argv={sys.argv}")
+        return {
+            "success": True,
+            "path": str(log_path),
+            "retained": [str(path) for path in _desktop_log_files(retain_count=retain_count)],
+        }
+    except Exception as exc:
+        try:
+            print(f"Desktop logging setup failed: {exc}")
+        except Exception:
+            pass
+        return {"success": False, "error": str(exc)}
+
+
+def _flush_desktop_run_logging() -> None:
+    try:
+        if desktop_log_handle is not None:
+            desktop_log_handle.flush()
+    except Exception:
+        pass
 
 
 def _resource_path(name: str) -> str:
@@ -1382,6 +1442,7 @@ def _exit_app(window):
                 candidate.destroy()
         except Exception:
             pass
+    _flush_desktop_run_logging()
     # 先尝试正常退出，让 Python 执行 atexit、刷新缓冲区等清理
     try:
         os._exit(0)
@@ -1723,6 +1784,7 @@ def main():
     """
     global main_window, monitor_window, desktop_api, pending_launch_action
     pending_launch_action = _launch_action_from_args()
+    _configure_desktop_run_logging()
     if not _acquire_single_instance_lock():
         if not _request_existing_desktop_action(pending_launch_action):
             _show_existing_desktop_window()
