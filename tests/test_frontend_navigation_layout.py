@@ -118,6 +118,9 @@ def test_settings_wizard_exposes_prompt_and_source_link():
     assert "loadDebugLogs" in js
     assert "/api/debug/logs" in js
     assert "setting-plugin-unlock-enabled" in html
+    providers_js = (ROOT / "static" / "js" / "providers.js").read_text(encoding="utf-8")
+    assert "providerStoreEmptyTitle" in providers_js
+    assert "renderProviderStoreNotice" in providers_js
     assert "setting-codex-sandbox-auto-repair-enabled" in html
     assert "setting-secret-reveal-password" in html
     assert "setting-secret-reveal-password-confirm" in html

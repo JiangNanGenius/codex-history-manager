@@ -140,23 +140,20 @@ async function openSessionDetail(sessionId) {
 }
 
 function renderSessionDetail(data) {
-    // Title
     document.getElementById('detail-title').textContent = data.title || t('noTitle');
 
-    // Meta
     const meta = document.getElementById('detail-meta');
     const metaItems = [];
-    if (data.model) metaItems.push(`<span class="px-2 py-0.5 rounded bg-dark-700 text-dark-300">${t('model')}: ${escapeHtml(data.model)}</span>`);
-    if (data.model_provider) metaItems.push(`<span class="px-2 py-0.5 rounded bg-accent-500/15 text-accent-400">${t('provider')}: ${escapeHtml(data.model_provider)}</span>`);
-    if (data.tokens_used) metaItems.push(`<span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400">${t('tokens')}: ${formatNumber(data.tokens_used)}</span>`);
-    if (data.created_at) metaItems.push(`<span class="text-dark-400">${t('created')}: ${formatDate(data.created_at)}</span>`);
-    if (data.file_size_mb) metaItems.push(`<span class="text-dark-400">${t('backupSize')}: ${data.file_size_mb.toFixed(1)} MB</span>`);
+    if (data.model) metaItems.push('<span class="px-2 py-0.5 rounded bg-dark-700 text-dark-300">' + t('model') + ': ' + escapeHtml(data.model) + '</span>');
+    if (data.model_provider) metaItems.push('<span class="px-2 py-0.5 rounded bg-accent-500/15 text-accent-400">' + t('provider') + ': ' + escapeHtml(data.model_provider) + '</span>');
+    if (data.tokens_used) metaItems.push('<span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400">' + t('tokens') + ': ' + formatNumber(data.tokens_used) + '</span>');
+    if (data.created_at) metaItems.push('<span class="text-dark-400">' + t('created') + ': ' + formatDate(data.created_at) + '</span>');
+    if (data.file_size_mb) metaItems.push('<span class="text-dark-400">' + t('backupSize') + ': ' + data.file_size_mb.toFixed(1) + ' MB</span>');
     if (data.archived) metaItems.push('<span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400">' + t('filterArchived') + '</span>');
     if (data.is_large_file) metaItems.push('<span class="px-2 py-0.5 rounded bg-red-500/15 text-red-400">Large File</span>');
     if (data.truncated) metaItems.push('<span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400">Truncated</span>');
     meta.innerHTML = metaItems.join('');
 
-    // Messages
     const messagesDiv = document.getElementById('detail-messages');
     const messages = data.messages || [];
 
@@ -164,44 +161,151 @@ function renderSessionDetail(data) {
         messagesDiv.innerHTML = '<div class="text-center py-8 text-dark-400">' + t('fileNotFound') + '</div>';
         return;
     }
-
     if (messages.length === 0) {
         messagesDiv.innerHTML = '<div class="text-center py-8 text-dark-400">' + t('noMessages') + '</div>';
         return;
     }
 
-    messagesDiv.innerHTML = messages.map(msg => {
-        const role = msg.role || 'unknown';
-        const roleClass = `msg-${role}`;
-        const roleLabel = {
-            user: t('roleUser'), assistant: t('roleAssistant'), system: t('roleSystem'),
-            tool: t('roleTool'), developer: t('roleDeveloper')
-        }[role] || role;
-        const roleColor = { user: 'text-accent-400', assistant: 'text-emerald-400', system: 'text-purple-400', tool: 'text-amber-400', developer: 'text-cyan-400' }[role] || 'text-dark-400';
-        const content = formatMessageContent(msg.content || '');
-        const ts = msg.timestamp ? `<span class="text-xs text-dark-500 ml-2">${msg.timestamp.slice(0, 19)}</span>` : '';
-
-        return `
-            <div class="rounded-lg border ${roleClass} p-3">
-                <div class="flex items-center gap-1 mb-1">
-                    <span class="text-xs font-semibold ${roleColor}">${roleLabel}</span>
-                    ${ts}
-                </div>
-                <div class="msg-content text-sm text-dark-200 whitespace-pre-wrap break-words">${content}</div>
-            </div>
-        `;
+    messagesDiv.innerHTML = messages.map(function (msg, idx) {
+        return renderOneMessage(msg, idx, messages.length);
     }).join('');
+
+    initThinkingToggles(messagesDiv);
+    initSystemToggles(messagesDiv);
+    initToolToggles(messagesDiv);
 }
 
-function formatMessageContent(content) {
+function renderOneMessage(msg, idx, total) {
+    var role = msg.role || 'unknown';
+    var content = msg.content || '';
+    var ts = msg.timestamp ? msg.timestamp.slice(0, 19) : '';
+    var isLong = content.length > 3000;
+
+    var roleCfg = {
+        user:      { label: t('roleUser') || 'User',      color: 'border-l-accent-500',  bg: 'bg-accent-500/5',  icon: 'U', align: 'right' },
+        assistant: { label: t('roleAssistant') || 'Assistant', color: 'border-l-emerald-500', bg: 'bg-emerald-500/5', icon: 'A', align: 'left' },
+        system:    { label: t('roleSystem') || 'System',    color: 'border-l-purple-500', bg: 'bg-purple-500/5', icon: 'S', align: 'left',  collapsible: true },
+        developer: { label: t('roleDeveloper') || 'Dev',    color: 'border-l-cyan-500',   bg: 'bg-cyan-500/5',   icon: 'D', align: 'left',  collapsible: true },
+        tool:      { label: t('roleTool') || 'Tool',        color: 'border-l-amber-500',  bg: 'bg-amber-500/5',  icon: 'T', align: 'left',  collapsible: true }
+    };
+    var cfg = roleCfg[role] || { label: role, color: 'border-l-dark-500', bg: 'bg-dark-700/30', icon: '?', align: 'left' };
+
+    var formatted = formatMessageContent(content, role);
+    var isCollapsible = (cfg.collapsible && isLong) || (role === 'developer' && content.length > 500) || (role === 'system' && content.length > 500);
+
+    if (isCollapsible) {
+        var id = 'msg-collapse-' + idx;
+        var preview = escapeHtml(content.slice(0, 200)).replace(/\n/g, ' ') + '...';
+        return '' +
+            '<div class="session-msg mb-3 border-l-4 ' + cfg.color + ' ' + cfg.bg + ' rounded-r-lg overflow-hidden">' +
+              '<div class="flex items-center justify-between px-3 py-2 cursor-pointer sys-toggle" data-target="' + id + '">' +
+                '<div class="flex items-center gap-2">' +
+                  '<span class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-dark-600 text-dark-300">' + cfg.icon + '</span>' +
+                  '<span class="text-xs font-semibold text-dark-300">' + cfg.label + '</span>' +
+                  '<span class="text-[10px] text-dark-500">' + ts + ' (' + formatCompactNumber(content.length) + ' chars)</span>' +
+                '</div>' +
+                '<span class="text-dark-500 text-xs toggle-arrow">&#9654;</span>' +
+              '</div>' +
+              '<div id="' + id + '" class="hidden px-3 pb-3">' +
+                '<div class="msg-content text-sm text-dark-200 whitespace-pre-wrap break-words max-h-96 overflow-y-auto">' + formatted + '</div>' +
+              '</div>' +
+            '</div>';
+    }
+
+    var alignClass = cfg.align === 'right' ? 'ml-auto mr-0' : 'mr-auto ml-0';
+    var maxW = cfg.align === 'right' ? 'max-w-[75%]' : 'max-w-full';
+
+    return '' +
+        '<div class="session-msg mb-3 ' + alignClass + ' ' + maxW + '">' +
+          '<div class="border-l-4 ' + cfg.color + ' ' + cfg.bg + ' rounded-r-lg px-3 py-2">' +
+            '<div class="flex items-center gap-2 mb-1">' +
+              '<span class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-dark-600 text-dark-300">' + cfg.icon + '</span>' +
+              '<span class="text-xs font-semibold text-dark-300">' + cfg.label + '</span>' +
+              (ts ? '<span class="text-[10px] text-dark-500 ml-auto">' + ts + '</span>' : '') +
+            '</div>' +
+            '<div class="msg-content text-sm text-dark-200 whitespace-pre-wrap break-words">' + formatted + '</div>' +
+          '</div>' +
+        '</div>';
+}
+
+function formatMessageContent(content, role) {
     if (!content) return '';
-    // Basic code block detection
-    let html = escapeHtml(content);
-    // Highlight code blocks (```...```)
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
-    // Inline code
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    var html = escapeHtml(content);
+
+    html = html.replace(/&lt;thinking&gt;([\s\S]*?)&lt;\/thinking&gt;/g, function (match, body) {
+        var id = 'think-' + Math.random().toString(36).slice(2, 8);
+        var preview = body.slice(0, 150).replace(/\n/g, ' ') + '...';
+        return '' +
+            '<div class="thinking-block my-2 rounded border border-purple-500/30 bg-purple-500/5">' +
+              '<div class="flex items-center gap-1 px-2 py-1 cursor-pointer think-toggle text-xs text-purple-400" data-target="' + id + '">' +
+                '<span class="toggle-arrow">&#9654;</span> Thinking (' + formatCompactNumber(body.length) + ' chars)</div>' +
+              '<div id="' + id + '" class="hidden px-2 pb-2 text-xs text-dark-400 whitespace-pre-wrap max-h-60 overflow-y-auto">' + escapeHtml(body) + '</div>' +
+            '</div>';
+    });
+
+    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, function (match, lang, code) {
+        var langLabel = lang || 'code';
+        var escaped = escapeHtml(code);
+        return '' +
+            '<div class="code-block my-3 rounded-lg border border-dark-600 overflow-hidden">' +
+              '<div class="flex items-center justify-between px-3 py-1.5 bg-dark-700">' +
+                '<span class="text-xs text-dark-400 font-mono">' + langLabel + '</span>' +
+                '<button class="copy-btn text-xs text-dark-500 hover:text-accent-400 transition" data-code="' + escaped.replace(/"/g, '&quot;') + '">Copy</button>' +
+              '</div>' +
+              '<pre class="px-3 py-2 text-xs text-dark-200 overflow-x-auto"><code>' + escaped + '</code></pre>' +
+            '</div>';
+    });
+
+    html = html.replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-dark-700 text-accent-400 text-xs font-mono">$1</code>');
+
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong class="text-white">$1</strong>');
+
+    html = html.replace(/^#{1,3}\s+(.+)$/gm, '<h3 class="text-base font-semibold text-white mt-3 mb-1">$1</h3>');
+
+    html = html.replace(/^-{3,}$/gm, '<hr class="border-dark-600 my-3">');
+
+    html = html.replace(/^[*-]\s+(.+)$/gm, '<span class="block pl-3 text-dark-300">• </span>');
+
     return html;
+}
+
+function initThinkingToggles(container) {
+    container.querySelectorAll('.think-toggle').forEach(function (el) {
+        el.addEventListener('click', function () {
+            var target = document.getElementById(this.dataset.target);
+            if (target) {
+                target.classList.toggle('hidden');
+                var arrow = this.querySelector('.toggle-arrow');
+                if (arrow) arrow.innerHTML = target.classList.contains('hidden') ? '&#9654;' : '&#9660;';
+            }
+        });
+    });
+}
+
+function initSystemToggles(container) {
+    container.querySelectorAll('.sys-toggle').forEach(function (el) {
+        el.addEventListener('click', function () {
+            var target = document.getElementById(this.dataset.target);
+            if (target) {
+                target.classList.toggle('hidden');
+                var arrow = this.querySelector('.toggle-arrow');
+                if (arrow) arrow.innerHTML = target.classList.contains('hidden') ? '&#9654;' : '&#9660;';
+            }
+        });
+    });
+}
+
+function initToolToggles(container) {
+    container.querySelectorAll('.copy-btn').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var code = this.dataset.code || '';
+            navigator.clipboard.writeText(code).then(function () {
+                btn.textContent = 'Copied!';
+                setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+            }).catch(function () {});
+        });
+    });
 }
 
 function closeSessionDetail() {

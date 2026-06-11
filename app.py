@@ -360,7 +360,17 @@ def _official_provider_extra(mgr: CodexConfigManager | None = None) -> list[Dict
             allow_placeholder=True,
         )
         return [provider] if provider else []
-    except Exception:
+    except Exception as exc:
+        provider = build_official_login_provider({}, {}, allow_placeholder=True)
+        if isinstance(provider, dict):
+            status = dict(provider.get("status") or {})
+            status["last_success"] = False
+            status["last_error"] = f"Unable to inspect Codex official login: {exc}"
+            provider["status"] = status
+            provider["official_oauth_detected"] = False
+            provider["current_model_provider"] = ""
+            provider["current_model_provider_source"] = "unavailable"
+            return [provider]
         return []
 
 
@@ -1422,6 +1432,7 @@ def create_app() -> Flask:
         return result
 
     def _current_amr_groups_for_catalog() -> list[Dict[str, Any]]:
+        _ensure_default_amr_group_from_providers()
         try:
             payload = amr_registry.list_groups()
         except Exception as exc:
@@ -1431,6 +1442,91 @@ def create_app() -> Flask:
             return []
         groups = payload.get("groups")
         return [group for group in groups if isinstance(group, dict)] if isinstance(groups, list) else []
+
+    def _provider_routing_pairs() -> set[tuple[str, str]]:
+        """Return (provider_id, model_id) pairs that are available for local routing."""
+        try:
+            _refresh_provider_registry_path()
+            payload = _provider_payload(include_secrets=False)
+        except Exception:
+            return set()
+
+        providers = payload.get("providers") if isinstance(payload, dict) else []
+        result: set[tuple[str, str]] = set()
+        for provider in providers if isinstance(providers, list) else []:
+            if not isinstance(provider, dict):
+                continue
+            if not provider_allows_local_routing(provider):
+                continue
+            provider_id = str(provider.get("id") or "").strip()
+            if not provider_id:
+                continue
+            models = provider.get("models")
+            if not isinstance(models, list):
+                continue
+            for model in models:
+                if not isinstance(model, dict):
+                    continue
+                if not model.get("enabled", True):
+                    continue
+                model_id = str(model.get("id") or "").strip()
+                if not model_id:
+                    continue
+                result.add((provider_id, model_id))
+        return result
+
+    def _default_amr_group_has_valid_enabled_candidate(
+        group: Dict[str, Any],
+        routing_pairs: set[tuple[str, str]],
+    ) -> bool:
+        candidates = group.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            return False
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            if candidate.get("enabled", True) is False:
+                continue
+            provider_id = str(candidate.get("provider_id") or "").strip()
+            model_id = str(candidate.get("model_id") or "").strip()
+            if not provider_id or not model_id:
+                continue
+            if (provider_id, model_id) in routing_pairs:
+                return True
+        return False
+
+    def _ensure_default_amr_group_from_providers() -> Optional[Dict[str, Any]]:
+        """Ensure default AMR group has at least one valid enabled candidate when routing providers exist."""
+        routing_pairs = _provider_routing_pairs()
+        if not routing_pairs:
+            return None
+
+        try:
+            payload = amr_registry.list_groups()
+        except Exception as exc:
+            diagnostics_collector.record_error("amr_groups.list_failed", str(exc))
+            payload = None
+
+        groups = [] if not isinstance(payload, dict) else payload.get("groups")
+        if not isinstance(groups, list):
+            groups = []
+
+        default_group = next(
+            (group for group in groups if isinstance(group, dict) and str(group.get("id") or "") == DEFAULT_GROUP_ID),
+            None,
+        )
+
+        if default_group and _default_amr_group_has_valid_enabled_candidate(default_group, routing_pairs):
+            return default_group
+
+        try:
+            return amr_registry.build_from_providers(
+                provider_registry,
+                extra_providers=_current_official_provider_extra(),
+            )
+        except Exception as exc:
+            diagnostics_collector.record_error("amr_groups.build_from_providers_failed", str(exc))
+            return default_group if isinstance(default_group, dict) else None
 
     def _build_codex_proxy_model_catalog(requested_model: Any = "") -> Dict[str, Any]:
         try:

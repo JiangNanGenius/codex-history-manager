@@ -50,6 +50,13 @@ let providerState = {
     focus_provider_id: '',
     overviewRuntimeStatus: null,
     overviewProxyStatus: null,
+    providerStore: {
+        store_path: '',
+        local_provider_count: 0,
+        extra_provider_count: 0,
+        store_exists: false,
+        store_empty: false,
+    },
 };
 
 const QUICK_SETUP_STEP_COUNT = 5;
@@ -153,6 +160,13 @@ async function ensureProviderData() {
         ]);
         providerState.providers = providersData.providers || [];
         providerState.focus_provider_id = providersData.focus_provider_id || '';
+        providerState.providerStore = {
+            store_path: providersData.store_path || '',
+            local_provider_count: Number(providersData.local_provider_count || 0),
+            extra_provider_count: Number(providersData.extra_provider_count || 0),
+            store_exists: Boolean(providersData.store_exists),
+            store_empty: Boolean(providersData.store_empty),
+        };
         providerState.presets = presetsData.presets || [];
     } catch (err) {
         providerState.draftError = err.message;
@@ -640,8 +654,9 @@ function renderProvidersPage() {
             <div class="space-y-4">
                 <div class="card">
                     <h3 class="card-title">${escapeHtml(t('providerList'))}</h3>
+                    ${renderProviderStoreNotice()}
                     <div class="space-y-2 mt-3">
-                        ${providers.map(renderProviderListItem).join('') || renderEmptyState(t('noProvidersYet'))}
+                        ${providers.map(renderProviderListItem).join('') || renderProviderEmptyState()}
                     </div>
                 </div>
                 ${renderProxyControlCard()}
@@ -662,6 +677,36 @@ function renderProvidersPage() {
     syncApprovalModeControls();
     syncResponsesModeControls();
     syncMediaModeControls();
+}
+
+function renderProviderStoreNotice() {
+    const meta = providerState.providerStore || {};
+    if (!meta.store_empty) return '';
+    const storePath = meta.store_path || '';
+    const desc = meta.store_exists ? t('providerStoreEmptyDesc') : t('providerStoreMissingDesc');
+    return `
+        <div class="mt-3 rounded-lg border border-amber-700/40 bg-amber-950/20 p-3">
+            <div class="text-xs font-semibold text-amber-200">${escapeHtml(t('providerStoreEmptyTitle'))}</div>
+            <div class="text-xs text-amber-100/80 mt-1">${escapeHtml(desc)}</div>
+            ${storePath ? `<div class="text-[11px] text-amber-100/60 mt-2 break-all">${escapeHtml(storePath)}</div>` : ''}
+            <div class="flex flex-wrap gap-2 mt-3">
+                <button onclick="showCreateProviderModal()" class="btn btn-primary text-xs">${escapeHtml(t('importPreset'))}</button>
+                <button onclick="createBlankProvider()" class="btn btn-secondary text-xs">${escapeHtml(t('newProvider'))}</button>
+            </div>
+        </div>
+    `;
+}
+
+function renderProviderEmptyState() {
+    return `
+        <div class="empty-state py-6">
+            <div>${escapeHtml(t('noProvidersYet'))}</div>
+            <div class="flex flex-wrap justify-center gap-2 mt-3">
+                <button onclick="showCreateProviderModal()" class="btn btn-primary text-xs">${escapeHtml(t('importPreset'))}</button>
+                <button onclick="createBlankProvider()" class="btn btn-secondary text-xs">${escapeHtml(t('newProvider'))}</button>
+            </div>
+        </div>
+    `;
 }
 
 function renderProviderSidePanel() {

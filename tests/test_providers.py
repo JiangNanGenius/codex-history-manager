@@ -116,6 +116,19 @@ class ProviderRegistryTest(unittest.TestCase):
         self.assertTrue(official["amr_excluded"])
         self.assertFalse(provider_allows_local_routing(official))
 
+    def test_empty_store_lists_official_placeholder_and_store_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = ProviderRegistry(str(Path(tmpdir) / "providers.json"))
+            official = build_official_login_provider({}, {}, allow_placeholder=True)
+
+            listed = registry.list_providers(extra_providers=[official])
+
+            self.assertEqual(listed["local_provider_count"], 0)
+            self.assertEqual(listed["extra_provider_count"], 1)
+            self.assertFalse(listed["store_exists"])
+            self.assertTrue(listed["store_empty"])
+            self.assertEqual([p["id"] for p in listed["providers"]], ["codex_official"])
+
     def test_official_settings_ignore_legacy_provider_defaults_fields(self):
         settings = resolve_effective_codex_settings(
             {

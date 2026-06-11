@@ -215,13 +215,19 @@ class ProviderRegistry:
             包含 schema_version、store_path、providers 列表、focus_provider_id 的字典。
         """
         store = self._load_store()
-        providers = self._with_extra_providers(store.get("providers", []), extra_providers)
+        local_providers = [p for p in store.get("providers", []) if isinstance(p, dict)]
+        providers = self._with_extra_providers(local_providers, extra_providers)
+        extra_count = max(len(providers) - len(local_providers), 0)
         if not include_secrets:
             providers = redact_secrets(providers)
         return {
             "schema_version": store.get("schema_version", SCHEMA_VERSION),
             "store_path": str(self.store_path),
             "providers": providers,
+            "local_provider_count": len(local_providers),
+            "extra_provider_count": extra_count,
+            "store_exists": self.store_path.exists(),
+            "store_empty": len(local_providers) == 0,
             "focus_provider_id": store.get("focus_provider_id", ""),
             "updated_at": store.get("updated_at", ""),
         }
