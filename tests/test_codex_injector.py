@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import MagicMock, patch
 
-from codex_injector import _parse_ws_url, build_injection_script
+from codex_injector import _handle_bridge_request, _parse_ws_url, build_injection_script
 
 
 class CodexInjectorTest(unittest.TestCase):
@@ -22,6 +23,7 @@ class CodexInjectorTest(unittest.TestCase):
         self.assertIn('data-cem-toggle="codex_injection_enabled"', script)
         self.assertIn('data-cem-toggle="plugin_unlock_enabled"', script)
         self.assertIn("plugin_unlock_forced_off", script)
+        self.assertIn("bridgeResult.data || bridgeResult", script)
         self.assertIn("${rootId}", script)
 
     def test_build_injection_script_contains_marketplace_and_usage_alert_patches(self):
@@ -41,6 +43,22 @@ class CodexInjectorTest(unittest.TestCase):
         self.assertEqual(host, "127.0.0.1")
         self.assertEqual(port, 51236)
         self.assertEqual(path, "/devtools/page/abc")
+
+    def test_bridge_request_uses_injected_backend_url(self):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"success": true, "backend_url": "http://127.0.0.1:57321"}'
+
+        with patch("codex_injector.urllib.request.urlopen", return_value=response) as urlopen:
+            result = _handle_bridge_request(
+                {"path": "/api/codex-injection/status", "options": {"method": "GET"}},
+                backend_url="http://127.0.0.1:57321",
+            )
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:57321/api/codex-injection/status")
+        self.assertTrue(result["success"])
+        self.assertEqual(result["data"]["backend_url"], "http://127.0.0.1:57321")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,15 @@
 # Release Notes
 
+## v2.2.19 - 2026-06-12
+
+- Fixed Codex history migration so launches only skip when the exact previous provider/model sync is trustworthy; removed the official/third-party family shortcut that could leave history on the wrong backend.
+- Hardened local proxy request logging: running proxy instances now receive updated request-log configuration, failed domestic Responses requests are logged, and debug events report skipped, written, or failed request-log writes.
+- Changed domestic partial Responses handling to block unsupported tool/content combinations instead of silently sanitizing and forwarding altered requests.
+- Fixed native Responses forwarding to strip internal `_cem_*` fields before upstream calls, and fixed chat-to-Responses conversion after the adapter signature changed.
+- Improved Codex injection bridge handling so renderer requests use the injected backend URL and unwrap `{ success, data }` responses correctly.
+- Verified with static checks, real local-proxy HTTP smoke tests using the user's provider/AMR configuration, and packaged EXE smoke test. Full pytest was intentionally skipped because this environment has Codex-disruptive tests.
+- EXE: `74.25 MB`; SHA256: `70f3f8a675b3d37587ac3695c7a674d8e852342d3bd541dcefb8c125e4706a66`.
+
 ## v2.2.18 - 2026-06-11
 
 - Added official Codex OAuth quota reading and exposed quota snapshots in the floating monitor, quick panel, and settings flow.

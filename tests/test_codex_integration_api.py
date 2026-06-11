@@ -446,7 +446,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             start_codex=True,
         )
 
-    def test_start_codex_official_mode_skips_provider_sync_and_cpp(self):
+    def test_start_codex_official_mode_syncs_history_and_skips_cpp(self):
         app = self._app()
         fake_mgr = MagicMock()
         fake_mgr.read_auth.return_value = {"auth_mode": "chatgpt", "tokens": {"access_token": "official"}}
@@ -468,9 +468,10 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertEqual(data["start_mode"], "official_direct")
         self.assertEqual(data["sync"]["target_provider"], "openai")
         self.assertEqual(data["sync"]["target_model"], "gpt-5.5")
-        self.assertTrue(data["sync"]["skipped"])
-        self.assertEqual(data["sync"]["reason"], "history_sync_same_provider_family")
-        sync_with_backup.assert_not_called()
+        self.assertFalse(data["sync"].get("skipped", False))
+        sync_with_backup.assert_called_once()
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_provider"], "openai")
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_model"], "gpt-5.5")
         disable_proxy.assert_called_once()
         start.assert_called_once()
         self.assertFalse(start.call_args.kwargs["use_codex_plus_plus"])
@@ -516,9 +517,10 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertTrue(data["official_mode"])
         self.assertEqual(data["sync"]["target_provider"], "openai")
         self.assertEqual(data["sync"]["target_model"], "gpt-5.5")
-        self.assertTrue(data["sync"]["skipped"])
-        self.assertEqual(data["sync"]["reason"], "history_sync_same_provider_family")
-        sync_with_backup.assert_not_called()
+        self.assertFalse(data["sync"].get("skipped", False))
+        sync_with_backup.assert_called_once()
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_provider"], "openai")
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_model"], "gpt-5.5")
         disable_proxy.assert_called_once()
         self.proxy_server.start.assert_not_called()
 
@@ -549,7 +551,17 @@ class CodexIntegrationApiTest(unittest.TestCase):
         signature = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
-        self.last_config.get.side_effect = lambda key, default=None: signature if key == "history_sync_signature" else default
+        def config_get(key, default=None):
+            if key == "history_sync_signature":
+                return signature
+            if key == "history_sync_last_result":
+                return {
+                    "target_provider": "openai",
+                    "target_model": "gpt-5.5",
+                    "skipped": False,
+                }
+            return default
+        self.last_config.get.side_effect = config_get
         fake_mgr = MagicMock()
         fake_mgr.read_auth.return_value = {"access_token": "official"}
         fake_mgr.read_config.return_value = {"model": "gpt-5.5"}
@@ -634,7 +646,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertEqual(sync_with_backup.call_args.kwargs["target_provider"], "codex_enhance_manager")
         self.assertEqual(sync_with_backup.call_args.kwargs["target_model"], "amr/default")
 
-    def test_start_codex_current_focus_third_party_skips_history_when_already_third_party(self):
+    def test_start_codex_current_focus_third_party_scans_history_when_already_target_provider(self):
         app = self._app()
         self.db.get_provider_distribution.return_value = [{"provider": "codex_enhance_manager", "count": 6}]
         provider = {
@@ -657,7 +669,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             "base_url": "http://127.0.0.1:51235/v1",
         }
         with (
-            patch("app._run_sync_with_backup") as sync_with_backup,
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": False}, 200)) as sync_with_backup,
             patch("app.is_codex_running", return_value=(False, [])),
             patch("app._tcp_port_is_available", return_value=True),
             patch("app.start_codex", return_value=(True, "started")),
@@ -668,13 +680,12 @@ class CodexIntegrationApiTest(unittest.TestCase):
         data = response.get_json()
         self.assertTrue(data["success"])
         self.assertEqual(data["start_mode"], "preserve_login_proxy")
-        self.assertTrue(data["sync"]["skipped"])
-        self.assertEqual(data["sync"]["reason"], "history_sync_same_provider_family")
-        self.assertEqual(data["sync"]["current_family"], "third_party")
-        self.assertEqual(data["sync"]["target_family"], "third_party")
-        sync_with_backup.assert_not_called()
+        self.assertFalse(data["sync"].get("skipped", False))
+        sync_with_backup.assert_called_once()
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_provider"], "codex_enhance_manager")
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_model"], "amr/default")
 
-    def test_start_codex_skips_third_party_to_third_party_even_if_db_looks_official(self):
+    def test_start_codex_runs_third_party_migration_when_provider_differs(self):
         app = self._app()
         self.last_config.get.side_effect = lambda key, default=None: (
             "preserve_login_proxy" if key == "codex_last_start_mode" else default
@@ -699,7 +710,7 @@ class CodexIntegrationApiTest(unittest.TestCase):
             "base_url": "http://127.0.0.1:51235/v1",
         }
         with (
-            patch("app._run_sync_with_backup") as sync_with_backup,
+            patch("app._run_sync_with_backup", return_value=({"success": True, "changed": True}, 200)) as sync_with_backup,
             patch("app.is_codex_running", return_value=(False, [])),
             patch("app._tcp_port_is_available", return_value=True),
             patch("app.start_codex", return_value=(True, "started")),
@@ -708,11 +719,10 @@ class CodexIntegrationApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
-        self.assertTrue(data["sync"]["skipped"])
-        self.assertEqual(data["sync"]["reason"], "history_sync_same_provider_family")
-        self.assertEqual(data["sync"]["previous_start_mode"], "preserve_login_proxy")
-        self.assertEqual(data["sync"]["target_start_mode"], "preserve_login_proxy")
-        sync_with_backup.assert_not_called()
+        self.assertFalse(data["sync"].get("skipped", False))
+        self.assertEqual(data["sync"]["target_provider"], "codex_enhance_manager")
+        self.assertEqual(data["sync"]["target_model"], "amr/default")
+        sync_with_backup.assert_called_once()
 
     def test_start_codex_runs_official_to_third_party_migration_even_if_db_looks_third_party(self):
         app = self._app()
@@ -887,7 +897,17 @@ class CodexIntegrationApiTest(unittest.TestCase):
         signature = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
-        self.last_config.get.side_effect = lambda key, default=None: signature if key == "history_sync_signature" else default
+        def config_get(key, default=None):
+            if key == "history_sync_signature":
+                return signature
+            if key == "history_sync_last_result":
+                return {
+                    "target_provider": "codex_enhance_manager",
+                    "target_model": "amr/default",
+                    "skipped": False,
+                }
+            return default
+        self.last_config.get.side_effect = config_get
         with (
             patch("app._run_sync_with_backup") as sync_with_backup,
             patch("app.is_codex_running", return_value=(False, [])),
@@ -961,9 +981,10 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertTrue(data["codex_injection_enabled"])
         self.assertTrue(data["codex_injection_active"])
         self.assertEqual(data["codex_cdp_port"], 51240)
-        self.assertTrue(data["sync"]["skipped"])
-        self.assertEqual(data["sync"]["reason"], "history_sync_same_provider_family")
-        sync_with_backup.assert_not_called()
+        self.assertFalse(data["sync"].get("skipped", False))
+        sync_with_backup.assert_called_once()
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_provider"], "openai")
+        self.assertEqual(sync_with_backup.call_args.kwargs["target_model"], "gpt-5.5")
         self.assertTrue(start.call_args.kwargs["enable_cdp_injection"])
         self.assertEqual(start.call_args.kwargs["cdp_port"], 51240)
         self.last_config.update.assert_any_call({

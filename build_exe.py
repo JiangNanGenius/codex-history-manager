@@ -33,6 +33,7 @@ if not USER_DESKTOP_DIR.exists():
 EXE_NAME = "CodexHistoryManager.exe"
 RELEASE_MANIFEST_NAME = "release-manifest.json"
 LAST_COPIED_EXE: Path | None = None
+PYINSTALLER_RUNTIME_TMPDIR = r"%LOCALAPPDATA%\CodexEnhanceManager\pyi-runtime"
 
 BUILD_DEPENDENCIES = [
     ("pyinstaller", "PyInstaller"),
@@ -103,6 +104,22 @@ TRAY_IMPORTS = [
     "PIL.ImageDraw",
     "PIL.IcoImagePlugin",
     "PIL.PngImagePlugin",
+]
+
+PYINSTALLER_EXCLUDES = [
+    # charset-normalizer ships an optional mypyc runtime pyd at the top level.
+    # In one-file builds some Windows setups refuse to extract that pyd from
+    # the bootloader temp archive. The package has pure-Python fallbacks, so we
+    # keep the release EXE more robust by excluding the optional runtime.
+    "81d243bd2c585b0f4821__mypyc",
+]
+
+OPTIONAL_BINARY_PREFIXES = [
+    # charset-normalizer also ships optional compiled md/cd modules. Keeping
+    # pure Python copies avoids one-file extraction failures on locked-down
+    # Windows temp directories without changing behavior.
+    "charset_normalizer/",
+    "charset_normalizer\\",
 ]
 
 # Flask / Werkzeug 生态 hidden imports
@@ -247,10 +264,20 @@ a = Analysis(
     hookspath=[],
     hooksconfig={{}},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        {",\n        ".join([f'"{m}"' for m in PYINSTALLER_EXCLUDES])}
+    ],
     noarchive=False,
     optimize=0,
 )
+
+a.binaries = [
+    item for item in a.binaries
+    if not (
+        str(item[0]).lower().endswith(".pyd")
+        and any(str(item[0]).lower().startswith(prefix) for prefix in {OPTIONAL_BINARY_PREFIXES!r})
+    )
+]
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -266,7 +293,7 @@ exe = EXE(
     strip=False,
     upx=False,
     upx_exclude=[],
-    runtime_tmpdir=None,
+    runtime_tmpdir="{PYINSTALLER_RUNTIME_TMPDIR}",
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -379,6 +406,13 @@ def smoke_test_exe(path: Path | None = None, timeout_seconds: int = 45):
     target = path or release_exe_path()
     if not target.exists():
         print(f"Smoke test failed: EXE does not exist: {target}")
+        return False
+
+    runtime_tmpdir = Path(os.path.expandvars(PYINSTALLER_RUNTIME_TMPDIR))
+    try:
+        runtime_tmpdir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"Smoke test failed: cannot create runtime tmpdir {runtime_tmpdir}: {e}")
         return False
 
     print(f"Running packaged EXE smoke test: {target} --smoke-test")

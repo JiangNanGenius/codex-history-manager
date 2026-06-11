@@ -123,16 +123,13 @@ class DomesticResponsesProfileTest(unittest.TestCase):
             ],
         }
         sanitized, warnings = sanitize_domestic_responses_request(provider, request)
-        # custom is removed; image_generation is replaced with generate_image function tool
-        self.assertEqual(len(sanitized["tools"]), 3)
+        self.assertEqual(len(sanitized["tools"]), 2)
         self.assertEqual(sanitized["tools"][0]["type"], "function")
         self.assertEqual(sanitized["tools"][0]["name"], "get_weather")
-        self.assertEqual(sanitized["tools"][1]["type"], "function")
-        self.assertEqual(sanitized["tools"][1]["function"]["name"], "generate_image")
-        self.assertEqual(sanitized["tools"][2]["type"], "web_search")
+        self.assertEqual(sanitized["tools"][1]["type"], "web_search")
         self.assertTrue(any("custom" in w for w in warnings))
         self.assertTrue(any("image_generation" in w for w in warnings))
-        self.assertTrue(sanitized.get("_cem_image_gen_fallback"))
+        self.assertNotIn("_cem_image_gen_fallback", sanitized)
 
     def test_sanitize_removes_unsupported_input_content_types(self):
         provider = {

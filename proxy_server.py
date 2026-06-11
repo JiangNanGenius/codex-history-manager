@@ -35,6 +35,7 @@ import hmac
 import os
 import re
 import socket
+import sys
 import threading
 import time
 import urllib.error
@@ -169,6 +170,13 @@ def _set_request_log_config(
     except (TypeError, ValueError):
         _request_log_max_mb = 50.0
     _request_log_currency_settings = dict(currency_settings or {})
+    _debug_log(
+        "request_log.config",
+        enabled=_request_log_path is not None,
+        path=str(_request_log_path) if _request_log_path is not None else "",
+        retention_days=_request_log_retention_days,
+        max_mb=_request_log_max_mb,
+    )
 
 
 def _set_media_approval_reviewer(
@@ -218,6 +226,14 @@ def _set_debug_mode(
             _debug_log_max_bytes = 10 * 1024 * 1024
     if _debug_mode_enabled and _debug_log_path:
         _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+    if _debug_mode_enabled:
+        _debug_log(
+            "debug.config",
+            enabled=True,
+            path=str(_debug_log_path) if _debug_log_path is not None else "",
+            retention_days=_debug_log_retention_days,
+            max_mb=round(_debug_log_max_bytes / 1024 / 1024, 3),
+        )
 
 
 def _debug_log(event: str, **kwargs: Any) -> None:
@@ -759,7 +775,10 @@ def _route_explanation_text(route: Dict[str, Any], fallback: str) -> str:
 
 def _send_route_error(handler: BaseHTTPRequestHandler, route: Dict[str, Any]) -> None:
     status = int(route.get("status") or 404)
-    _send_error(handler, status, str(route.get("error") or "Route unavailable"), str(route.get("error_type") or "provider_not_found"))
+    error_msg = str(route.get("error") or "Route unavailable")
+    error_type = str(route.get("error_type") or "provider_not_found")
+    print(f"[PROXY ROUTE ERROR] status={status} type={error_type} error={error_msg}", file=sys.stderr)
+    _send_error(handler, status, error_msg, error_type)
 
 
 def _extract_model_id_for_upstream(request_json: Dict[str, Any], provider: Dict[str, Any]) -> str:
@@ -878,6 +897,15 @@ def _native_responses_unsupported_reason(
     if not report.get("domestic_responses") or report.get("safe_to_forward"):
         return None
     return format_domestic_unsupported_reason(report)
+
+
+def _without_internal_proxy_fields(request_json: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop app-owned metadata before forwarding a request to upstream providers."""
+    return {
+        key: value
+        for key, value in dict(request_json or {}).items()
+        if not str(key).startswith("_cem_")
+    }
 
 
 def _intercept_image_generation(
@@ -1162,6 +1190,8 @@ def _record_request_log(
     error_message: str = "",
 ) -> None:
     if not context or _request_log_path is None:
+        if context:
+            _debug_log("request_log.skipped", reason="request_log_path_not_configured", endpoint=context.get("endpoint"))
         return
     try:
         duration_ms = (time.time() - float(context.get("started_at") or time.time())) * 1000
@@ -1181,7 +1211,9 @@ def _record_request_log(
             retention_days=_request_log_retention_days,
             max_mb=_request_log_max_mb,
         ).append(entry)
-    except Exception:
+        _debug_log("request_log.written", endpoint=context.get("endpoint"), status_code=status_code, path=str(_request_log_path))
+    except Exception as exc:
+        _debug_log("request_log.write_failed", endpoint=context.get("endpoint"), error=str(exc), path=str(_request_log_path))
         pass
 
 
@@ -1399,6 +1431,7 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
 
 def _send_error(self: BaseHTTPRequestHandler, status: int, message: str, error_type: str = "proxy_error") -> None:
     """发送统一的 JSON 错误响应。"""
+    print(f"[PROXY ERROR] status={status} type={error_type} message={message}", file=sys.stderr)
     self.send_response(status)
     self.send_header("Content-Type", "application/json; charset=utf-8")
     self.end_headers()
@@ -1419,7 +1452,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
     """
 
     def log_message(self, format: str, *args: Any) -> None:
-        pass
+        # Keep proxy requests visible in desktop.log for troubleshooting
+        print(f"[PROXY] {format % args}", file=sys.stderr)
 
     def do_GET(self) -> None:
         if not _inbound_proxy_authorized(self.headers):
@@ -1884,25 +1918,29 @@ class ProxyHandler(BaseHTTPRequestHandler):
         route_explanation: str = "native Responses upstream",
     ) -> None:
         """Forward a Responses request to an upstream that natively speaks Responses."""
-        unsupported_reason = _native_responses_unsupported_reason(provider, request_json, compact=compact)
-        sanitization_warnings: List[str] = []
-        if unsupported_reason:
-            # Try to sanitize the request by removing unsupported tools/items
-            # instead of outright blocking it.
-            from domestic_responses import sanitize_domestic_responses_request
-
-            request_json, sanitization_warnings = sanitize_domestic_responses_request(
-                provider, request_json
-            )
-            unsupported_reason = _native_responses_unsupported_reason(
-                provider, request_json, compact=compact
-            )
-            if unsupported_reason:
-                _send_error(self, 400, unsupported_reason, "domestic_responses_unsupported")
-                return
-
-        upstream_request = dict(request_json)
         upstream_model = upstream_model_override or _extract_model_id_for_upstream(request_json, provider)
+        is_stream = bool(request_json.get("stream"))
+        log_context = _make_request_log_context(
+            "responses",
+            "POST",
+            provider,
+            model=str(request_json.get("model") or ""),
+            upstream_model=upstream_model,
+            stream=is_stream,
+            route_explanation=route_explanation,
+        )
+        unsupported_reason = _native_responses_unsupported_reason(provider, request_json, compact=compact)
+        if unsupported_reason:
+            _record_request_log(
+                log_context,
+                400,
+                error_type="domestic_responses_unsupported",
+                error_message=unsupported_reason,
+            )
+            _send_error(self, 400, unsupported_reason, "domestic_responses_unsupported")
+            return
+
+        upstream_request = _without_internal_proxy_fields(request_json)
         upstream_request["model"] = upstream_model
         upstream_request = apply_reasoning_policy_to_responses_request(
             upstream_request,
@@ -1914,21 +1952,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         upstream_url = responses_url(base_url)
         headers = _build_upstream_headers(provider)
-        is_stream = bool(upstream_request.get("stream"))
-        effective_route_explanation = route_explanation
-        if sanitization_warnings:
-            effective_route_explanation = (
-                route_explanation + "; sanitized: " + "; ".join(sanitization_warnings)
-            )
-        log_context = _make_request_log_context(
-            "responses",
-            "POST",
-            provider,
-            model=str(request_json.get("model") or ""),
-            upstream_model=upstream_model,
-            stream=is_stream,
-            route_explanation=effective_route_explanation,
-        )
 
         try:
             upstream_resp = _upstream_request_for_provider(
@@ -2256,7 +2279,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            response_json = chat_completion_to_response(chat_resp_json, original_request)
+            response_json = chat_completion_to_response(chat_resp_json)
         except Exception as e:
             _record_request_log(log_context, 502, error_type="proxy_error", error_message=f"Response conversion failed: {e}")
             _send_error(self, 502, f"Response conversion failed: {e}", "proxy_error")
@@ -2445,6 +2468,12 @@ class LocalProxyServer:
     def start(self) -> bool:
         if self._server is not None:
             if self._thread is not None and self._thread.is_alive():
+                _set_request_log_config(
+                    self.request_log_path,
+                    retention_days=self.request_log_retention_days,
+                    max_mb=self.request_log_max_mb,
+                    currency_settings=self.currency_settings,
+                )
                 _set_media_approval_reviewer(self.media_approval_reviewer)
                 _set_local_proxy_bearer_token(self.local_proxy_bearer_token)
                 self.port = int(self._server.server_address[1])

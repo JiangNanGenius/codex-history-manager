@@ -32,6 +32,7 @@ from provider_routing import provider_allows_local_routing
 CODEX_DEFAULT_CONTEXT_WINDOW = 200000
 CODEX_SMART_ROUTING_MODEL_ID = "amr/default"
 CODEX_SMART_ROUTING_DISPLAY_NAME = "Smart Routing"
+
 CODEX_BASE_INSTRUCTIONS = (
     "You are Codex, an agentic coding assistant. Help the user safely inspect, "
     "edit, test, and explain code in their local workspace. Use tools when they "

@@ -142,8 +142,15 @@ async function syncExecute() {
 
     if (!confirm(t('confirmExecuteSync'))) return;
 
+    let progressInterval = null;
+    let progressValue = 0;
     try {
-        setStatus(t('executingSyncStatus'));
+        progressValue = 0;
+        setStatus(`${t('executingSyncStatus')} (0%)`);
+        progressInterval = setInterval(() => {
+            progressValue = Math.min(progressValue + Math.random() * 8, 95);
+            setStatus(`${t('executingSyncStatus')} (${Math.round(progressValue)}%)`);
+        }, 400);
         const data = await api('/api/sync/execute', {
             method: 'POST',
             body: JSON.stringify({
@@ -152,9 +159,12 @@ async function syncExecute() {
                 backup_before_sync: backupBeforeSync,
             }),
         });
+        if (progressInterval) clearInterval(progressInterval);
+        setStatus(`${t('executingSyncStatus')} (100%)`);
         showSyncResult(data, false);
         showToast(t('syncCompleted'), 'success');
     } catch (err) {
+        if (progressInterval) clearInterval(progressInterval);
         const msg = err?.response?.error || err.message || String(err);
         showToast(t('failedExecuteSync') + msg, 'error');
     }

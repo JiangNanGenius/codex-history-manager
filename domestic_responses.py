@@ -490,7 +490,6 @@ def sanitize_domestic_responses_request(
 
     # ---- tools ---------------------------------------------------------------
     tools = sanitized.get("tools")
-    image_generation_replaced = False
     if isinstance(tools, list):
         allowed = _string_set(profile.get("allowed_tool_types"))
         blocked = _string_set(profile.get("blocking_tool_types"))
@@ -505,46 +504,6 @@ def sanitize_domestic_responses_request(
                 kept_tools.append(tool)
                 continue
             if tool_type in blocked or (allowed and tool_type not in allowed):
-                # image_generation fallback: replace with generate_image function tool
-                # instead of silently dropping it.
-                if tool_type == "image_generation":
-                    kept_tools.append({
-                        "type": "function",
-                        "function": {
-                            "name": "generate_image",
-                            "description": (
-                                "Generate an image based on a text prompt. "
-                                "Call this when the user asks to create, draw, or generate an image."
-                            ),
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "prompt": {
-                                        "type": "string",
-                                        "description": "Detailed description of the image to generate",
-                                    },
-                                    "size": {
-                                        "type": "string",
-                                        "enum": ["1024x1024", "1024x1536", "1536x1024", "512x512"],
-                                        "description": "Image dimensions (optional)",
-                                    },
-                                    "quality": {
-                                        "type": "string",
-                                        "enum": ["low", "medium", "high"],
-                                        "description": "Image quality (optional)",
-                                    },
-                                    "n": {
-                                        "type": "integer",
-                                        "description": "Number of images to generate (optional, default 1)",
-                                    },
-                                },
-                                "required": ["prompt"],
-                            },
-                        },
-                    })
-                    image_generation_replaced = True
-                    warnings.append("replaced image_generation with generate_image function tool")
-                    continue
                 removed_tool_types.append(tool_type)
                 continue
             kept_tools.append(tool)
@@ -553,25 +512,6 @@ def sanitize_domestic_responses_request(
             warnings.append(
                 "removed unsupported tools: " + ", ".join(sorted(set(removed_tool_types)))
             )
-        elif image_generation_replaced:
-            sanitized["tools"] = kept_tools
-
-    # ---- image_generation fallback hint --------------------------------------
-    if image_generation_replaced:
-        sanitized.setdefault("_cem_image_gen_fallback", True)
-        input_value = sanitized.get("input")
-        hint = {
-            "type": "message",
-            "role": "system",
-            "content": (
-                "If the user asks to generate, create, or draw an image, "
-                "use the generate_image function with a detailed prompt."
-            ),
-        }
-        if isinstance(input_value, list):
-            sanitized["input"] = [hint] + list(input_value)
-        else:
-            sanitized["input"] = [hint, {"type": "message", "role": "user", "content": str(input_value or "")}]
 
     # ---- input items ---------------------------------------------------------
     input_value = sanitized.get("input")

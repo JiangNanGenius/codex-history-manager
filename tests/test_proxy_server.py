@@ -1242,6 +1242,11 @@ class ProxyIntegrationTest(unittest.TestCase):
             headers={"Content-Type": "application/json"},
         )
 
+        status, headers, body = self._parse_response(raw)
+        self.assertEqual(status, 200)
+        response_json = json.loads(body.decode())
+        self.assertEqual(response_json["object"], "response")
+
         mock_upstream.assert_called_once()
         args = mock_upstream.call_args
         self.assertEqual(args[0][0], "POST")
@@ -1486,6 +1491,7 @@ class ProxyIntegrationTest(unittest.TestCase):
                 "model": "oresp/gpt-5",
                 "input": "test",
                 "previous_response_id": "resp_prev",
+                "_cem_image_gen_fallback": True,
             },
             method="POST",
             headers={"Content-Type": "application/json"},
@@ -1501,6 +1507,7 @@ class ProxyIntegrationTest(unittest.TestCase):
         upstream_body = json.loads(args[1]["body"])
         self.assertEqual(upstream_body["model"], "gpt-5")
         self.assertEqual(upstream_body["previous_response_id"], "resp_prev")
+        self.assertNotIn("_cem_image_gen_fallback", upstream_body)
         self.assertNotIn("messages", upstream_body)
 
     @patch("proxy_server._upstream_request")
@@ -1585,7 +1592,7 @@ class ProxyIntegrationTest(unittest.TestCase):
         self.assertNotIn("messages", upstream_body)
 
     @patch("proxy_server._upstream_request")
-    def test_domestic_partial_responses_sanitizes_unverified_custom_tool(self, mock_upstream):
+    def test_domestic_partial_responses_blocks_unverified_custom_tool(self, mock_upstream):
         self._write_providers({
             "providers": [
                 {
@@ -1624,10 +1631,11 @@ class ProxyIntegrationTest(unittest.TestCase):
         )
 
         status, headers, body = self._parse_response(raw)
-        self.assertEqual(status, 200)
-        args = mock_upstream.call_args
-        upstream_body = json.loads(args[1]["body"])
-        self.assertEqual(upstream_body.get("tools", []), [])
+        self.assertEqual(status, 400)
+        response_json = json.loads(body.decode())
+        self.assertEqual(response_json["error"]["type"], "domestic_responses_unsupported")
+        self.assertIn("unsupported tool types: custom", response_json["error"]["message"])
+        mock_upstream.assert_not_called()
 
     @patch("proxy_server._upstream_request")
     def test_domestic_partial_responses_allows_verified_input_image(self, mock_upstream):

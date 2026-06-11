@@ -1089,8 +1089,34 @@ def build_injection_script(backend_url: str = "") -> str:
     return candidates;
   }};
   const cemFetchJson = async (path, options = {{}}) => {{
+    // Primary: use CDP bridge (bypasses CSP / network restrictions)
+    if (typeof window.__cemBridge === 'function') {{
+      try {{
+        const bridgeResult = await window.__cemBridge(path, options);
+        if (!bridgeResult || bridgeResult.success === false) {{
+          const bridgeData = bridgeResult && bridgeResult.data;
+          throw new Error(
+            (bridgeData && (bridgeData.error || bridgeData.message)) ||
+            (bridgeResult && bridgeResult.error) ||
+            'Backend bridge request failed'
+          );
+        }}
+        const data = bridgeResult.data || bridgeResult;
+        if (data && data.backend_url) cemSetBackend(data.backend_url);
+        return data;
+      }} catch (err) {{
+        const msg = String(err && err.message || err);
+        if (!msg.includes('Bridge binding not available')) {{
+          console.error('[CEM] Bridge error:', err);
+          throw err;
+        }}
+        // Bridge not available, fall through to network paths
+      }}
+    }}
+    // Fallback: direct HTTP to backend candidates
     let lastError = null;
-    for (const backend of cemBackendCandidates()) {{
+    const candidates = cemBackendCandidates();
+    for (const backend of candidates) {{
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), 2200);
       try {{
@@ -1107,6 +1133,7 @@ def build_injection_script(backend_url: str = "") -> str:
         window.clearTimeout(timer);
       }}
     }}
+    console.error('[CEM] Backend connection failed after', candidates.length, 'candidates. Last error:', lastError);
     throw lastError || new Error('Backend connection failed');
   }};
   cemSetBackend(cemBackend);
@@ -1365,35 +1392,76 @@ def build_injection_script(backend_url: str = "") -> str:
 
 
 def discover_cdp_targets(port: int = DEFAULT_CDP_PORT, timeout: float = 1.0) -> List[Dict[str, Any]]:
-    url = f"http://127.0.0.1:{int(port)}/json/list"
-    with urllib.request.urlopen(url, timeout=timeout) as response:
-        data = json.loads(response.read().decode("utf-8", errors="replace"))
-    return data if isinstance(data, list) else []
+    hosts = ["127.0.0.1", "[::1]"]
+    paths = ["/json", "/json/list"]
+    for host in hosts:
+        for path in paths:
+            url = f"http://{host}:{int(port)}{path}"
+            try:
+                with urllib.request.urlopen(url, timeout=timeout) as response:
+                    data = json.loads(response.read().decode("utf-8", errors="replace"))
+                if isinstance(data, list):
+                    return data
+            except Exception:
+                continue
+    return []
+
+
+# Global registry of active bridge listener threads per target ws_url
+_cem_bridge_threads: Dict[str, threading.Thread] = {}
+_cem_bridge_stop_events: Dict[str, threading.Event] = {}
 
 
 def inject_codex_enhancements(
     port: int = DEFAULT_CDP_PORT,
     backend_url: str = "",
-    timeout_seconds: float = 8.0,
+    timeout_seconds: float = 24.0,
 ) -> Dict[str, Any]:
     script = build_injection_script(backend_url)
     deadline = time.time() + max(float(timeout_seconds), 0.5)
     last_error = ""
     injected = 0
     targets_seen = 0
+    injected_targets: List[Dict[str, Any]] = []
 
     while time.time() < deadline:
         try:
-            targets = discover_cdp_targets(port=port, timeout=0.8)
+            targets = discover_cdp_targets(port=port, timeout=1.2)
             page_targets = [
                 target for target in targets
                 if target.get("webSocketDebuggerUrl") and target.get("type") in ("page", "webview")
             ]
+            # Sort so targets whose title/url contain "codex" are tried first (mirrors Codex++)
+            page_targets.sort(key=lambda t: (
+                0 if "codex" in f"{t.get('title', '')} {t.get('url', '')}".lower() else 1,
+            ))
             targets_seen = max(targets_seen, len(page_targets))
             for target in page_targets:
-                if _inject_target(str(target["webSocketDebuggerUrl"]), script):
+                ws_url = str(target["webSocketDebuggerUrl"])
+                if _inject_target(ws_url, script, install_bridge=True):
                     injected += 1
+                    injected_targets.append(target)
             if injected:
+                # Start bridge listener threads for each injected target
+                for target in injected_targets:
+                    ws_url = str(target["webSocketDebuggerUrl"])
+                    # Stop existing listener for this target if any
+                    old_event = _cem_bridge_stop_events.pop(ws_url, None)
+                    if old_event is not None:
+                        old_event.set()
+                    old_thread = _cem_bridge_threads.pop(ws_url, None)
+                    if old_thread is not None and old_thread.is_alive():
+                        old_thread.join(timeout=1.0)
+                    stop_event = threading.Event()
+                    listener_thread = threading.Thread(
+                        target=run_cem_bridge_listener,
+                        args=(ws_url, stop_event, backend_url),
+                        name=f"cem-bridge-{target.get('id', 'unknown')}",
+                        daemon=True,
+                    )
+                    listener_thread.start()
+                    _cem_bridge_threads[ws_url] = listener_thread
+                    _cem_bridge_stop_events[ws_url] = stop_event
                 return {
                     "success": True,
                     "port": int(port),
@@ -1403,7 +1471,7 @@ def inject_codex_enhancements(
                 }
         except Exception as exc:
             last_error = str(exc)
-        time.sleep(0.35)
+        time.sleep(0.5)
 
     return {
         "success": False,
@@ -1414,15 +1482,146 @@ def inject_codex_enhancements(
     }
 
 
-def _inject_target(ws_url: str, script: str) -> bool:
+_CEM_BRIDGE_BINDING_NAME = "__cemBridgeBinding"
+_CEM_BRIDGE_SCRIPT = r"""
+(() => {
+  window.__cemBridgeCallbacks = window.__cemBridgeCallbacks || new Map();
+  window.__cemBridgeSeq = window.__cemBridgeSeq || 0;
+  window.__cemBridgeResolve = (id, result) => {
+    const cb = window.__cemBridgeCallbacks.get(id);
+    if (!cb) return;
+    window.__cemBridgeCallbacks.delete(id);
+    cb.resolve(result);
+  };
+  window.__cemBridgeReject = (id, message) => {
+    const cb = window.__cemBridgeCallbacks.get(id);
+    if (!cb) return;
+    window.__cemBridgeCallbacks.delete(id);
+    cb.reject(new Error(message || 'Bridge rejected'));
+  };
+  window.__cemBridge = (path, options) => new Promise((resolve, reject) => {
+    if (typeof window.__cemBridgeBinding !== 'function') {
+      reject(new Error('Bridge binding not available'));
+      return;
+    }
+    const id = String(++window.__cemBridgeSeq);
+    window.__cemBridgeCallbacks.set(id, { resolve, reject });
+    try {
+      window.__cemBridgeBinding(JSON.stringify({ id, path, options: options || {} }));
+    } catch (err) {
+      window.__cemBridgeCallbacks.delete(id);
+      reject(err);
+    }
+  });
+})();
+""".strip()
+
+
+def _inject_target(ws_url: str, script: str, install_bridge: bool = False) -> bool:
     client = _CdpWebSocket(ws_url)
     try:
         client.connect()
         client.call("Page.enable")
         client.call("Runtime.enable")
+        if install_bridge:
+            try:
+                client.call("Runtime.removeBinding", {"name": _CEM_BRIDGE_BINDING_NAME})
+            except Exception:
+                pass
+            client.call("Runtime.addBinding", {"name": _CEM_BRIDGE_BINDING_NAME})
+            client.call("Page.addScriptToEvaluateOnNewDocument", {"source": _CEM_BRIDGE_SCRIPT})
+            client.call("Runtime.evaluate", {"expression": _CEM_BRIDGE_SCRIPT, "awaitPromise": False, "allowUnsafeEvalBlockedByCSP": True})
         client.call("Page.addScriptToEvaluateOnNewDocument", {"source": script})
-        client.call("Runtime.evaluate", {"expression": script, "awaitPromise": False})
+        client.call("Runtime.evaluate", {"expression": script, "awaitPromise": False, "allowUnsafeEvalBlockedByCSP": True})
         return True
+    except Exception:
+        return False
+    finally:
+        client.close()
+
+
+def _handle_bridge_request(payload: Dict[str, Any], backend_url: str = "") -> Dict[str, Any]:
+    """Handle a bridge request by calling the local Flask backend via HTTP."""
+    path = payload.get("path", "")
+    options = payload.get("options") or {}
+    backend = (backend_url or backend_url_from_env()).rstrip("/")
+    method = str(options.get("method") or "GET").upper()
+    url = f"{backend}{path}"
+    headers = {"Content-Type": "application/json"}
+    body = options.get("body")
+    try:
+        req = urllib.request.Request(
+            url,
+            method=method,
+            headers=headers,
+            data=body.encode("utf-8") if body else None,
+        )
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        return {"success": True, "data": data}
+    except urllib.error.HTTPError as e:
+        try:
+            data = json.loads(e.read().decode("utf-8", errors="replace"))
+        except Exception:
+            data = {"error": str(e)}
+        return {"success": False, "status": e.code, "data": data}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def run_cem_bridge_listener(ws_url: str, stop_event: threading.Event, backend_url: str = "") -> None:
+    """Keep a CDP connection alive and handle bridge calls from the renderer."""
+    client = _CdpWebSocket(ws_url)
+    try:
+        client.connect()
+        while not stop_event.is_set():
+            events = client.listen_for_events(timeout=0.5)
+            for event in events:
+                if event.get("method") != "Runtime.bindingCalled":
+                    continue
+                params = event.get("params") or {}
+                if params.get("name") != _CEM_BRIDGE_BINDING_NAME:
+                    continue
+                try:
+                    payload = json.loads(params.get("payload") or "{}")
+                    result = _handle_bridge_request(payload, backend_url=backend_url)
+                    result_json = json.dumps(result, ensure_ascii=False)
+                    # Use a fresh CDP connection to send the response back,
+                    # avoiding read/write interleaving on the listener socket.
+                    resp_client = _CdpWebSocket(ws_url)
+                    try:
+                        resp_client.connect()
+                        resp_client.call(
+                            "Runtime.evaluate",
+                            {
+                                "expression": (
+                                    f"window.__cemBridgeResolve({json.dumps(payload.get('id'))}, {result_json})"
+                                ),
+                                "awaitPromise": False,
+                            },
+                        )
+                    finally:
+                        resp_client.close()
+                except Exception as e:
+                    try:
+                        resp_client = _CdpWebSocket(ws_url)
+                        try:
+                            resp_client.connect()
+                            resp_client.call(
+                                "Runtime.evaluate",
+                                {
+                                    "expression": (
+                                        f"window.__cemBridgeReject({json.dumps(payload.get('id'))}, {json.dumps(str(e))})"
+                                    ),
+                                    "awaitPromise": False,
+                                },
+                            )
+                        finally:
+                            resp_client.close()
+                    except Exception:
+                        pass
+    except Exception:
+        pass
     finally:
         client.close()
 
@@ -1465,7 +1664,7 @@ class _CdpWebSocket:
         if params:
             payload["params"] = params
         self._send_text(json.dumps(payload, separators=(",", ":")))
-        deadline = time.time() + 3.0
+        deadline = time.time() + 5.0
         while time.time() < deadline:
             message = self._recv_text()
             if not message:
@@ -1483,6 +1682,29 @@ class _CdpWebSocket:
                 self.sock.close()
             finally:
                 self.sock = None
+
+    def listen_for_events(self, timeout: float = 0.5) -> List[Dict[str, Any]]:
+        """Non-blocking read of CDP events. Returns list of parsed event dicts."""
+        events: List[Dict[str, Any]] = []
+        if not self.sock:
+            return events
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                self.sock.settimeout(max(0.01, deadline - time.time()))
+                message = self._recv_text()
+                self.sock.settimeout(None)
+                if not message:
+                    break
+                data = json.loads(message)
+                # Skip command responses (have 'id'), keep events (have 'method')
+                if "method" in data:
+                    events.append(data)
+            except (socket.timeout, TimeoutError):
+                break
+            except Exception:
+                break
+        return events
 
     def _send_text(self, text: str) -> None:
         if not self.sock:

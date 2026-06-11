@@ -308,7 +308,14 @@ def _path_mtime(path: str) -> float:
 
 def _is_codex_desktop_root(app_root: str | Path) -> bool:
     try:
-        return (Path(app_root) / "resources" / "app.asar").is_file()
+        root = Path(app_root)
+        if (root / "resources" / "app.asar").is_file():
+            return True
+        if (root / "resources" / "app").is_dir():
+            return True
+        if (root / "Codex.exe").is_file():
+            return True
+        return False
     except Exception:
         return False
 
@@ -405,21 +412,30 @@ def _windows_store_codex_installs() -> List[str]:
 
 def _codex_desktop_executable_from_root(app_root: str | Path) -> str:
     root = Path(app_root)
-    if not _is_codex_desktop_root(root):
-        return ""
+    if _is_codex_desktop_root(root):
+        try:
+            executables = [
+                path
+                for path in root.iterdir()
+                if path.is_file() and path.suffix.lower() == ".exe" and "codex" in path.name.lower()
+            ]
+        except Exception:
+            executables = []
+        if executables:
+            executables.sort(key=lambda p: (p.name.lower() != "codex.exe", p.name.lower()))
+            return str(executables[0])
+        fallback = root / "Codex.exe"
+        return str(fallback) if fallback.exists() else ""
+    # Fallback: if the root itself is a codex.exe, or contains one directly
+    if root.is_file() and root.suffix.lower() == ".exe" and "codex" in root.name.lower():
+        return str(root)
     try:
-        executables = [
-            path
-            for path in root.iterdir()
-            if path.is_file() and path.suffix.lower() == ".exe" and "codex" in path.name.lower()
-        ]
+        for child in root.iterdir():
+            if child.is_file() and child.suffix.lower() == ".exe" and child.name.lower() == "codex.exe":
+                return str(child)
     except Exception:
-        executables = []
-    if executables:
-        executables.sort(key=lambda p: (p.name.lower() != "codex.exe", p.name.lower()))
-        return str(executables[0])
-    fallback = root / "Codex.exe"
-    return str(fallback) if fallback.exists() else ""
+        pass
+    return ""
 
 
 def find_codex_desktop_launchers(override: str = "") -> List[str]:
@@ -540,7 +556,7 @@ def _launch_codex_path(path: str, extra_args: Optional[List[str]] = None):
     return subprocess.Popen([path, *extra_args], creationflags=flags, close_fds=True)
 
 
-def _wait_for_codex_start(process, timeout_seconds: float = 6.0) -> Tuple[bool, List[int], str]:
+def _wait_for_codex_start(process, timeout_seconds: float = 12.0) -> Tuple[bool, List[int], str]:
     """Wait briefly for a visible Codex process after launching."""
     deadline = time.monotonic() + max(float(timeout_seconds or 0), 0.5)
     last_exit_code = None
@@ -590,7 +606,7 @@ def start_codex(
             try:
                 process = _launch_codex_path(path, extra_args=extra_args)
                 label = "Codex++" if "codex-plus-plus" in path.lower() else "Codex"
-                started, started_pids, start_note = _wait_for_codex_start(process, timeout_seconds=6)
+                started, started_pids, start_note = _wait_for_codex_start(process, timeout_seconds=12)
                 if not started:
                     errors.append(f"{path}: {start_note}")
                     continue
@@ -601,7 +617,7 @@ def start_codex(
                         injection = inject_codex_enhancements(
                             port=int(cdp_port),
                             backend_url=backend_url,
-                            timeout_seconds=8,
+                            timeout_seconds=16,
                         )
                         if injection.get("success"):
                             message += f"；增强注入成功 ({injection.get('targets_injected')} 个窗口)"
