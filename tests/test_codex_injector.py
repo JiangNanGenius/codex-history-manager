@@ -31,6 +31,9 @@ class CodexInjectorTest(unittest.TestCase):
 
         self.assertIn("hideOfficialUsageAlert", script)
         self.assertIn("data-cem-hidden-usage-alert", script)
+        self.assertIn("quotaBannerText", script)
+        self.assertIn("usageCardText", script)
+        self.assertIn("usageCardRequiredText", script)
         self.assertIn("patchPluginMarketplaceParams", script)
         self.assertIn("delete next.marketplaceKinds", script)
         self.assertIn("forcePluginInstall", script)

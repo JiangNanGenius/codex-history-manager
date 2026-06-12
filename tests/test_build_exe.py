@@ -45,6 +45,13 @@ class BuildExeReleaseTest(unittest.TestCase):
         self.assertEqual(dependencies["pywebview"], "webview")
         self.assertEqual(dependencies["Pillow"], "PIL")
 
+    def test_optional_binary_filter_covers_top_level_mypyc_pyd(self):
+        self.assertTrue(
+            build_exe.is_optional_pyinstaller_binary("81d243bd2c585b0f4821__mypyc.cp314-win_amd64.pyd")
+        )
+        self.assertTrue(build_exe.is_optional_pyinstaller_binary("charset_normalizer/md.cp314-win_amd64.pyd"))
+        self.assertFalse(build_exe.is_optional_pyinstaller_binary("sqlite3.pyd"))
+
     def test_release_manifest_records_required_exe_asset(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)

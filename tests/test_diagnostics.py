@@ -338,6 +338,29 @@ class TestDiagnosticsCollector(unittest.TestCase):
         self.assertIsNone(req.get_header("X-api-key"))
 
     @patch("urllib.request.build_opener")
+    def test_check_provider_connectivity_adds_v1_for_root_base_url(self, mock_build_opener):
+        self.registry.get_provider.return_value = {
+            "id": "test",
+            "base_url": "https://example.com",
+            "enabled": True,
+        }
+
+        mock_resp = MagicMock()
+        mock_resp.getcode.return_value = 200
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = mock_resp
+        mock_build_opener.return_value = mock_opener
+
+        result = self.collector.check_provider_connectivity("test")
+
+        self.assertTrue(result["success"])
+        req = mock_opener.open.call_args[0][0]
+        self.assertEqual(req.full_url, "https://example.com/v1/models")
+
+    @patch("urllib.request.build_opener")
     def test_check_provider_connectivity_uses_lowercase_user_agent_header(self, mock_build_opener):
         self.registry.get_provider.return_value = {
             "id": "test",

@@ -75,10 +75,64 @@ def _renderer_enhancement_runtime() -> str:
       ].join(',')));
     }
 
+    const quotaBannerText = /(你的\s*Codex\s*消息限额已用尽|Codex\s*消息限额已用尽|message\s+limit|usage\s+limit|you['’]?re\s+out\s+of\s+Codex\s+messages|out\s+of\s+Codex\s+messages)/i;
+    const quotaResetText = /(额度将于|继续使用\s*Codex|升级至\s*Plus|quota\s+will\s+reset|limit\s+will\s+reset|rate\s+limit\s+resets|resets?\s+on|continue\s+using\s+Codex|start\s+your\s+free\s+trial\s+of\s+Plus|upgrade\s+to\s+plus)/i;
+    const usageCardText = /(剩余\s*\d+%\s*使用量|重置频率|下次重置时间|remaining\s+\d+%\s+usage|usage\s+remaining|reset\s+frequency|next\s+reset)/i;
+    const usageCardRequiredText = /剩余\s*\d+%\s*使用量|remaining\s+\d+%\s+usage|usage\s+remaining/i;
     const usageAlertText = /(Codex\s*(message|usage)?\s*(limit|quota)|message\s+limit|usage\s+limit|quota\s+will\s+reset|limit\s+will\s+reset|usage\s+remaining|remaining\s+\d+%\s+usage|消息限额|使用量|额度|下次重置|重置频率|剩余\s*\d+%\s*使用量)/i;
     const usageActionText = /(upgrade|plus|pricing|plan|reset|continue|quota|limit|升级|重置|继续使用|限额|额度|套餐)/i;
 
-    function usageAlertRoot(node) {
+    function bannerBox(node) {
+      if (!visibleBox(node, 180, 16)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 300 && rect.height >= 30 && rect.height <= 120;
+    }
+
+    function usageCardBox(node) {
+      if (!visibleBox(node, 160, 16)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 160 && rect.width <= 520 && rect.height >= 80 && rect.height <= 320;
+    }
+
+    function hasUsageAction(node, text) {
+      const actionText = normalizeText(Array.from(node.querySelectorAll('button, a, [role="button"]'))
+        .slice(0, 8)
+        .map((item) => item.innerText || item.textContent || item.getAttribute('aria-label') || '')
+        .join(' '));
+      return usageActionText.test(text + ' ' + actionText);
+    }
+
+    function looksLikeQuotaBanner(node) {
+      if (inConversationContent(node) || !bannerBox(node)) return false;
+      const text = elementText(node);
+      if (text.length < 20 || text.length > 420) return false;
+      if (!quotaBannerText.test(text) || !quotaResetText.test(text)) return false;
+      return hasUsageAction(node, text);
+    }
+
+    function looksLikeUsageCard(node) {
+      if (inConversationContent(node) || !usageCardBox(node)) return false;
+      const text = elementText(node);
+      if (text.length < 20 || text.length > 260) return false;
+      if (!usageCardText.test(text) || !usageCardRequiredText.test(text)) return false;
+      return hasUsageAction(node, text);
+    }
+
+    function usageAlertRoot(node, kind = 'official-usage-alert') {
+      if (kind === 'usage-card') {
+        if (node.getAttribute?.('role') === 'status' && looksLikeUsageCard(node)) return node;
+        const status = node.closest?.('[role="status"]');
+        if (status && looksLikeUsageCard(status)) return status;
+        const childStatus = node.querySelector?.('[role="status"]');
+        if (childStatus && looksLikeUsageCard(childStatus)) return childStatus;
+      }
+      if (kind === 'quota-banner') {
+        const parent = node.parentElement;
+        if (parent && parent !== document.body) {
+          const text = elementText(parent);
+          if (text.length <= 420 && quotaBannerText.test(text) && quotaResetText.test(text) && bannerBox(parent)) return parent;
+        }
+      }
       const status = node.closest?.('[role="alert"], [role="status"], [aria-live]');
       if (status && status !== document.body && status !== document.documentElement) return status;
       const parent = node.parentElement;
@@ -89,16 +143,19 @@ def _renderer_enhancement_runtime() -> str:
       return node;
     }
 
-    function looksLikeOfficialUsageAlert(node) {
-      if (!(node instanceof HTMLElement) || inConversationContent(node) || !visibleBox(node, 160, 16)) return false;
+    function officialUsageAlertKind(node) {
+      if (!(node instanceof HTMLElement) || inConversationContent(node)) return '';
+      if (looksLikeQuotaBanner(node)) return 'quota-banner';
+      if (looksLikeUsageCard(node)) return 'usage-card';
+      if (!visibleBox(node, 160, 16)) return '';
       const text = elementText(node);
-      if (text.length < 12 || text.length > 560) return false;
-      if (!usageAlertText.test(text)) return false;
-      const actionText = normalizeText(Array.from(node.querySelectorAll('button, a, [role="button"]'))
-        .slice(0, 8)
-        .map((item) => item.innerText || item.textContent || item.getAttribute('aria-label') || '')
-        .join(' '));
-      return usageActionText.test(text + ' ' + actionText);
+      if (text.length < 12 || text.length > 560) return '';
+      if (!usageAlertText.test(text)) return '';
+      return hasUsageAction(node, text) ? 'official-usage-alert' : '';
+    }
+
+    function looksLikeOfficialUsageAlert(node) {
+      return Boolean(officialUsageAlertKind(node));
     }
 
     function installUsageAlertStyle() {
@@ -133,11 +190,12 @@ def _renderer_enhancement_runtime() -> str:
       const selectors = ['[role="alert"]', '[role="status"]', '[aria-live]', 'header', 'aside', 'section', 'div'].join(',');
       for (const node of root.querySelectorAll(selectors)) {
         if (node.getAttribute(hiddenUsageAttr) === 'true') continue;
-        if (!looksLikeOfficialUsageAlert(node)) continue;
-        const target = usageAlertRoot(node);
+        const kind = officialUsageAlertKind(node);
+        if (!kind) continue;
+        const target = usageAlertRoot(node, kind);
         if (!target || target === document.body || target === document.documentElement) continue;
         target.setAttribute(hiddenUsageAttr, 'true');
-        target.setAttribute(hiddenUsageAttr + '-kind', 'official-usage-alert');
+        target.setAttribute(hiddenUsageAttr + '-kind', kind);
         state.hiddenUsageNodes.add(target);
       }
     }

@@ -1164,6 +1164,25 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertIn("force_plugin_install", data)
         self.assertIn("official_usage_visible", data)
 
+    def test_codex_injection_status_forces_plugin_unlock_off_for_official_oauth(self):
+        app = self._app()
+        self.last_config.get.side_effect = lambda key, default=None: {
+            "plugin_unlock_enabled": True,
+            "codex_injection_enabled": True,
+            "official_quota_enabled": True,
+        }.get(key, default)
+
+        with patch("app._safe_codex_auth_mode", return_value="official_oauth"):
+            response = app.test_client().get("/api/codex-injection/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertFalse(data["plugin_unlock_enabled"])
+        self.assertFalse(data["plugin_marketplace_unlock"])
+        self.assertFalse(data["plugin_entry_unlock"])
+        self.assertFalse(data["force_plugin_install"])
+        self.assertTrue(data["plugin_unlock_forced_off"])
+
     def test_disable_codex_enhance_provider_config_removes_only_local_routing(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.toml"

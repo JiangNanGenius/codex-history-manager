@@ -1,5 +1,15 @@
 # Release Notes
 
+## v2.2.20 - 2026-06-13
+
+- Clarified the AMR image-routing contract: direct image requests only use AMR `image_candidates` for AMR group model IDs, while `provider/model` image requests stay on that provider's native image endpoint and native Responses image-generation tools are forwarded as Responses.
+- Added a CodexPlusPlus-inspired provider connectivity compatibility check so root API URLs probe `/v1/models` first, making relay/base-url diagnostics match common OpenAI-compatible deployments.
+- Refined the built-in Codex usage-alert hider with stricter quota-banner and usage-card detection from the curated ScriptMarket review, without adding a generic script/plugin marketplace.
+- Reconfirmed the built-in Codex plugin unlock path: marketplace filtering, plugin entry access, and install-button unlock remain available only through our own injection layer, with official OAuth login forcing the feature off.
+- Hardened one-file packaging so the optional top-level charset-normalizer `_mypyc` extension is excluded from the archive, avoiding the Windows bootloader extraction failure shown by the previous build.
+- Verified with targeted Python/unit checks and packaged EXE smoke test. Full pytest was intentionally skipped because this environment has Codex-disruptive tests.
+- EXE: `74.25 MB`; SHA256: `2f72f234074cb9f631695c51643923ffa52800adb30f57dc3c807f1381306351`.
+
 ## v2.2.19 - 2026-06-12
 
 - Fixed Codex history migration so launches only skip when the exact previous provider/model sync is trustworthy; removed the official/third-party family shortcut that could leave history on the wrong backend.

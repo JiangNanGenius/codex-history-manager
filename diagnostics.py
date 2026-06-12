@@ -47,6 +47,7 @@ from currency import exchange_rate_status_summary
 from providers import ProviderRegistry, redact_secrets
 from request_logs import RequestLogStore
 from media_proxy import build_media_route_readiness
+from responses_adapter import models_url
 
 # 引用 config 模块的配置文件路径常量（Config 类未暴露此属性）
 from config import CONFIG_FILE
@@ -358,11 +359,10 @@ class DiagnosticsCollector:
                 "error": "Provider has no base_url configured.",
             }
 
-        # 测试端点优先级：多数 OpenAI 兼容服务支持 GET/HEAD /models
-        urls_to_try = [
-            f"{base_url}/models",
+        urls_to_try = list(dict.fromkeys([
+            models_url(base_url),
             base_url,
-        ]
+        ]))
 
         for url in urls_to_try:
             try:
@@ -570,10 +570,10 @@ def _check_provider_payload_connectivity(provider: Dict[str, Any], provider_id: 
             "error": "Provider has no base_url configured.",
         }
 
-    urls_to_try = [
-        f"{base_url}/models",
+    urls_to_try = list(dict.fromkeys([
+        models_url(base_url),
         base_url,
-    ]
+    ]))
     for url in urls_to_try:
         try:
             req = urllib.request.Request(

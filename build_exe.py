@@ -122,6 +122,28 @@ OPTIONAL_BINARY_PREFIXES = [
     "charset_normalizer\\",
 ]
 
+OPTIONAL_BINARY_BASENAMES = [
+    # This optional mypyc extension can be collected at the one-file archive
+    # root, so prefix-only filtering misses it. User machines have shown
+    # bootloader extraction failures on this exact pyd.
+    "81d243bd2c585b0f4821__mypyc",
+]
+
+
+def is_optional_pyinstaller_binary(name: str) -> bool:
+    normalized = str(name or "").replace("\\", "/").lower()
+    basename = normalized.rsplit("/", 1)[-1]
+    prefixes = [prefix.replace("\\", "/").lower() for prefix in OPTIONAL_BINARY_PREFIXES]
+    basenames = [base.lower() for base in OPTIONAL_BINARY_BASENAMES]
+    return (
+        normalized.endswith(".pyd")
+        and (
+            any(normalized.startswith(prefix) for prefix in prefixes)
+            or any(basename.startswith(base) for base in basenames)
+        )
+    )
+
+
 # Flask / Werkzeug 生态 hidden imports
 FLASK_IMPORTS = [
     "flask",
@@ -271,13 +293,21 @@ a = Analysis(
     optimize=0,
 )
 
-a.binaries = [
-    item for item in a.binaries
-    if not (
-        str(item[0]).lower().endswith(".pyd")
-        and any(str(item[0]).lower().startswith(prefix) for prefix in {OPTIONAL_BINARY_PREFIXES!r})
+optional_binary_prefixes = {OPTIONAL_BINARY_PREFIXES!r}
+optional_binary_basenames = {OPTIONAL_BINARY_BASENAMES!r}
+
+def _cem_optional_binary(item):
+    name = str(item[0]).replace("\\\\", "/").lower()
+    basename = name.rsplit("/", 1)[-1]
+    return (
+        name.endswith(".pyd")
+        and (
+            any(name.startswith(prefix.replace("\\\\", "/").lower()) for prefix in optional_binary_prefixes)
+            or any(basename.startswith(base.lower()) for base in optional_binary_basenames)
+        )
     )
-]
+
+a.binaries = [item for item in a.binaries if not _cem_optional_binary(item)]
 pyz = PYZ(a.pure)
 
 exe = EXE(
