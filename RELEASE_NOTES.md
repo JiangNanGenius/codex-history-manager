@@ -3,8 +3,8 @@
 ## v2.2.20 - 2026-06-13
 
 - Clarified the AMR image-routing contract: direct image requests only use AMR `image_candidates` for AMR group model IDs, while `provider/model` image requests stay on that provider's native image endpoint and native Responses image-generation tools are forwarded as Responses.
-- Added a CodexPlusPlus-inspired provider connectivity compatibility check so root API URLs probe `/v1/models` first, making relay/base-url diagnostics match common OpenAI-compatible deployments.
-- Refined the built-in Codex usage-alert hider with stricter quota-banner and usage-card detection from the curated ScriptMarket review, without adding a generic script/plugin marketplace.
+- Added a provider connectivity compatibility check so root API URLs probe `/v1/models` first, making relay/base-url diagnostics match common OpenAI-compatible deployments.
+- Refined the built-in Codex usage-alert hider with stricter quota-banner and usage-card detection, without adding a generic script/plugin marketplace.
 - Reconfirmed the built-in Codex plugin unlock path: marketplace filtering, plugin entry access, and install-button unlock remain available only through our own injection layer, with official OAuth login forcing the feature off.
 - Hardened one-file packaging so the optional top-level charset-normalizer `_mypyc` extension is excluded from the archive, avoiding the Windows bootloader extraction failure shown by the previous build.
 - Verified with targeted Python/unit checks and packaged EXE smoke test. Full pytest was intentionally skipped because this environment has Codex-disruptive tests.
@@ -23,7 +23,7 @@
 ## v2.2.18 - 2026-06-11
 
 - Added official Codex OAuth quota reading and exposed quota snapshots in the floating monitor, quick panel, and settings flow.
-- Imported CC Switch-compatible balance/quota probes for DeepSeek, KimiCode, Zhipu, MiniMax Coding Plan, SiliconFlow, StepFun, OpenRouter, and Novita.
+- Added balance/quota probes for DeepSeek, KimiCode, Zhipu, MiniMax Coding Plan, SiliconFlow, StepFun, OpenRouter, and Novita.
 - Locked Plugin Unlock off while an official Codex login is detected; Enhancement Injection remains available and defaults on.
 - Added visible version labels in the main sidebar and injected Codex quick panel.
 - Fixed injected quick panel backend fallback, quick toggles, and official-login lock state rendering.
