@@ -1183,6 +1183,40 @@ class CodexIntegrationApiTest(unittest.TestCase):
         self.assertFalse(data["force_plugin_install"])
         self.assertTrue(data["plugin_unlock_forced_off"])
 
+    def test_official_direct_keeps_injected_usage_visible_with_third_party_focus(self):
+        app = self._app()
+        self.last_config.get.side_effect = lambda key, default=None: {
+            "plugin_unlock_enabled": True,
+            "codex_injection_enabled": True,
+            "official_quota_enabled": True,
+            "codex_last_start_mode": "official_direct",
+        }.get(key, default)
+        self.provider_registry.list_providers.return_value = {
+            "success": True,
+            "focus_provider_id": "third-party",
+            "providers": [{
+                "id": "third-party",
+                "display_name": "Third Party",
+                "enabled": True,
+                "base_url": "https://api.example.test/v1",
+                "auth_mode": "provider_api_key",
+                "local_proxy_routing": True,
+            }],
+        }
+
+        with patch("app._safe_codex_auth_mode", return_value="official_oauth"):
+            status_response = app.test_client().get("/api/codex-injection/status")
+            quick_response = app.test_client().get("/api/codex-injection/quick-settings")
+
+        status = status_response.get_json()
+        quick = quick_response.get_json()
+        self.assertTrue(status["official_usage_visible"])
+        self.assertFalse(status["hide_official_usage_alert"])
+        self.assertTrue(quick["usage"]["official_usage_default"])
+        self.assertFalse(quick["usage"]["official_usage_hidden_by_provider"])
+        self.assertTrue(quick["settings"]["plugin_unlock_forced_off"])
+        self.assertFalse(quick["settings"]["plugin_unlock_enabled"])
+
     def test_disable_codex_enhance_provider_config_removes_only_local_routing(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.toml"

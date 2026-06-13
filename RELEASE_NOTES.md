@@ -1,5 +1,13 @@
 # Release Notes
 
+## v2.2.21 - 2026-06-14
+
+- Fixed official-direct mode detection so an older third-party provider focus no longer makes the injected panel or floating monitor treat the active Codex session as third-party/proxy usage.
+- Kept official-login injection useful while Plugin Unlock stays forced off: the Usage Panel now refreshes quick settings while open and keeps the last safe runtime state if a transient backend status poll fails.
+- Improved the injected Usage Panel's official quota display so official subscription/quota snapshots are shown directly instead of being hidden behind the generic official-login message.
+- Verified with targeted Python/unit checks and packaged EXE smoke test. Full pytest was intentionally skipped because this environment has Codex-disruptive tests.
+- EXE: `74.25 MB`; SHA256: `dfda7d1c1d3379167ca67bb077116b10291daff33fcc51b4ca727b50cb720f83`.
+
 ## v2.2.20 - 2026-06-13
 
 - Clarified the AMR image-routing contract: direct image requests only use AMR `image_candidates` for AMR group model IDs, while `provider/model` image requests stay on that provider's native image endpoint and native Responses image-generation tools are forwarded as Responses.

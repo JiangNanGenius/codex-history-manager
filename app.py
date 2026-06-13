@@ -430,14 +430,14 @@ def _official_usage_visible_for_current_mode(
     payload: Dict[str, Any],
     last_start_mode: str = "",
 ) -> bool:
+    if last_start_mode == START_MODE_OFFICIAL_DIRECT:
+        return auth_mode == "official_oauth"
+    if last_start_mode in {START_MODE_PROXY_INJECTION, START_MODE_PRESERVE_LOGIN_PROXY}:
+        return False
     if _provider_focus_is_official_login(payload):
         return True
     if _provider_focus_uses_other_api(payload):
         return False
-    if last_start_mode in {START_MODE_PROXY_INJECTION, START_MODE_PRESERVE_LOGIN_PROXY}:
-        return False
-    if last_start_mode == START_MODE_OFFICIAL_DIRECT:
-        return auth_mode == "official_oauth"
     focus_provider_id, _provider = _focused_provider_from_payload(payload)
     if focus_provider_id:
         return False

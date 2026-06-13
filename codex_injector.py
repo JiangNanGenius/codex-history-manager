@@ -1248,6 +1248,28 @@ def build_injection_script(backend_url: str = "") -> str:
       .sort((a, b) => b[1] - a[1]);
     return entries.length ? {{ currency: entries[0][0], amount: entries[0][1] }} : null;
   }};
+  const cemQuotaPercentLine = (quota) => {{
+    if (!quota || quota.success === false) return '';
+    const values = quota.values || quota.snapshot || {{}};
+    const tiers = Array.isArray(values.tiers)
+      ? values.tiers
+      : (Array.isArray(values.quota_tiers) ? values.quota_tiers : []);
+    const parts = tiers.map((tier) => {{
+      const raw = tier.utilization ?? tier.used_percent ?? tier.usedPercent ?? tier.quota_percent ?? tier.quotaPercent;
+      const remaining = tier.remaining_percent ?? tier.remainingPercent;
+      const value = Number(raw ?? (remaining !== undefined ? 100 - Number(remaining) : NaN));
+      if (!Number.isFinite(value)) return '';
+      const label = String(tier.name || tier.tier || tier.label || 'quota').replace(/_/g, ' ');
+      return `${{label}} ${{Math.max(0, Math.min(value, 100)).toFixed(0)}}%`;
+    }}).filter(Boolean).slice(0, 3);
+    if (!parts.length) {{
+      const raw = values.quota_percent ?? values.quotaPercent ?? values.utilization ?? values.used_percent ?? values.usedPercent;
+      const remaining = values.remaining_percent ?? values.remainingPercent;
+      const value = Number(raw ?? (remaining !== undefined ? 100 - Number(remaining) : NaN));
+      if (Number.isFinite(value)) parts.push(`quota ${{Math.max(0, Math.min(value, 100)).toFixed(0)}}%`);
+    }}
+    return parts.length ? `Quota ${{parts.join(' · ')}}` : '';
+  }};
   const cemSamples = {{ tokens: [], costs: [] }};
   const cemSampleRate = (samples, value, extra = {{}}) => {{
     const number = Number(value || 0);
@@ -1313,12 +1335,15 @@ def build_injection_script(backend_url: str = "") -> str:
     const spent = cemFirstNumber(values, ['spent', 'used', 'used_amount', 'total_spent']);
     const currency = String(values.currency || values.unit || values.balance_currency || (primaryCost && primaryCost.currency) || '');
     const balanceEl = root.querySelector('[data-cem-balance]');
+    const quotaLine = cemQuotaPercentLine(quota);
     if (usage.official_usage_hidden_by_provider) {{
       balanceEl.textContent = 'Official account usage hidden while a third-party route is active.';
-    }} else if (usage.official_usage_default) {{
-      balanceEl.textContent = 'Official login route is active. Official usage remains visible.';
+    }} else if (quota.success && quotaLine) {{
+      balanceEl.textContent = quotaLine;
     }} else if (quota.success && balance !== null) {{
       balanceEl.textContent = `Balance ${{cemFormatMoney(balance, currency)}}${{spent !== null ? ` - spent ${{cemFormatMoney(spent, currency)}}` : ''}}`;
+    }} else if (usage.official_usage_default) {{
+      balanceEl.textContent = 'Official login route is active. Official usage remains visible.';
     }} else if (primaryCost) {{
       balanceEl.textContent = `No live balance snapshot - estimated burn ${{cemFormatMoney(primaryCost.amount, primaryCost.currency)}} total`;
     }} else {{
@@ -1372,6 +1397,12 @@ def build_injection_script(backend_url: str = "") -> str:
     cemRenderQuickSettings(data);
     return data;
   }});
+  const cemRefreshQuickSettingsQuietly = () => {{
+    if (!root.classList.contains('open')) return;
+    cemLoadQuickSettings()
+      .then(() => cemSetStatus('Ready'))
+      .catch((error) => cemSetStatus(cemHumanizeError(error) || 'Refresh failed', true));
+  }};
 
   root.querySelector('.cem-launch').addEventListener('click', (event) => {{
     event.preventDefault();
@@ -1438,13 +1469,14 @@ def build_injection_script(backend_url: str = "") -> str:
         }}
       }})
       .catch(() => {{
-        cemRuntime.applyStatus({{ enabled: false }});
         if (!root.classList.contains('open')) cemSetStatus('Backend unavailable', true);
       }});
   }};
   refreshCemBackendStatus();
   if (window.__cemBackendStatusInterval) window.clearInterval(window.__cemBackendStatusInterval);
   window.__cemBackendStatusInterval = window.setInterval(refreshCemBackendStatus, 15000);
+  if (window.__cemQuickSettingsInterval) window.clearInterval(window.__cemQuickSettingsInterval);
+  window.__cemQuickSettingsInterval = window.setInterval(cemRefreshQuickSettingsQuietly, 5000);
 }})();
 """.strip()
 

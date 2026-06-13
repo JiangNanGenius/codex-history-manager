@@ -24,6 +24,9 @@ class CodexInjectorTest(unittest.TestCase):
         self.assertIn('data-cem-toggle="plugin_unlock_enabled"', script)
         self.assertIn("plugin_unlock_forced_off", script)
         self.assertIn("bridgeResult.data || bridgeResult", script)
+        self.assertIn("cemQuotaPercentLine", script)
+        self.assertIn("__cemQuickSettingsInterval", script)
+        self.assertIn("cemRefreshQuickSettingsQuietly", script)
         self.assertIn("${rootId}", script)
 
     def test_build_injection_script_contains_marketplace_and_usage_alert_patches(self):

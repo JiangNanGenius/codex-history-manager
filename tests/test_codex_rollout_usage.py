@@ -66,10 +66,20 @@ class CodexRolloutUsageTest(unittest.TestCase):
             {"focus_provider_id": "", "providers": []},
             last_start_mode="official_direct",
         ))
+        self.assertTrue(_official_usage_visible_for_current_mode(
+            "official_oauth",
+            third_party_payload,
+            last_start_mode="official_direct",
+        ))
         self.assertFalse(_official_usage_visible_for_current_mode("official_oauth", third_party_payload))
         self.assertFalse(_official_usage_visible_for_current_mode(
             "official_oauth",
             {"focus_provider_id": "", "providers": []},
+            last_start_mode="preserve_login_proxy",
+        ))
+        self.assertFalse(_official_usage_visible_for_current_mode(
+            "official_oauth",
+            official_payload,
             last_start_mode="preserve_login_proxy",
         ))
 
