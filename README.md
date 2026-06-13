@@ -81,7 +81,7 @@ What that means here:
 - Chat-only providers are adapted by the local proxy from Responses to Chat Completions.
 - **Image routing is independent, but not global**:
   - Direct `POST /v1/images/generations` requests use AMR `image_candidates` only when the request model is an AMR group such as `auto`, `smart-routing`, `amr/<group>`, or `rotation/<group>`.
-  - Direct image requests with a hard-routed `provider/model` value bypass AMR and are forwarded to that provider's image endpoint. This is the intended path for pure native proxies such as XinSilu.
+  - Direct image requests with a hard-routed `provider/model` value bypass AMR and are forwarded to that provider's image endpoint. This is the intended path for private pure-native proxy providers.
   - Native Responses requests that include OpenAI's built-in `image_generation` tool are forwarded to native upstreams as Responses requests; the proxy does not reinterpret that tool as AMR image routing.
   - Domestic compatibility providers can use the chat/tool fallback path when native Responses cannot safely carry the request. In that fallback, generated `generate_image` calls may use AMR `image_candidates` if the original model is an AMR group.
 

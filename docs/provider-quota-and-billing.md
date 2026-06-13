@@ -78,5 +78,5 @@ duplicate model capability fields already owned by providers.
   - `70%-89%`: warning
   - `>=90%`: danger and one notification per provider/tier bucket
 
-Private proxy/vendor-specific methods, including the user's Xinsilu settings,
-belong only in the local app config and must not be committed as public presets.
+Private proxy/vendor-specific methods belong only in the local app config and
+must not be committed as public presets.

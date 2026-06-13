@@ -83,7 +83,7 @@ Codex Enhance Manager 做的就是这件事：尽量不破坏 Codex 原生体验
 - 只有 Chat-only 供应商才由本地代理做 Responses 到 Chat Completions 的适配。
 - **图像路由独立，但不是全局拦截**：
   - 直接 `POST /v1/images/generations` 请求只有在 `model` 是 `auto`、`smart-routing`、`amr/<group>`、`rotation/<group>` 这类 AMR 组时，才使用 AMR `image_candidates`。
-  - 直接图像请求如果写成 `provider/model`，就是硬路由到该 provider 的图像端点，不经过 AMR。这是新思路等私有纯原生代理应走的路径。
+  - 直接图像请求如果写成 `provider/model`，就是硬路由到该 provider 的图像端点，不经过 AMR。这是私有纯原生代理应走的路径。
   - 原生 Responses 请求里如果包含 OpenAI 内置 `image_generation` tool，会按原生 Responses 直通上游；代理层不会把这个 tool 重新解释成 AMR 图像路由。
   - 国内兼容 provider 在原生 Responses 不能安全承载时，可以退到 chat/tool fallback；这个 fallback 里出现的 `generate_image` 调用，只有原始 `model` 是 AMR 组时才会使用 AMR `image_candidates`。
 
